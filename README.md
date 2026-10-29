@@ -25,6 +25,26 @@ cd frontend && npm install && npm run dev                                       
 
 Deploy on any VPS with Docker: clone, create `.env` (strong `SECRET_KEY`), `docker compose up -d --build`, put HTTPS (Caddy/Traefik/Cloudflare) in front of port 8080. Set `RETEST_COOLDOWN_HOURS=336` for the spec's 14-day cooldown (0 is for demos).
 
+## Deploy on Render (one click)
+
+The repo has a `render.yaml` Blueprint plus a single-container `Dockerfile` that serves the built frontend and the API from one process.
+
+1. Push this repo to GitHub.
+2. Render dashboard → **New → Blueprint** → connect the GitHub repo. Render reads `render.yaml` and creates one **web service** (free plan).
+3. During setup, Render asks for the optional `ANTHROPIC_API_KEY` (leave empty to use the offline rule-based skill extractor). `SECRET_KEY` is auto-generated.
+4. On first deploy the container **seeds a demo account** (`SEED_DEMO=true`):
+
+   - **Email:** `demo@skillbridge.test`
+   - **Password:** `demo12345`
+
+   That account already has a consented profile, a pre assessment (55%), a post assessment (92%) with uplift, and a valid Skill Passport — so every screen is populated. Create a fresh account to walk the full flow yourself.
+
+Notes:
+- `healthCheckPath` is `/api/health`.
+- Free plan: the SQLite DB lives on the instance's ephemeral disk, so it resets on each redeploy (the demo account is re-seeded automatically). Add a persistent disk or Render Postgres for real persistence.
+- Free services sleep after ~15 min idle and wake on the next request (a short cold start).
+- Set `RETEST_COOLDOWN_HOURS=336` in Render's environment to enforce the spec's 14-day re-test cooldown (it is `0` for demos).
+
 ## Demo path (about 5 minutes)
 1. Create account → accept consent. 2. **Use sample CV** → Analyse (see what was redacted) → confirm skills.
 3. **Gap** shows the MOCK role vs. your claimed skills. 4. **Verify**: 10 adaptive questions (MCQ + hands-on SQL), server-timed.

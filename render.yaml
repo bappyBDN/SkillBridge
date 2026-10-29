@@ -1,0 +1,29 @@
+# SkillBridge Global R0 - Render Blueprint
+# One web service (Docker) serving the React frontend + FastAPI backend together.
+# Deploy: Render dashboard -> New -> Blueprint -> connect this GitHub repo.
+services:
+  - type: web
+    name: skillbridge
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /data/skillbridge.db
+      - key: RETEST_COOLDOWN_HOURS
+        value: "0"
+      - key: MAX_ATTEMPTS_90D
+        value: "3"
+      - key: SEED_DEMO
+        value: "true"
+      - key: CORS_ORIGINS
+        value: https://skillbridge.onrender.com
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: claude-haiku-5-5

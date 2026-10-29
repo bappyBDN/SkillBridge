@@ -1,0 +1,8 @@
+# Normalize line endings to LF for the whole repo (this project deploys to Linux
+# containers on Docker/Render). Overrides core.autocrlf on Windows.
+* text=auto eol=lf
+
+# Files that must never be CRLF even if autocrlf says otherwise.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf
