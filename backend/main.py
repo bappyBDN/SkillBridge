@@ -1,0 +1,477 @@
+"""SkillBridge Global R0 API (FastAPI). Scores come from stored answer keys + server logic; AI never grades."""
+import os, io, re, json, time, uuid, base64, hmac, hashlib, secrets, sqlite3, zipfile, logging
+from pathlib import Path
+from typing import Optional, List
+
+import httpx
+from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+import engine as E
+from content import TAXONOMY, JOB, QBYID, TESTABLE
+
+log = logging.getLogger("skillbridge")
+DB_PATH = os.getenv("DB_PATH", "/data/skillbridge.db")
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+COOLDOWN_HOURS = float(os.getenv("RETEST_COOLDOWN_HOURS", "0"))   # spec default is 14 days (336h); 0 for demos
+MAX_ATTEMPTS_90D = int(os.getenv("MAX_ATTEMPTS_90D", "3"))
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-5-5")
+CONSENT_VERSION = "r0-1"
+
+
+def _secret() -> str:
+    if os.getenv("SECRET_KEY"): return os.environ["SECRET_KEY"]
+    p = Path(DB_PATH).parent / ".secret"
+    try:
+        if not p.exists(): p.write_text(secrets.token_hex(32))
+        return p.read_text().strip()
+    except OSError:
+        return secrets.token_hex(32)
+
+
+SECRET = _secret()
+
+# ------------------------------------------------------------------ database
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT UNIQUE, name TEXT, salt TEXT, pw_hash TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS consents(id INTEGER PRIMARY KEY, user_id INT, version TEXT, lang TEXT, ts REAL);
+CREATE TABLE IF NOT EXISTS profiles(user_id INTEGER PRIMARY KEY, redacted TEXT, redaction TEXT, extracted TEXT, source TEXT, confirmed TEXT);
+CREATE TABLE IF NOT EXISTS attempts(id TEXT PRIMARY KEY, user_id INT, kind TEXT, seed INT, status TEXT, state TEXT, started REAL, finished REAL, result TEXT, appeal TEXT);
+CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, attempt_id TEXT, type TEXT, ts REAL);
+CREATE TABLE IF NOT EXISTS passports(id TEXT PRIMARY KEY, user_id INT, payload TEXT, signature TEXT, created REAL, revoked INT DEFAULT 0);
+CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor INT, action TEXT, target TEXT);
+"""
+
+
+def db():
+    c = sqlite3.connect(DB_PATH, timeout=10)
+    c.row_factory = sqlite3.Row
+    return c
+
+
+def init_db():
+    with db() as c:
+        c.executescript(SCHEMA)
+
+
+def one(sql, args=()):
+    c = db()
+    try: return c.execute(sql, args).fetchone()
+    finally: c.close()
+
+
+def allr(sql, args=()):
+    c = db()
+    try: return c.execute(sql, args).fetchall()
+    finally: c.close()
+
+
+def run(sql, args=()):
+    c = db()
+    try:
+        cur = c.execute(sql, args); c.commit(); return cur.lastrowid
+    finally: c.close()
+
+
+def audit(actor, action, target=""):
+    run("INSERT INTO audit(ts,actor,action,target) VALUES (?,?,?,?)", (time.time(), actor, action, str(target)))
+
+
+# ------------------------------------------------------------------ auth
+def hash_pw(pw, salt): return hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000).hex()
+
+
+def make_token(uid):
+    body = base64.urlsafe_b64encode(json.dumps({"uid": uid, "exp": time.time() + 7 * 86400}).encode()).decode()
+    return body + "." + hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+
+
+def current_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "): raise HTTPException(401, "Not signed in")
+    try:
+        body, sig = authorization[7:].split(".")
+        if not hmac.compare_digest(sig, hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()): raise ValueError
+        data = json.loads(base64.urlsafe_b64decode(body))
+        if data["exp"] < time.time(): raise ValueError
+    except Exception:
+        raise HTTPException(401, "Invalid or expired session")
+    u = one("SELECT * FROM users WHERE id=?", (data["uid"],))
+    if not u: raise HTTPException(401, "Unknown user")
+    return dict(u)
+
+
+def need_consent(u):
+    if not one("SELECT 1 FROM consents WHERE user_id=? AND version=?", (u["id"], CONSENT_VERSION)):
+        raise HTTPException(403, "consent_required")
+
+
+# ------------------------------------------------------------------ app
+app = FastAPI(title="SkillBridge Global R0 API", version="0.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:8080").split(","),
+                   allow_methods=["*"], allow_headers=["*"])
+
+
+@app.on_event("startup")
+def _startup(): init_db()
+
+
+@app.get("/api/health")
+def health(): return {"ok": True, "llm_configured": bool(ANTHROPIC_API_KEY), "version": "r0"}
+
+
+class Reg(BaseModel):
+    email: str = Field(min_length=5, max_length=120)
+    name: str = Field(min_length=2, max_length=80)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class Login(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/register")
+def register(b: Reg):
+    email = b.email.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email): raise HTTPException(422, "Invalid email")
+    if one("SELECT 1 FROM users WHERE email=?", (email,)): raise HTTPException(409, "Email already registered")
+    salt = secrets.token_hex(16)
+    uid = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)", (email, b.name.strip(), salt, hash_pw(b.password, salt), time.time()))
+    audit(uid, "register")
+    return {"token": make_token(uid)}
+
+
+@app.post("/api/auth/login")
+def login(b: Login):
+    u = one("SELECT * FROM users WHERE email=?", (b.email.strip().lower(),))
+    if not u or not hmac.compare_digest(u["pw_hash"], hash_pw(b.password, u["salt"])): raise HTTPException(401, "Wrong email or password")
+    return {"token": make_token(u["id"])}
+
+
+# ------------------------------------------------------------------ state / consent / data rights
+def latest_done(uid, kind=None):
+    q = "SELECT * FROM attempts WHERE user_id=? AND status='done'" + (" AND kind=?" if kind else "") + " ORDER BY finished DESC LIMIT 1"
+    return one(q, (uid, kind) if kind else (uid,))
+
+
+@app.get("/api/state")
+def state(u=Depends(current_user)):
+    prof = one("SELECT * FROM profiles WHERE user_id=?", (u["id"],))
+    atts = allr("SELECT id,kind,status,result,finished FROM attempts WHERE user_id=? ORDER BY started", (u["id"],))
+    pp = allr("SELECT id,created,revoked FROM passports WHERE user_id=? ORDER BY created DESC", (u["id"],))
+    return {
+        "user": {"name": u["name"], "email": u["email"]},
+        "consented": bool(one("SELECT 1 FROM consents WHERE user_id=? AND version=?", (u["id"], CONSENT_VERSION))),
+        "has_cv": bool(prof and prof["extracted"]),
+        "confirmed": json.loads(prof["confirmed"]) if prof and prof["confirmed"] else None,
+        "attempts": [{"id": a["id"], "kind": a["kind"], "status": a["status"], "overall": (json.loads(a["result"])["overall"] if a["result"] else None)} for a in atts],
+        "passports": [{"id": p["id"], "created": p["created"], "revoked": bool(p["revoked"])} for p in pp],
+    }
+
+
+class ConsentBody(BaseModel):
+    lang: str = "en"
+
+
+@app.post("/api/consent")
+def consent(b: ConsentBody, u=Depends(current_user)):
+    run("INSERT INTO consents(user_id,version,lang,ts) VALUES (?,?,?,?)", (u["id"], CONSENT_VERSION, b.lang[:5], time.time()))
+    audit(u["id"], "consent", CONSENT_VERSION)
+    return {"ok": True}
+
+
+@app.get("/api/me/export")
+def export_data(u=Depends(current_user)):
+    d = {"user": {"name": u["name"], "email": u["email"]}}
+    for t in ("consents", "profiles", "attempts", "passports"):
+        d[t] = [dict(r) for r in allr(f"SELECT * FROM {t} WHERE user_id=?", (u["id"],))]
+    audit(u["id"], "export")
+    return d
+
+
+@app.delete("/api/me")
+def delete_me(u=Depends(current_user)):
+    ids = [r["id"] for r in allr("SELECT id FROM attempts WHERE user_id=?", (u["id"],))]
+    for i in ids: run("DELETE FROM events WHERE attempt_id=?", (i,))
+    for t in ("consents", "profiles", "attempts", "passports"): run(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
+    run("DELETE FROM users WHERE id=?", (u["id"],))
+    audit(u["id"], "delete_account")
+    return {"deleted": True}
+
+
+# ------------------------------------------------------------------ CV intelligence
+def read_upload(name: str, data: bytes) -> str:
+    n = name.lower()
+    if len(data) > 2_000_000: raise HTTPException(413, "File too large (max 2 MB)")
+    if n.endswith(".pdf"):
+        from pypdf import PdfReader
+        return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
+    if n.endswith(".docx"):
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            xml = z.read("word/document.xml").decode("utf8", "ignore")
+        return re.sub(r"<[^>]+>", " ", xml.replace("</w:p>", "\n"))
+    if n.endswith(".txt") or n.endswith(".md"): return data.decode("utf8", "ignore")
+    raise HTTPException(415, "Upload PDF, DOCX or TXT (or paste text)")
+
+
+def llm_extract(redacted: str):
+    """Optional LLM extraction. Input is already PII-redacted. Output is schema-validated; one retry; else fall back to rules."""
+    system = (Path(__file__).parent / "prompts" / "skill_extract.v1.md").read_text()
+    for _ in range(2):
+        try:
+            r = httpx.post("https://api.anthropic.com/v1/messages", timeout=30,
+                           headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                           json={"model": LLM_MODEL, "max_tokens": 800, "system": system, "messages": [{"role": "user", "content": "<cv>\n" + redacted[:12000] + "\n</cv>"}]})
+            r.raise_for_status()
+            text = "".join(b.get("text", "") for b in r.json()["content"]).strip()
+            text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+            skills = E.validate_llm_skills(json.loads(text).get("skills"))
+            if skills: return skills
+        except Exception as ex:
+            log.warning("LLM extraction failed: %s", type(ex).__name__)
+    return None
+
+
+@app.post("/api/cv")
+async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None), u=Depends(current_user)):
+    need_consent(u)
+    raw = text
+    if file is not None: raw = read_upload(file.filename or "", await file.read())
+    raw = raw.strip()
+    if len(raw) < 30: raise HTTPException(422, "CV text is too short")
+    redacted, counts = E.redact(raw[:30000], [u["name"]])
+    skills, source = (llm_extract(redacted) if ANTHROPIC_API_KEY else None), "llm"
+    if not skills: skills, source = E.rule_extract(redacted), "rules"
+    run("INSERT INTO profiles(user_id,redacted,redaction,extracted,source,confirmed) VALUES (?,?,?,?,?,NULL) "
+        "ON CONFLICT(user_id) DO UPDATE SET redacted=excluded.redacted,redaction=excluded.redaction,extracted=excluded.extracted,source=excluded.source,confirmed=NULL",
+        (u["id"], redacted, json.dumps(counts), json.dumps(skills), source))
+    audit(u["id"], "cv_parsed", source)
+    return {"redacted_preview": redacted[:1500], "redaction": counts, "skills": skills, "source": source,
+            "taxonomy": [{"id": k, "name": v["name"]} for k, v in TAXONOMY.items()]}
+
+
+class Confirm(BaseModel):
+    skills: List[str]
+
+
+@app.put("/api/skills")
+def confirm_skills(b: Confirm, u=Depends(current_user)):
+    need_consent(u)
+    ids = [s for s in dict.fromkeys(b.skills) if s in TAXONOMY]
+    run("INSERT INTO profiles(user_id,confirmed) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET confirmed=excluded.confirmed", (u["id"], json.dumps(ids)))
+    return {"confirmed": ids}
+
+
+# ------------------------------------------------------------------ job + gap
+def topic_scores(uid):
+    a = latest_done(uid)
+    return json.loads(a["result"])["topics"] if a else {}
+
+
+@app.get("/api/job")
+def job(u=Depends(current_user)):
+    prof = one("SELECT confirmed FROM profiles WHERE user_id=?", (u["id"],))
+    claimed = set(json.loads(prof["confirmed"])) if prof and prof["confirmed"] else set()
+    rows = E.gap_map(topic_scores(u["id"]))
+    for r in rows: r["claimed"] = r["skill"] in claimed
+    return {"job": {"id": JOB["id"], "title": JOB["title"], "company": JOB["company"], "mock": True,
+                    "preferred": [{"skill": s, "name": TAXONOMY[s]["name"], "claimed": s in claimed} for s in JOB["preferred"]]}, "gap": rows}
+
+
+# ------------------------------------------------------------------ assessment
+def seen_before(uid):
+    s = set()
+    for a in allr("SELECT state FROM attempts WHERE user_id=? AND status='done'", (uid,)): s |= set(json.loads(a["state"])["used"])
+    return s
+
+
+def view(att):
+    st = json.loads(att["state"])
+    remaining = max(0, int(att["started"] + E.TEST_SECONDS - time.time()))
+    out = {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"], "remaining": remaining, "answered": len(st["answers"]), "total": len(E.SLOTS)}
+    if att["status"] == "active" and st["current"]:
+        out["question"] = E.public_question(QBYID[st["current"]], st)
+    return out
+
+
+def save(att_id, st, **kw):
+    sets, args = ["state=?"], [json.dumps(st)]
+    for k, v in kw.items(): sets.append(f"{k}=?"); args.append(v)
+    run(f"UPDATE attempts SET {', '.join(sets)} WHERE id=?", (*args, att_id))
+
+
+def finalize(att, st):
+    ev = {r["type"]: r["n"] for r in allr("SELECT type, COUNT(*) n FROM events WHERE attempt_id=? GROUP BY type", (att["id"],))}
+    res = E.score(st["answers"])
+    label, reasons = E.trust_label(ev, st["answers"])
+    res.update({"trust": label, "trust_reasons": reasons, "percentile": None, "kind": att["kind"], "date": time.strftime("%Y-%m-%d")})
+    run("UPDATE attempts SET status='done', finished=?, result=?, state=? WHERE id=?", (time.time(), json.dumps(res), json.dumps(st), att["id"]))
+    audit(att["user_id"], "attempt_done", att["id"])
+
+
+def get_att(att_id, uid):
+    a = one("SELECT * FROM attempts WHERE id=? AND user_id=?", (att_id, uid))
+    if not a: raise HTTPException(404, "Attempt not found")
+    return dict(a)
+
+
+@app.post("/api/attempts")
+def start_attempt(u=Depends(current_user)):
+    need_consent(u)
+    act = one("SELECT * FROM attempts WHERE user_id=? AND status='active'", (u["id"],))
+    if act:
+        if time.time() > act["started"] + E.TEST_SECONDS + E.GRACE:
+            finalize(dict(act), json.loads(act["state"]))
+        else:
+            return view(dict(act))                       # resume after a dropped connection
+    done = allr("SELECT finished FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC", (u["id"],))
+    if len([d for d in done if d["finished"] > time.time() - 90 * 86400]) >= MAX_ATTEMPTS_90D:
+        raise HTTPException(429, "attempt_cap")
+    if done and COOLDOWN_HOURS > 0 and time.time() < done[0]["finished"] + COOLDOWN_HOURS * 3600:
+        raise HTTPException(429, "cooldown")
+    seed = secrets.randbelow(10**9)
+    st = E.new_state(seed)
+    q = E.pick_question(st, seen_before(u["id"]))
+    st["current"], st["served_at"] = q["id"], time.time()
+    aid = uuid.uuid4().hex[:12]
+    run("INSERT INTO attempts(id,user_id,kind,seed,status,state,started) VALUES (?,?,?,?,?,?,?)",
+        (aid, u["id"], "post" if done else "pre", seed, "active", json.dumps(st), time.time()))
+    audit(u["id"], "attempt_start", aid)
+    return view(get_att(aid, u["id"]))
+
+
+@app.get("/api/attempts/{aid}")
+def get_attempt(aid: str, u=Depends(current_user)): return view(get_att(aid, u["id"]))
+
+
+class Ans(BaseModel):
+    question_id: str
+    answer: Optional[str] = None
+
+
+@app.post("/api/attempts/{aid}/answer")
+def answer(aid: str, b: Ans, u=Depends(current_user)):
+    att = get_att(aid, u["id"])
+    if att["status"] != "active": raise HTTPException(409, "Attempt already finished")
+    st = json.loads(att["state"])
+    if time.time() > att["started"] + E.TEST_SECONDS + E.GRACE:      # server owns the timer
+        finalize(att, st); return view(get_att(aid, u["id"]))
+    if b.question_id != st["current"]: raise HTTPException(409, "Question mismatch")
+    q = QBYID[st["current"]]
+    E.record_answer(st, q, b.answer, time.time() - (st["served_at"] or time.time()))
+    if st["index"] >= len(E.SLOTS):
+        finalize(att, st)
+    else:
+        nq = E.pick_question(st, seen_before(u["id"]))
+        st["current"], st["served_at"] = nq["id"], time.time()
+        save(aid, st)
+    return view(get_att(aid, u["id"]))                      # never reveals correctness during the exam
+
+
+class SqlRun(BaseModel):
+    sql: str
+
+
+@app.post("/api/attempts/{aid}/sql-run")
+def sql_run(aid: str, b: SqlRun, u=Depends(current_user)):
+    att = get_att(aid, u["id"])
+    st = json.loads(att["state"])
+    if att["status"] != "active" or not st["current"] or QBYID[st["current"]]["type"] != "sql": raise HTTPException(409, "No SQL question active")
+    return E.run_query(att["seed"], b.sql)                  # visible dataset only; scoring uses hidden datasets
+
+
+class Ev(BaseModel):
+    type: str
+
+
+@app.post("/api/attempts/{aid}/event")
+def event(aid: str, b: Ev, u=Depends(current_user)):
+    att = get_att(aid, u["id"])
+    if att["status"] == "active" and b.type in ("paste", "blur"):
+        run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, b.type, time.time()))
+    return {"ok": True}
+
+
+@app.get("/api/attempts/{aid}/result")
+def result(aid: str, u=Depends(current_user)):
+    att = get_att(aid, u["id"])
+    if att["status"] != "done": raise HTTPException(409, "Attempt not finished")
+    r = json.loads(att["result"]); r["appeal"] = att["appeal"]; r["attempt_id"] = aid
+    return r
+
+
+class Appeal(BaseModel):
+    note: str = Field(min_length=3, max_length=1000)
+
+
+@app.post("/api/attempts/{aid}/appeal")
+def appeal(aid: str, b: Appeal, u=Depends(current_user)):
+    get_att(aid, u["id"])
+    run("UPDATE attempts SET appeal=? WHERE id=?", (b.note, aid))     # queued for human review; never changes score automatically
+    audit(u["id"], "appeal", aid)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ learning path + uplift
+@app.get("/api/learning-path")
+def learning_path(u=Depends(current_user)):
+    a = latest_done(u["id"])
+    if not a: raise HTTPException(409, "Take the assessment first")
+    return {"based_on": a["id"], **E.build_path(json.loads(a["result"])["topics"])}
+
+
+@app.get("/api/uplift")
+def uplift(u=Depends(current_user)):
+    pre = one("SELECT result FROM attempts WHERE user_id=? AND status='done' AND kind='pre' ORDER BY finished LIMIT 1", (u["id"],))
+    post = latest_done(u["id"], "post")
+    if not pre or not post: return {"available": False}
+    a, b = json.loads(pre["result"]), json.loads(post["result"])
+    topics = {t: {"pre": a["topics"][t]["score"], "post": b["topics"][t]["score"], "delta": b["topics"][t]["score"] - a["topics"][t]["score"]} for t in a["topics"] if t in b["topics"]}
+    return {"available": True, "overall": {"pre": a["overall"], "post": b["overall"], "delta": b["overall"] - a["overall"]}, "topics": topics,
+            "note": "Single-user result from a prototype question pool; not a validated learning-effect estimate."}
+
+
+# ------------------------------------------------------------------ Skill Passport
+class PassBody(BaseModel):
+    topics: List[str]
+    show_name: bool = False
+
+
+@app.post("/api/passport")
+def make_passport(b: PassBody, u=Depends(current_user)):
+    need_consent(u)
+    a = latest_done(u["id"])
+    if not a: raise HTTPException(409, "Take the assessment first")
+    r = json.loads(a["result"])
+    skills = [{"skill": t, "name": TAXONOMY[t]["name"], "score": r["topics"][t]["score"], "level": r["topics"][t]["level"], "trust": r["trust"], "date": r["date"]}
+              for t in b.topics if t in r["topics"]]
+    if not skills: raise HTTPException(422, "Choose at least one verified skill")
+    up = uplift(u)
+    pid = secrets.token_urlsafe(9)
+    payload = {"pid": pid, "issued": time.strftime("%Y-%m-%d"), "expires": time.strftime("%Y-%m-%d", time.localtime(time.time() + 365 * 86400)),
+               "holder": u["name"] if b.show_name else "Anonymous candidate", "skills": skills,
+               "uplift": up["overall"] if up["available"] else None, "issuer": "SkillBridge Global R0 prototype"}
+    run("INSERT INTO passports(id,user_id,payload,signature,created) VALUES (?,?,?,?,?)", (pid, u["id"], json.dumps(payload), E.sign_payload(payload, SECRET), time.time()))
+    audit(u["id"], "passport_create", pid)
+    return {"id": pid}
+
+
+@app.delete("/api/passport/{pid}")
+def revoke_passport(pid: str, u=Depends(current_user)):
+    p = one("SELECT 1 FROM passports WHERE id=? AND user_id=?", (pid, u["id"]))
+    if not p: raise HTTPException(404, "Not found")
+    run("UPDATE passports SET revoked=1 WHERE id=?", (pid,))
+    audit(u["id"], "passport_revoke", pid)
+    return {"revoked": True}
+
+
+@app.get("/api/public/passport/{pid}")
+def public_passport(pid: str):
+    p = one("SELECT * FROM passports WHERE id=?", (pid,))
+    if not p: raise HTTPException(404, "Passport not found")
+    payload = json.loads(p["payload"])
+    valid = hmac.compare_digest(p["signature"], E.sign_payload(payload, SECRET))
+    if p["revoked"]: return {"revoked": True, "signature_valid": valid}
+    return {"revoked": False, "expired": payload["expires"] < time.strftime("%Y-%m-%d"), "signature_valid": valid, "signature": p["signature"][:16], "passport": payload}
