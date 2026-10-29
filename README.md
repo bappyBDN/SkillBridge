@@ -13,7 +13,7 @@ Built from the *SkillBridge Global BRD & PRD v1.0* (Release **R0**, PRD §11) an
 ```bash
 cp .env.example .env          # set SECRET_KEY; ANTHROPIC_API_KEY is optional
 docker compose up --build
-# open http://localhost:8080      (API docs: http://localhost:8080/api/docs is not proxied; use http://localhost:8000 only in dev)
+# open http://localhost:8080   (health check: http://localhost:8080/api/health)
 ```
 
 Dev without Docker:
