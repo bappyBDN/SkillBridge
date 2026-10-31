@@ -542,6 +542,19 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     return () => document.removeEventListener("fullscreenchange", syncFullscreen);
   }, []);
 
+  // Reflect when the candidate stops screen sharing from the browser toolbar.
+  useEffect(() => {
+    const track = screenStream?.getVideoTracks()[0];
+    if (!track) {
+      setShareReady(false);
+      return;
+    }
+    const syncShare = () => setShareReady(track.readyState === "live");
+    syncShare();
+    track.addEventListener("ended", syncShare);
+    return () => track.removeEventListener("ended", syncShare);
+  }, [screenStream]);
+
   // Stop a pending screen capture if the candidate leaves the setup screen.
   useEffect(() => () => {
     screenStream?.getTracks().forEach((track) => track.stop());
