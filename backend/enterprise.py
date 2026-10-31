@@ -788,3 +788,277 @@ def admin_job_moderation_decision(job_id: str, body: CompanyReviewDecision, user
     run("UPDATE jobs SET status=? WHERE id=?", (body.decision, job_id))
     audit(user["id"], "job_moderation_decision", job_id + ":" + body.decision + ":" + body.reason.strip())
     return {"job_id": job_id, "status": body.decision}
+
+
+# ---------------------------------------------------------------------------
+# Admin console expansion — PRD v2.0
+# The console exposes only data that exists in this R0/R1 implementation.
+def ensure_admin_console_schema():
+    for statement in [
+        """CREATE TABLE IF NOT EXISTS admin_user_status (
+            user_id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active',
+            reason TEXT NOT NULL DEFAULT '', changed_by INTEGER NOT NULL, changed_at REAL NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS admin_attempt_reviews (
+            attempt_id TEXT PRIMARY KEY, decision TEXT NOT NULL, reason TEXT NOT NULL,
+            reviewer_id INTEGER NOT NULL, reviewed_at REAL NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS admin_staff_roles (
+            user_id INTEGER PRIMARY KEY, admin_role TEXT NOT NULL DEFAULT 'super_admin',
+            updated_by INTEGER NOT NULL, updated_at REAL NOT NULL)"""
+    ]:
+        run(statement)
+    # Existing internally provisioned admin accounts retain their current authority.
+    for row in allr("SELECT user_id FROM user_roles WHERE role='admin'"):
+        if not one("SELECT user_id FROM admin_staff_roles WHERE user_id=?", (row["user_id"],)):
+            run("INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at) VALUES (?,?,?,?)",
+                (row["user_id"], "super_admin", row["user_id"], time.time()))
+
+
+ensure_admin_console_schema()
+
+
+def admin_only(user):
+    require_role(user, "admin")
+    return user
+
+
+class AdminUserStatusInput(BaseModel):
+    status: str
+    reason: str = Field(min_length=3, max_length=1500)
+
+
+class AdminReviewInput(BaseModel):
+    decision: str
+    reason: str = Field(min_length=3, max_length=1500)
+
+
+@router.get("/api/admin/overview")
+def admin_overview_v2(user=Depends(current_user)):
+    admin_only(user)
+    counts = {
+        "users": one("SELECT COUNT(*) AS n FROM users")["n"],
+        "candidates": one("SELECT COUNT(*) AS n FROM user_roles WHERE role='candidate'")["n"],
+        "companies": one("SELECT COUNT(*) AS n FROM companies")["n"],
+        "verified_companies": one("SELECT COUNT(*) AS n FROM companies WHERE verified=1")["n"],
+        "pending_companies": one("SELECT COUNT(*) AS n FROM company_verification WHERE status='pending_review'")["n"],
+        "jobs": one("SELECT COUNT(*) AS n FROM jobs")["n"],
+        "pending_jobs": one("SELECT COUNT(*) AS n FROM jobs WHERE status='pending_review'")["n"],
+        "published_jobs": one("SELECT COUNT(*) AS n FROM jobs WHERE status='published'")["n"],
+        "applications": one("SELECT COUNT(*) AS n FROM applications")["n"],
+        "attempts": one("SELECT COUNT(*) AS n FROM attempts")["n"],
+        "completed_attempts": one("SELECT COUNT(*) AS n FROM attempts WHERE status='done'")["n"],
+        "open_appeals": one("SELECT COUNT(*) AS n FROM attempts WHERE appeal IS NOT NULL AND appeal!=''")["n"],
+        "assessment_requests": one("SELECT COUNT(*) AS n FROM phase_two_invites WHERE status='pending_platform_review'")["n"],
+        "suspended_users": one("SELECT COUNT(*) AS n FROM admin_user_status WHERE status='suspended'")["n"],
+    }
+    return {"counts": counts, "demo_data": True,
+            "note": "Counts may include explicitly labelled synthetic demo records. Billing and AI cost telemetry are not connected in this deployment."}
+
+
+@router.get("/api/admin/users")
+def admin_users_v2(user=Depends(current_user), q: str = "", role: str = "all", status: str = "all"):
+    admin_only(user)
+    query = """SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created,
+               COALESCE(s.status,'active') AS account_status,COALESCE(s.reason,'') AS status_reason
+               FROM users u LEFT JOIN user_roles r ON r.user_id=u.id
+               LEFT JOIN admin_user_status s ON s.user_id=u.id WHERE 1=1"""
+    args = []
+    if q.strip():
+        query += " AND (LOWER(u.name) LIKE ? OR LOWER(u.email) LIKE ?)"
+        needle = "%" + q.strip().lower() + "%"
+        args.extend([needle, needle])
+    if role in ("candidate", "company", "admin"):
+        query += " AND COALESCE(r.role,'candidate')=?"; args.append(role)
+    if status in ("active", "suspended"):
+        query += " AND COALESCE(s.status,'active')=?"; args.append(status)
+    query += " ORDER BY u.created DESC LIMIT 500"
+    return {"items": [dict(r) for r in allr(query, tuple(args))]}
+
+
+@router.post("/api/admin/users/{user_id}/status")
+def admin_set_user_status(user_id: int, body: AdminUserStatusInput, user=Depends(current_user)):
+    admin_only(user)
+    if body.status not in ("active", "suspended"):
+        raise HTTPException(422, "Status must be active or suspended")
+    target = one("SELECT id FROM users WHERE id=?", (user_id,))
+    if not target: raise HTTPException(404, "User not found")
+    target_role = one("SELECT role FROM user_roles WHERE user_id=?", (user_id,))
+    if user_id == user["id"] and body.status == "suspended":
+        raise HTTPException(409, "You cannot suspend your own active admin session")
+    if target_role and target_role["role"] == "admin" and body.status == "suspended":
+        raise HTTPException(409, "Admin staff suspension requires the privileged staff workflow")
+    run("""INSERT INTO admin_user_status(user_id,status,reason,changed_by,changed_at) VALUES (?,?,?,?,?)
+           ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,reason=excluded.reason,
+           changed_by=excluded.changed_by,changed_at=excluded.changed_at""",
+        (user_id, body.status, body.reason.strip(), user["id"], time.time()))
+    audit(user["id"], "admin_user_status_changed", str(user_id) + ":" + body.status + ":" + body.reason.strip())
+    return {"user_id": user_id, "status": body.status}
+
+
+@router.get("/api/admin/company-verifications")
+def admin_company_verifications_v2(user=Depends(current_user)):
+    admin_only(user)
+    rows = allr("""SELECT v.company_id,v.legal_name,v.country,v.business_id,v.evidence_note,v.status,
+                   v.decision_reason,v.submitted_at,v.reviewed_at,c.name AS company_name,c.website
+                   FROM company_verification v JOIN companies c ON c.id=v.company_id
+                   ORDER BY CASE WHEN v.status='pending_review' THEN 0 ELSE 1 END,v.submitted_at DESC""")
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.get("/api/admin/job-review-queue")
+def admin_job_review_queue_v2(user=Depends(current_user)):
+    admin_only(user)
+    rows = allr("""SELECT j.id,j.title,j.description,j.location,j.employment_type,j.status,j.created,
+                   c.name AS company_name,c.id AS company_id,c.verified
+                   FROM jobs j JOIN companies c ON c.id=j.company_id
+                   WHERE j.status IN ('pending_review','needs_changes','rejected')
+                   ORDER BY CASE WHEN j.status='pending_review' THEN 0 ELSE 1 END,j.created ASC""")
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.get("/api/admin/assessment-reviews")
+def admin_assessment_reviews(user=Depends(current_user)):
+    admin_only(user)
+    rows = allr("""SELECT a.id,a.user_id,a.kind,a.status,a.started,a.finished,a.result,a.appeal,
+                   u.name AS candidate_name,u.email,
+                   r.decision AS review_decision,r.reason AS review_reason,r.reviewed_at
+                   FROM attempts a JOIN users u ON u.id=a.user_id
+                   LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
+                   WHERE a.status='done' OR (a.appeal IS NOT NULL AND a.appeal!='')
+                   ORDER BY CASE WHEN a.appeal IS NOT NULL AND a.appeal!='' AND r.decision IS NULL THEN 0 ELSE 1 END,
+                   COALESCE(a.finished,a.started) DESC LIMIT 300""")
+    items=[]
+    for row in rows:
+        item=dict(row)
+        try: item["result"]=json.loads(item["result"]) if item["result"] else None
+        except Exception: item["result"]=None
+        items.append(item)
+    return {"items":items}
+
+
+@router.post("/api/admin/attempts/{attempt_id}/review")
+def admin_review_attempt(attempt_id: str, body: AdminReviewInput, user=Depends(current_user)):
+    admin_only(user)
+    if body.decision not in ("approved", "needs_more_info", "invalidated"):
+        raise HTTPException(422, "Unsupported review decision")
+    if not one("SELECT id FROM attempts WHERE id=?", (attempt_id,)):
+        raise HTTPException(404, "Assessment attempt not found")
+    run("""INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at)
+           VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
+           reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
+        (attempt_id, body.decision, body.reason.strip(), user["id"], time.time()))
+    audit(user["id"], "assessment_result_reviewed", attempt_id + ":" + body.decision + ":" + body.reason.strip())
+    return {"attempt_id": attempt_id, "decision": body.decision,
+            "note": "The original answer record and deterministic score were not modified."}
+
+
+@router.get("/api/admin/appeals")
+def admin_appeals(user=Depends(current_user)):
+    admin_only(user)
+    rows = allr("""SELECT a.id AS attempt_id,a.appeal,a.kind,a.finished,u.id AS user_id,u.name AS candidate_name,
+                   u.email,r.decision,r.reason AS review_reason,r.reviewed_at,r.reviewer_id
+                   FROM attempts a JOIN users u ON u.id=a.user_id
+                   LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
+                   WHERE a.appeal IS NOT NULL AND a.appeal!='' ORDER BY a.started DESC LIMIT 300""")
+    return {"items":[dict(r) for r in rows]}
+
+
+@router.post("/api/admin/appeals/{attempt_id}/decision")
+def admin_appeal_decision(attempt_id: str, body: AdminReviewInput, user=Depends(current_user)):
+    admin_only(user)
+    if body.decision not in ("upheld", "overturned", "needs_more_info"):
+        raise HTTPException(422, "Unsupported appeal decision")
+    row=one("SELECT id FROM attempts WHERE id=? AND appeal IS NOT NULL AND appeal!=''",(attempt_id,))
+    if not row: raise HTTPException(404,"Appeal not found")
+    run("""INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at)
+           VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
+           reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
+        (attempt_id,body.decision,body.reason.strip(),user["id"],time.time()))
+    audit(user["id"],"candidate_appeal_decided",attempt_id+":"+body.decision+":"+body.reason.strip())
+    return {"attempt_id":attempt_id,"decision":body.decision}
+
+
+@router.get("/api/admin/phase-two-requests")
+def admin_phase_two_requests(user=Depends(current_user)):
+    admin_only(user)
+    rows=allr("""SELECT p.id,p.title,p.requirements,p.config_json,p.status,p.deadline,p.created,
+                 c.name AS company_name,j.title AS job_title,u.name AS candidate_name
+                 FROM phase_two_invites p JOIN companies c ON c.id=p.company_id
+                 JOIN jobs j ON j.id=p.job_id JOIN applications a ON a.id=p.application_id
+                 JOIN users u ON u.id=a.candidate_id ORDER BY p.created DESC""")
+    return {"items":[{**dict(r),"config":json.loads(r["config_json"])} for r in rows]}
+
+
+@router.post("/api/admin/phase-two-requests/{request_id}/decision")
+def admin_phase_two_decision(request_id: str, body: AdminReviewInput, user=Depends(current_user)):
+    admin_only(user)
+    if body.decision not in ("approved","needs_changes","rejected"):
+        raise HTTPException(422,"Unsupported phase-two review decision")
+    row=one("SELECT id FROM phase_two_invites WHERE id=?",(request_id,))
+    if not row: raise HTTPException(404,"Assessment request not found")
+    run("UPDATE phase_two_invites SET status=?,updated=? WHERE id=?",(body.decision,time.time(),request_id))
+    audit(user["id"],"phase_two_request_reviewed",request_id+":"+body.decision+":"+body.reason.strip())
+    return {"id":request_id,"status":body.decision}
+
+
+@router.get("/api/admin/audit-logs")
+def admin_audit_logs(user=Depends(current_user), limit: int = 100, action: str = ""):
+    admin_only(user)
+    limit=max(1,min(limit,300))
+    if action.strip():
+        rows=allr("""SELECT a.id,a.ts,a.actor,a.action,a.target,u.name AS actor_name,u.email AS actor_email
+                     FROM audit a LEFT JOIN users u ON u.id=a.actor WHERE a.action LIKE ?
+                     ORDER BY a.ts DESC LIMIT ?""",("%"+action.strip()+"%",limit))
+    else:
+        rows=allr("""SELECT a.id,a.ts,a.actor,a.action,a.target,u.name AS actor_name,u.email AS actor_email
+                     FROM audit a LEFT JOIN users u ON u.id=a.actor ORDER BY a.ts DESC LIMIT ?""",(limit,))
+    return {"items":[dict(r) for r in rows]}
+
+
+@router.get("/api/admin/questions")
+def admin_questions(user=Depends(current_user)):
+    admin_only(user)
+    from content import QUESTIONS
+    return {"items":[{"id":q["id"],"topic":q["topic"],"difficulty":q["difficulty"],
+                      "type":q["type"],"prompt":q["prompt"][:240],
+                      "status":"active_curated","version":"r0-static"} for q in QUESTIONS],
+            "governance":"The current R0 bank is static curated content. Versioned authoring, independent approval, exposure monitoring and retirement are not connected to live delivery yet."}
+
+
+@router.get("/api/admin/ai-operations")
+def admin_ai_operations(user=Depends(current_user)):
+    admin_only(user)
+    import main as core
+    return {"provider":"Anthropic-compatible configured provider","model":core.LLM_MODEL,
+            "configured":bool(core.ANTHROPIC_API_KEY),"status":"configured" if core.ANTHROPIC_API_KEY else "fallback_mode",
+            "fallback":"Rule-based CV extraction","metrics_available":False,
+            "note":"Provider latency, token/cost telemetry, prompt evaluation history and a remote kill switch are not instrumented in this deployment."}
+
+
+@router.get("/api/admin/billing")
+def admin_billing(user=Depends(current_user)):
+    admin_only(user)
+    return {"enabled":False,"provider_configured":False,"plans":[],"invoices":[],"refunds":[],
+            "ledger":[],"note":"Billing, payment webhooks, credit ledger, invoices and refund reconciliation are not implemented/configured in this deployment. No financial records are fabricated."}
+
+
+@router.get("/api/admin/privacy")
+def admin_privacy(user=Depends(current_user)):
+    admin_only(user)
+    return {"consented_users":one("SELECT COUNT(DISTINCT user_id) AS n FROM consents")["n"],
+            "consent_records":one("SELECT COUNT(*) AS n FROM consents")["n"],
+            "export_capability":True,"self_service_deletion":True,
+            "retention_jobs_configured":False,
+            "note":"Consent history, candidate self-service export and deletion endpoints exist. Admin-managed requests, regional retention schedules and scheduled deletion workers are not configured."}
+
+
+@router.get("/api/admin/quality")
+def admin_quality(user=Depends(current_user)):
+    admin_only(user)
+    attempts=one("SELECT COUNT(*) AS n FROM attempts WHERE status='done'")["n"]
+    appeals=one("SELECT COUNT(*) AS n FROM attempts WHERE appeal IS NOT NULL AND appeal!=''")["n"]
+    reviewed=one("SELECT COUNT(*) AS n FROM admin_attempt_reviews")["n"]
+    overturns=one("SELECT COUNT(*) AS n FROM admin_attempt_reviews WHERE decision='overturned'")["n"]
+    return {"completed_attempts":attempts,"appeals":appeals,"reviewed_attempts":reviewed,
+            "appeal_overturns":overturns,"appeal_overturn_rate":(round(overturns/appeals,4) if appeals else None),
+            "demographic_analysis":"not_collected",
+            "note":"No demographic or protected-group inference is performed. Metrics are descriptive and limited by the current prototype data."}
