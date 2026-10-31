@@ -152,6 +152,13 @@ def current_user(authorization: Optional[str] = Header(None)):
         raise HTTPException(401, "Invalid or expired session")
     u = one("SELECT * FROM users WHERE id=?", (data["uid"],))
     if not u: raise HTTPException(401, "Unknown user")
+    # Suspended accounts lose access on their next authenticated request.
+    try:
+        status = one("SELECT status FROM admin_user_status WHERE user_id=?", (data["uid"],))
+        if status and status["status"] == "suspended":
+            raise HTTPException(403, "account_suspended")
+    except sqlite3.OperationalError:
+        pass  # Admin schema may not have been initialised during an early migration.
     return dict(u)
 
 
