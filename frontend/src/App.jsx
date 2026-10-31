@@ -282,6 +282,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
   const [left, setLeft] = useState(initial.remaining);
   const [stream, setStream] = useState(screenStream || null);
   const [shareActive, setShareActive] = useState(Boolean(screenStream?.getVideoTracks().some((track) => track.readyState === "live")));
+  const [fullscreenActive, setFullscreenActive] = useState(Boolean(document.fullscreenElement));
   const [shareNotice, setShareNotice] = useState("");
   const [integrityNotice, setIntegrityNotice] = useState("");
   const aid = v.attempt_id;
@@ -317,7 +318,9 @@ function ExamRun({ initial, onFinished, screenStream }) {
     const blur = () => report("blur");
     const visibility = () => { if (document.visibilityState === "hidden") report("tab_hidden"); };
     const fullscreen = () => {
-      if (!document.fullscreenElement) {
+      const active = Boolean(document.fullscreenElement);
+      setFullscreenActive(active);
+      if (!active) {
         report("fullscreen_exit");
         setIntegrityNotice(t("fullscreenWarning"));
       }
@@ -340,7 +343,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
       document.removeEventListener("fullscreenchange", fullscreen);
       window.removeEventListener("blur", blur);
     };
-  }, [report, t]);
+  }, [report]);
 
   useEffect(() => {
     const track = stream?.getVideoTracks()[0];
@@ -354,7 +357,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
     };
     track.addEventListener("ended", ended);
     return () => track.removeEventListener("ended", ended);
-  }, [stream, report, t]);
+  }, [stream, report]);
 
   // Stop capture when the exam component is removed or the stream is replaced.
   useEffect(() => () => {
@@ -365,6 +368,16 @@ function ExamRun({ initial, onFinished, screenStream }) {
   }, []);
 
   const q = v.question;
+  const restartFullscreen = async () => {
+    try {
+      if (!document.documentElement.requestFullscreen) throw new Error(t("fullscreenUnsupported"));
+      await document.documentElement.requestFullscreen();
+      setFullscreenActive(Boolean(document.fullscreenElement));
+      setIntegrityNotice("");
+    } catch (e) {
+      setShareNotice(e.message || t("fullscreenUnsupported"));
+    }
+  };
   const restartShare = async () => {
     try {
       if (!navigator.mediaDevices?.getDisplayMedia) throw new Error(t("shareUnsupported"));
@@ -379,7 +392,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
     }
   };
   const submit = async () => {
-    if (!shareActive) { setShareNotice(t("shareRequired")); return; }
+    if (!shareActive || !fullscreenActive) { setShareNotice(!shareActive ? t("shareRequired") : t("fullscreenRequired")); return; }
     setBusy(true); setErr(null);
     try {
       const r = await api(`/attempts/${aid}/answer`, { method: "POST", body: { question_id: q.id, answer: String(ans) } });
@@ -404,6 +417,8 @@ function ExamRun({ initial, onFinished, screenStream }) {
         <strong>{shareActive ? t("shareActive") : t("shareStopped")}</strong>
         <span>{t("sharePrivacy")}</span>
         {!shareActive && <button type="button" className="btn sm" onClick={restartShare}>{t("restartShare")}</button>}
+        <span>{fullscreenActive ? t("fullscreenActive") : t("fullscreenWarning")}</span>
+        {!fullscreenActive && <button type="button" className="btn sm" onClick={restartFullscreen}>{t("restartFullscreen")}</button>}
       </div>
       {integrityNotice && <p className="exam-integrity-notice" role="status">{integrityNotice}</p>}
       {shareNotice && <p className="err" role="alert">{shareNotice}</p>}
@@ -422,7 +437,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
           <p className="note">{t("sqlHelp")}</p>
           <textarea className="code" rows={6} spellCheck={false} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="SELECT ..." />
           <p className="muted">{t("pasteNote")}</p>
-          <button className="btn ghost" onClick={runSql} disabled={!ans.trim() || !shareActive}>{t("run")}</button>
+          <button className="btn ghost" onClick={runSql} disabled={!ans.trim() || !shareActive || !fullscreenActive}>{t("run")}</button>
           {out && (out.error ? <p className="err">{t("sqlError")}: {out.error}</p> : (
             <div className="tablewrap">
               <table><thead><tr>{out.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
@@ -433,7 +448,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
         </>
       )}
       <Err e={err} />
-      <button className="btn" onClick={submit} disabled={busy || !shareActive || String(ans).trim() === ""}>{busy ? t("saving") : t("submit")}</button>
+      <button className="btn" onClick={submit} disabled={busy || !shareActive || !fullscreenActive || String(ans).trim() === ""}>{busy ? t("saving") : t("submit")}</button>
     </section>
   );
 }
@@ -528,6 +543,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         : Promise.resolve(null);
       requestedStream = await shareRequest;
       await fullscreenRequest;
+      if (!document.fullscreenElement) throw new Error(t("fullscreenRequired"));
       const v = await api("/attempts", { method: "POST" });
       if (v.status === "active") {
         setScreenStream(requestedStream);
