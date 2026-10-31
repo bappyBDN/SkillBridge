@@ -19,7 +19,7 @@ COOLDOWN_HOURS = float(os.getenv("RETEST_COOLDOWN_HOURS", "0"))   # spec default
 MAX_ATTEMPTS_90D = int(os.getenv("MAX_ATTEMPTS_90D", "3"))
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-5-5")
-CONSENT_VERSION = "r0-1"
+CONSENT_VERSION = "r0-2"
 
 
 def _secret() -> str:
@@ -452,13 +452,16 @@ def sql_run(aid: str, b: SqlRun, u=Depends(current_user)):
 
 
 class Ev(BaseModel):
-    type: str
+    type: str = Field(min_length=1, max_length=40)
 
 
 @app.post("/api/attempts/{aid}/event")
 def event(aid: str, b: Ev, u=Depends(current_user)):
     att = get_att(aid, u["id"])
-    if att["status"] == "active" and b.type in ("paste", "blur"):
+    if att["status"] == "active" and b.type in {
+        "copy", "cut", "paste", "blur", "tab_hidden", "fullscreen_exit",
+        "screen_share_started", "screen_share_stopped", "screen_share_unavailable",
+    }:
         run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, b.type, time.time()))
     return {"ok": True}
 
