@@ -556,7 +556,8 @@ function HiringWorkspace({role}) {
   {role==="candidate"&&<section className="card"><h2>Available jobs</h2>{jobs.map(j=><article className="card quiet" key={j.id}><h3>{j.title} {j.is_mock&&<span className="chip">MOCK</span>}</h3><p>{j.company_name} · {j.location}</p><p>{j.description}</p><button className="btn" onClick={()=>apply(j.id)}>Apply</button></article>)}<h2>My applications</h2>{items.map(a=><p key={a.application_id}>{a.title} — {a.company_name}</p>)}</section>}
   {role==="admin"&&<section className="card"><h2>Platform totals</h2>{items.map(x=><p key={x.key}>{x.key}: {x.value}</p>)}</section>}<button className="btn ghost" onClick={load}>Refresh</button></main>;
 }
-\n/* ---------- shell ---------- */
+
+/* ---------- shell ---------- */
 function Shell({ lang, setLang }) {
   const t = useT();
   const [authed, setAuthed] = useState(!!getToken());
