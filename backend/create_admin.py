@@ -18,7 +18,7 @@ from enterprise import ensure_admin_console_schema
 def main():
     ensure_admin_console_schema()
     email = input("Admin email: ").strip().lower()
-    if not re.match(r"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", email):
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise SystemExit("A valid email address is required.")
 
     existing = one("SELECT id,name FROM users WHERE email=?", (email,))
@@ -56,7 +56,7 @@ def main():
            updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
         (user_id, user_id, time.time()),
     )
-    print("\\nSuper Admin provisioned successfully.")
+    print("\nSuper Admin provisioned successfully.")
     print(f"Email: {email}")
     print("Password: use the password you entered (it is not displayed).")
     print("Sign in through the SkillBridge sign-in page; the Admin Console appears automatically for admin accounts.")
