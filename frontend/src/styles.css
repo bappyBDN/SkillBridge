@@ -459,3 +459,15 @@ summary { cursor: pointer; font-weight: 600; margin: .4rem 0; }
 @media(max-width:1120px){.ad-sidebar{width:225px;flex-basis:225px}.ad-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.ad-overview-grid,.ad-two-col{grid-template-columns:1fr}}
 @media(max-width:760px){.ad-sidebar{position:relative;width:68px;flex:0 0 68px;height:auto;min-height:100vh;padding:17px 7px}.ad-brand{justify-content:center;padding:0 0 20px}.ad-brand>span:last-child,.ad-admin-label,.ad-nav button:not(.active){font-size:0}.ad-brand-mark{width:36px;height:36px}.ad-nav button{justify-content:center;padding:11px 5px;font-size:0}.ad-nav button>span{font-size:1.05rem}.ad-nav button.active{font-size:0}.ad-nav button>b{position:absolute;margin:0 0 25px 33px;min-width:15px;height:15px;font-size:.45rem}.ad-security-card,.ad-admin-profile{display:none}.ad-topbar{padding:0 15px;min-height:57px}.ad-secure-label{display:none}.ad-content{padding:23px 14px}.ad-page-heading{align-items:flex-start;flex-direction:column}.ad-refresh{align-self:flex-end}.ad-metrics{gap:8px}.ad-metric{padding:12px;gap:9px}.ad-metric>span{width:29px;height:29px;flex-basis:29px}.ad-metric strong{font-size:1.25rem}.ad-panel{padding:15px}.ad-table{min-width:700px}.ad-footer{flex-direction:column}.ad-toolbar{align-items:stretch;flex-direction:column}.ad-toolbar input{width:100%}}
 @media(max-width:430px){.ad-sidebar{width:54px;flex-basis:54px;padding-inline:5px}.ad-metrics{grid-template-columns:1fr 1fr}.ad-metric{display:block}.ad-metric>span{margin-bottom:8px}.ad-page-heading h1{font-size:1.7rem}.ad-top-actions{gap:8px}.ad-topbar>div:first-child{font-size:.61rem}.ad-modal{padding:22px}}
+
+
+/* Exam integrity controls */
+.exam-integrity-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;margin:0 0 16px;border:1px solid #d9e3ef;border-radius:12px;background:#f6f8fc;color:#24354c;font-size:.82rem}
+.exam-integrity-banner strong{font-weight:800}
+.exam-integrity-banner span{flex:1;min-width:180px;color:#65738a}
+.exam-integrity-banner.active{background:#e8f7f0;border-color:#a9ddc5;color:#116047}
+.exam-integrity-banner.warning{background:#fff4e5;border-color:#edc98d;color:#80520b}
+.exam-integrity-notice,.exam-integrity-note{padding:10px 13px;border-radius:9px;background:#fff4e5;border:1px solid #edc98d;color:#80520b;font-size:.82rem}
+.exam-copy-locked{user-select:none;-webkit-user-select:none}
+.exam textarea{user-select:text;-webkit-user-select:text}
+.exam-integrity-banner .btn{white-space:nowrap}
