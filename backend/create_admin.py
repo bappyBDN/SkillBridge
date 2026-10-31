@@ -59,7 +59,7 @@ def main():
     print("\\nSuper Admin provisioned successfully.")
     print(f"Email: {email}")
     print("Password: use the password you entered (it is not displayed).")
-    print("Sign in through the SkillBridge sign-in page, then open /#admin.")
+    print("Sign in through the SkillBridge sign-in page; the Admin Console appears automatically for admin accounts.")
 
 
 if __name__ == "__main__":
