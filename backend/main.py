@@ -13,6 +13,7 @@ from content import TAXONOMY, JOB, QBYID, TESTABLE
 
 log = logging.getLogger("skillbridge")
 DB_PATH = os.getenv("DB_PATH", "/data/skillbridge.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 COOLDOWN_HOURS = float(os.getenv("RETEST_COOLDOWN_HOURS", "0"))   # spec default is 14 days (336h); 0 for demos
 MAX_ATTEMPTS_90D = int(os.getenv("MAX_ATTEMPTS_90D", "3"))
@@ -42,10 +43,43 @@ CREATE TABLE IF NOT EXISTS attempts(id TEXT PRIMARY KEY, user_id INT, kind TEXT,
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, attempt_id TEXT, type TEXT, ts REAL);
 CREATE TABLE IF NOT EXISTS passports(id TEXT PRIMARY KEY, user_id INT, payload TEXT, signature TEXT, created REAL, revoked INT DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor INT, action TEXT, target TEXT);
+CREATE TABLE IF NOT EXISTS user_roles(user_id INTEGER PRIMARY KEY, role TEXT NOT NULL DEFAULT 'candidate');
+CREATE TABLE IF NOT EXISTS companies(id TEXT PRIMARY KEY, owner_user_id INTEGER UNIQUE NOT NULL, name TEXT NOT NULL, website TEXT, verified INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, company_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, location TEXT NOT NULL DEFAULT 'Remote', employment_type TEXT NOT NULL DEFAULT 'Full-time', skills TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft', is_mock INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS applications(id TEXT PRIMARY KEY, job_id TEXT NOT NULL, candidate_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'submitted', results_shared INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, UNIQUE(job_id, candidate_id));
+CREATE TABLE IF NOT EXISTS company_assessments(id TEXT PRIMARY KEY, company_id TEXT NOT NULL, job_id TEXT, title TEXT NOT NULL, requirements TEXT NOT NULL, questions TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft', created REAL NOT NULL);
 """
 
 
+class PgCompatConnection:
+    """Small DB-API adapter so the prototype can keep parameterized SQL on PostgreSQL."""
+    def __init__(self, connection):
+        self.connection = connection
+    def execute(self, sql, args=()):
+        return self.connection.execute(sql.replace("?", "%s"), args)
+    def executescript(self, script):
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+    def commit(self):
+        self.connection.commit()
+    def close(self):
+        self.connection.close()
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type:
+            self.connection.rollback()
+        else:
+            self.connection.commit()
+        self.connection.close()
+
+
 def db():
+    if DATABASE_URL:
+        import psycopg
+        from psycopg.rows import dict_row
+        return PgCompatConnection(psycopg.connect(DATABASE_URL, row_factory=dict_row))
     c = sqlite3.connect(DB_PATH, timeout=10)
     c.row_factory = sqlite3.Row
     return c
@@ -53,7 +87,13 @@ def db():
 
 def init_db():
     with db() as c:
-        c.executescript(SCHEMA)
+        schema = SCHEMA
+        if DATABASE_URL:
+            schema = schema.replace("users(id INTEGER PRIMARY KEY", "users(id BIGSERIAL PRIMARY KEY")
+            schema = schema.replace("consents(id INTEGER PRIMARY KEY", "consents(id BIGSERIAL PRIMARY KEY")
+            schema = schema.replace("events(id INTEGER PRIMARY KEY", "events(id BIGSERIAL PRIMARY KEY")
+            schema = schema.replace("audit(id INTEGER PRIMARY KEY", "audit(id BIGSERIAL PRIMARY KEY")
+        c.executescript(schema)
 
 
 def one(sql, args=()):
@@ -71,8 +111,20 @@ def allr(sql, args=()):
 def run(sql, args=()):
     c = db()
     try:
-        cur = c.execute(sql, args); c.commit(); return cur.lastrowid
-    finally: c.close()
+        if DATABASE_URL:
+            if sql.lstrip().upper().startswith("INSERT INTO USERS("):
+                cur = c.execute(sql.replace("?", "%s") + " RETURNING id", args)
+                result = cur.fetchone()["id"]
+            else:
+                c.execute(sql.replace("?", "%s"), args)
+                result = None
+            c.commit()
+            return result
+        cur = c.execute(sql, args)
+        c.commit()
+        return cur.lastrowid
+    finally:
+        c.close()
 
 
 def audit(actor, action, target=""):
@@ -125,6 +177,7 @@ class Reg(BaseModel):
     email: str = Field(min_length=5, max_length=120)
     name: str = Field(min_length=2, max_length=80)
     password: str = Field(min_length=8, max_length=128)
+    role: str = "candidate"
 
 
 class Login(BaseModel):
@@ -138,7 +191,10 @@ def register(b: Reg):
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email): raise HTTPException(422, "Invalid email")
     if one("SELECT 1 FROM users WHERE email=?", (email,)): raise HTTPException(409, "Email already registered")
     salt = secrets.token_hex(16)
+    if b.role not in ("candidate", "company"):
+        raise HTTPException(422, "Role must be candidate or company")
     uid = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)", (email, b.name.strip(), salt, hash_pw(b.password, salt), time.time()))
+    run("INSERT INTO user_roles(user_id,role) VALUES (?,?)", (uid, b.role))
     audit(uid, "register")
     return {"token": make_token(uid)}
 
@@ -475,3 +531,8 @@ def public_passport(pid: str):
     valid = hmac.compare_digest(p["signature"], E.sign_payload(payload, SECRET))
     if p["revoked"]: return {"revoked": True, "signature_valid": valid}
     return {"revoked": False, "expired": payload["expires"] < time.strftime("%Y-%m-%d"), "signature_valid": valid, "signature": p["signature"][:16], "passport": payload}
+
+
+# PRD expansion: company, job and recruiter/admin APIs.
+from enterprise import router as enterprise_router
+app.include_router(enterprise_router)
