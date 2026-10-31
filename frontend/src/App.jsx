@@ -646,7 +646,7 @@ function HiringWorkspace({ role }) {
       setWorkspace(w); setCompanyName(w.company.name); setWebsite(w.company.website || "");
       const j = await api("/company/jobs");
       setJobs(j.items || []);
-      if (w.company.verified) {
+      if (w.company.verified && w.permissions.manage_pipeline) {
         const a = await api("/company/applications"); setApplications(a.items || []);
       } else { setApplications([]); }
       if (w.permissions.view_reports) {
@@ -702,7 +702,7 @@ function HiringWorkspace({ role }) {
   const inviteMember = async (e) => { e.preventDefault(); try { const r=await api("/company/team/invitations",{method:"POST",body:teamForm}); setInviteToken(r.invite_token); flash("Invitation created. Share the token securely with the invited user."); const t=await api("/company/team");setTeam(t.items||[]); } catch(e){fail(e);} };
   const acceptInvite = async (e) => { e.preventDefault(); try { await api("/company/team/accept/"+inviteToken,{method:"POST"}); setInviteToken(""); flash("Organisation invitation accepted. Refreshing workspace."); await load(); } catch(e){fail(e);} };
   const createPhase = async (e) => { e.preventDefault(); if(!selectedApp){fail(new Error("Choose an applicant first."));return;} try { const topics=phaseForm.syllabus.split("\n").map(x=>x.trim()).filter(Boolean); const rubricLines=phaseForm.rubric.split("\n").map(x=>x.trim()).filter(Boolean); const difficulty={easy:Number(phaseForm.difficulty_easy),medium:Number(phaseForm.difficulty_medium),hard:Number(phaseForm.difficulty_hard)}; if(topics.length===0||rubricLines.length===0||phaseForm.question_types.length===0||Object.values(difficulty).reduce((x,y)=>x+y,0)!==100){fail(new Error("Add syllabus and rubric criteria; difficulty percentages must total 100."));return;} const payload={...phaseForm,syllabus:topics,rubric:rubricLines.map((criterion,index)=>({criterion,weight:100/rubricLines.length})),allowed_resources:phaseForm.allowed_resources.split("\n").map(x=>x.trim()).filter(Boolean),difficulty}; await api("/company/applications/"+selectedApp+"/phase-two-invitations",{method:"POST",body:payload}); flash("Second-phase assessment configuration submitted for platform review. Candidate delivery is not active yet."); await load(); setPage("assessments"); } catch(e){fail(e);} };
-  const nav=[["overview","Overview","⌂"],["jobs","Jobs","▤"],["applicants","Applicants","♙"],["assessments","Assessments","◎"],["analytics","Analytics","▥"],...(canManageTeam?[["team","Team","♧"]]:[]),["settings","Company settings","⚙"]];
+  const nav=[["overview","Overview","⌂"],["jobs","Jobs","▤"],...(canManagePipeline?[["applicants","Applicants","♙"]]:[]),["assessments","Assessments","◎"],["analytics","Analytics","▥"],...(canManageTeam?[["team","Team","♧"]]:[]),["settings","Company settings","⚙"]];
   const stages=[["submitted","Applied"],["preliminary_assessment","Preliminary"],["in_review","In review"],["phase_two_invited","Phase two"],["human_interview","Interview"],["offer","Offer"],["hired","Hired"],["rejected","Rejected"],["on_hold","On hold"]];
   const filteredApps=applications.filter(a=>(filterJob==="all"||a.job_id===filterJob)&&((a.candidate_name||"").toLowerCase().includes(search.toLowerCase())||(a.job_title||"").toLowerCase().includes(search.toLowerCase())));
   const metric=(label,value,sub,icon)=> <div className="cr-metric"><span className="cr-metric-icon">{icon}</span><div><small>{label}</small><strong>{value}</strong><span>{sub}</span></div></div>;
