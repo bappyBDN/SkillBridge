@@ -386,6 +386,15 @@ def get_att(att_id, uid):
     return dict(a)
 
 
+def require_screen_share(att_id):
+    latest = one(
+        "SELECT type FROM events WHERE attempt_id=? AND type IN ('screen_share_started','screen_share_stopped','screen_share_unavailable') ORDER BY ts DESC, id DESC LIMIT 1",
+        (att_id,),
+    )
+    if not latest or latest["type"] != "screen_share_started":
+        raise HTTPException(409, "screen_share_required")
+
+
 @app.post("/api/attempts")
 def start_attempt(u=Depends(current_user)):
     need_consent(u)
@@ -424,6 +433,7 @@ class Ans(BaseModel):
 def answer(aid: str, b: Ans, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     if att["status"] != "active": raise HTTPException(409, "Attempt already finished")
+    require_screen_share(aid)
     st = json.loads(att["state"])
     if time.time() > att["started"] + E.TEST_SECONDS + E.GRACE:      # server owns the timer
         finalize(att, st); return view(get_att(aid, u["id"]))
@@ -448,6 +458,7 @@ def sql_run(aid: str, b: SqlRun, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     st = json.loads(att["state"])
     if att["status"] != "active" or not st["current"] or QBYID[st["current"]]["type"] != "sql": raise HTTPException(409, "No SQL question active")
+    require_screen_share(aid)
     return E.run_query(att["seed"], b.sql)                  # visible dataset only; scoring uses hidden datasets
 
 
