@@ -1112,7 +1112,9 @@ def admin_console_create_staff(body: AdminStaffCreateInput, user=Depends(current
     admin_only(user, "staff")
     email = body.email.strip().lower()
     name = body.name.strip()
-    if not re.match(r"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", email):
+    if len(name) < 2:
+        raise HTTPException(422, "A valid admin name is required")
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(422, "A valid email address is required")
     allowed = {"super_admin", "trust_safety_reviewer", "question_content_admin",
                "company_verification_admin", "support_agent", "finance_admin", "compliance_officer"}
