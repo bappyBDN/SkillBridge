@@ -272,7 +272,7 @@ function Gap({ onStart, refreshKey }) {
 }
 
 /* ---------- exam ---------- */
-function ExamRun({ initial, onFinished }) {
+function ExamRun({ initial, onFinished, screenStream }) {
   const t = useT();
   const [v, setV] = useState(initial);
   const [ans, setAns] = useState("");
@@ -280,18 +280,106 @@ function ExamRun({ initial, onFinished }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [left, setLeft] = useState(initial.remaining);
+  const [stream, setStream] = useState(screenStream || null);
+  const [shareActive, setShareActive] = useState(Boolean(screenStream?.getVideoTracks().some((track) => track.readyState === "live")));
+  const [shareNotice, setShareNotice] = useState("");
+  const [integrityNotice, setIntegrityNotice] = useState("");
   const aid = v.attempt_id;
+
+  const report = useCallback((type) => {
+    api(`/attempts/${aid}/event`, { method: "POST", body: { type } }).catch(() => {});
+  }, [aid]);
 
   useEffect(() => { const i = setInterval(() => setLeft((x) => Math.max(0, x - 1)), 1000); return () => clearInterval(i); }, []);
   useEffect(() => { setAns(""); setOut(null); }, [v.question?.id]);
+
+  // Block clipboard actions throughout the exam, not only in the SQL editor.
   useEffect(() => {
-    const onBlur = () => api(`/attempts/${aid}/event`, { method: "POST", body: { type: "blur" } }).catch(() => {});
-    window.addEventListener("blur", onBlur);
-    return () => window.removeEventListener("blur", onBlur);
-  }, [aid]);
+    const clipboard = (event) => {
+      event.preventDefault();
+      report(event.type);
+      setIntegrityNotice(t("clipboardBlocked"));
+    };
+    const keyboard = (event) => {
+      const key = String(event.key || "").toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && ["c", "v", "x"].includes(key)) {
+        event.preventDefault();
+        report(key === "c" ? "copy" : key === "x" ? "cut" : "paste");
+        setIntegrityNotice(t("clipboardBlocked"));
+      }
+      if (event.shiftKey && key === "insert") {
+        event.preventDefault();
+        report("paste");
+        setIntegrityNotice(t("clipboardBlocked"));
+      }
+    };
+    const contextMenu = (event) => { event.preventDefault(); };
+    const blur = () => report("blur");
+    const visibility = () => { if (document.visibilityState === "hidden") report("tab_hidden"); };
+    const fullscreen = () => {
+      if (!document.fullscreenElement) {
+        report("fullscreen_exit");
+        setIntegrityNotice(t("fullscreenWarning"));
+      }
+    };
+    document.addEventListener("copy", clipboard, true);
+    document.addEventListener("cut", clipboard, true);
+    document.addEventListener("paste", clipboard, true);
+    document.addEventListener("keydown", keyboard, true);
+    document.addEventListener("contextmenu", contextMenu, true);
+    document.addEventListener("visibilitychange", visibility);
+    document.addEventListener("fullscreenchange", fullscreen);
+    window.addEventListener("blur", blur);
+    return () => {
+      document.removeEventListener("copy", clipboard, true);
+      document.removeEventListener("cut", clipboard, true);
+      document.removeEventListener("paste", clipboard, true);
+      document.removeEventListener("keydown", keyboard, true);
+      document.removeEventListener("contextmenu", contextMenu, true);
+      document.removeEventListener("visibilitychange", visibility);
+      document.removeEventListener("fullscreenchange", fullscreen);
+      window.removeEventListener("blur", blur);
+    };
+  }, [report, t]);
+
+  useEffect(() => {
+    const track = stream?.getVideoTracks()[0];
+    if (!track) { setShareActive(false); return; }
+    setShareActive(track.readyState === "live");
+    report("screen_share_started");
+    const ended = () => {
+      setShareActive(false);
+      setShareNotice(t("shareStopped"));
+      report("screen_share_stopped");
+    };
+    track.addEventListener("ended", ended);
+    return () => track.removeEventListener("ended", ended);
+  }, [stream, report, t]);
+
+  // Stop capture when the exam component is removed or the stream is replaced.
+  useEffect(() => () => {
+    stream?.getTracks().forEach((track) => track.stop());
+  }, [stream]);
+  useEffect(() => () => {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  }, []);
 
   const q = v.question;
+  const restartShare = async () => {
+    try {
+      if (!navigator.mediaDevices?.getDisplayMedia) throw new Error(t("shareUnsupported"));
+      const nextStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+      setStream(nextStream);
+      setShareActive(true);
+      setShareNotice("");
+      setIntegrityNotice("");
+    } catch (e) {
+      setShareNotice(e.message || t("shareRequired"));
+      report("screen_share_unavailable");
+    }
+  };
   const submit = async () => {
+    if (!shareActive) { setShareNotice(t("shareRequired")); return; }
     setBusy(true); setErr(null);
     try {
       const r = await api(`/attempts/${aid}/answer`, { method: "POST", body: { question_id: q.id, answer: String(ans) } });
@@ -299,8 +387,10 @@ function ExamRun({ initial, onFinished }) {
       if (r.status === "done") onFinished(aid);
     } catch (e) { setErr(e); } finally { setBusy(false); }
   };
-  const runSql = async () => { try { setOut(await api(`/attempts/${aid}/sql-run`, { method: "POST", body: { sql: ans } })); } catch (e) { setErr(e); } };
-  const onPaste = () => api(`/attempts/${aid}/event`, { method: "POST", body: { type: "paste" } }).catch(() => {});
+  const runSql = async () => {
+    if (!shareActive) { setShareNotice(t("shareRequired")); return; }
+    try { setOut(await api(`/attempts/${aid}/sql-run`, { method: "POST", body: { sql: ans } })); } catch (e) { setErr(e); }
+  };
 
   if (!q) return <p>{t("loading")}</p>;
   return (
@@ -310,22 +400,29 @@ function ExamRun({ initial, onFinished }) {
         <progress value={q.index} max={q.total} />
         <span className={"timer" + (left < 120 ? " low" : "")}>{t("timeLeft")}: {fmt(left)}</span>
       </div>
-      <h3 className="qtext">{q.prompt}</h3>
+      <div className={"exam-integrity-banner" + (shareActive ? " active" : " warning")} role="status">
+        <strong>{shareActive ? t("shareActive") : t("shareStopped")}</strong>
+        <span>{t("sharePrivacy")}</span>
+        {!shareActive && <button type="button" className="btn sm" onClick={restartShare}>{t("restartShare")}</button>}
+      </div>
+      {integrityNotice && <p className="exam-integrity-notice" role="status">{integrityNotice}</p>}
+      {shareNotice && <p className="err" role="alert">{shareNotice}</p>}
+      <h3 className="qtext exam-copy-locked">{q.prompt}</h3>
       {q.type === "mcq" ? (
         <fieldset className="opts">
           {q.options.map((o, i) => (
-            <label key={i} className={"opt" + (String(ans) === String(i) ? " on" : "")}>
+            <label key={i} className={"opt exam-copy-locked" + (String(ans) === String(i) ? " on" : "")}>
               <input type="radio" name="opt" checked={String(ans) === String(i)} onChange={() => setAns(String(i))} /> {o}
             </label>
           ))}
         </fieldset>
       ) : (
         <>
-          <details open><summary>{t("schema")}</summary><pre className="pre">{q.schema}</pre></details>
+          <details open><summary>{t("schema")}</summary><pre className="pre exam-copy-locked">{q.schema}</pre></details>
           <p className="note">{t("sqlHelp")}</p>
-          <textarea className="code" rows={6} spellCheck={false} value={ans} onChange={(e) => setAns(e.target.value)} onPaste={onPaste} placeholder="SELECT ..." />
+          <textarea className="code" rows={6} spellCheck={false} value={ans} onChange={(e) => setAns(e.target.value)} placeholder="SELECT ..." />
           <p className="muted">{t("pasteNote")}</p>
-          <button className="btn ghost" onClick={runSql} disabled={!ans.trim()}>{t("run")}</button>
+          <button className="btn ghost" onClick={runSql} disabled={!ans.trim() || !shareActive}>{t("run")}</button>
           {out && (out.error ? <p className="err">{t("sqlError")}: {out.error}</p> : (
             <div className="tablewrap">
               <table><thead><tr>{out.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
@@ -336,11 +433,10 @@ function ExamRun({ initial, onFinished }) {
         </>
       )}
       <Err e={err} />
-      <button className="btn" onClick={submit} disabled={busy || String(ans).trim() === ""}>{busy ? t("saving") : t("submit")}</button>
+      <button className="btn" onClick={submit} disabled={busy || !shareActive || String(ans).trim() === ""}>{busy ? t("saving") : t("submit")}</button>
     </section>
   );
 }
-
 function Result({ aid, next, nextLabel }) {
   const t = useT();
   const [r, setR] = useState(null);
@@ -415,18 +511,52 @@ function Uplift() {
 function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const t = useT();
   const [active, setActive] = useState(null);
+  const [screenStream, setScreenStream] = useState(null);
   const [err, setErr] = useState(null);
   const done = st.attempts.filter((a) => a.status === "done");
   const mine = kind === "pre" ? done[0] : done.length > 1 ? done[done.length - 1] : null;
   const act = st.attempts.find((a) => a.status === "active");
   const start = useCallback(async () => {
     setErr(null);
-    try { const v = await api("/attempts", { method: "POST" }); if (v.status === "active") setActive(v); else refresh(); } catch (e) { setErr(e); }
-  }, [refresh]);
-  const finished = async () => { setActive(null); await refresh(); };
+    let requestedStream = null;
+    try {
+      if (!navigator.mediaDevices?.getDisplayMedia) throw new Error(t("shareUnsupported"));
+      // Both browser permission prompts must be initiated directly from this click.
+      const shareRequest = navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+      const fullscreenRequest = document.documentElement.requestFullscreen
+        ? document.documentElement.requestFullscreen().catch(() => null)
+        : Promise.resolve(null);
+      requestedStream = await shareRequest;
+      await fullscreenRequest;
+      const v = await api("/attempts", { method: "POST" });
+      if (v.status === "active") {
+        setScreenStream(requestedStream);
+        setActive(v);
+      } else {
+        requestedStream.getTracks().forEach((track) => track.stop());
+        refresh();
+      }
+    } catch (e) {
+      requestedStream?.getTracks().forEach((track) => track.stop());
+      setErr(e?.name === "NotAllowedError" ? new Error(t("shareRequired")) : e);
+    }
+  }, [refresh, t]);
+  const finished = async () => {
+    screenStream?.getTracks().forEach((track) => track.stop());
+    setScreenStream(null);
+    setActive(null);
+    await refresh();
+  };
 
-  if (active) return <ExamRun initial={active} onFinished={finished} />;
-  if (act && (act.kind === kind)) return <section className="card narrow"><button className="btn" onClick={start}>{t("resume")}</button><Err e={err} /></section>;
+  if (active) return <ExamRun initial={active} screenStream={screenStream} onFinished={finished} />;
+  if (act && (act.kind === kind)) return (
+    <section className="card narrow">
+      <h2>{t("resume")}</h2>
+      <p>{t("shareBeforeResume")}</p>
+      <button className="btn" onClick={start}>{t("resume")}</button>
+      <Err e={err} />
+    </section>
+  );
   if (mine) return (
     <>
       <Result aid={mine.id} next={afterResult} nextLabel={afterLabel} />
@@ -438,12 +568,12 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     <section className="card narrow">
       <h2>{kind === "pre" ? t("startTest") : t("steps").retest}</h2>
       <p>{kind === "pre" ? t("testIntro") : t("retestIntro")}</p>
+      <p className="exam-integrity-note">{t("examIntegrityIntro")}</p>
       <Err e={err} />
       <button className="btn" onClick={start}>{t("startTest")}</button>
     </section>
   );
 }
-
 /* ---------- learning path ---------- */
 function Learn({ onNext }) {
   const t = useT();
