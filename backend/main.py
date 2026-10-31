@@ -244,6 +244,9 @@ def export_data(u=Depends(current_user)):
     d = {"user": {"name": u["name"], "email": u["email"]}}
     for t in ("consents", "profiles", "attempts", "passports"):
         d[t] = [dict(r) for r in allr(f"SELECT * FROM {t} WHERE user_id=?", (u["id"],))]
+    cp = one("SELECT * FROM candidate_profiles WHERE user_id=?", (u["id"],))
+    d["candidate_profile"] = dict(cp) if cp else None
+    d["applications"] = [dict(r) for r in allr("SELECT * FROM applications WHERE candidate_id=?", (u["id"],))]
     audit(u["id"], "export")
     return d
 
@@ -252,7 +255,9 @@ def export_data(u=Depends(current_user)):
 def delete_me(u=Depends(current_user)):
     ids = [r["id"] for r in allr("SELECT id FROM attempts WHERE user_id=?", (u["id"],))]
     for i in ids: run("DELETE FROM events WHERE attempt_id=?", (i,))
-    for t in ("consents", "profiles", "attempts", "passports"): run(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
+    for t in ("consents", "profiles", "attempts", "passports", "candidate_profiles", "user_roles"):
+        run(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
+    run("DELETE FROM applications WHERE candidate_id=?", (u["id"],))
     run("DELETE FROM users WHERE id=?", (u["id"],))
     audit(u["id"], "delete_account")
     return {"deleted": True}
