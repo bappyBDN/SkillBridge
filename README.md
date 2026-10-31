@@ -73,6 +73,14 @@ Enter your own email and a unique password of at least 14 characters when prompt
 3. **Gap** shows the MOCK role vs. your claimed skills. 4. **Verify**: 10 adaptive questions (MCQ + hands-on SQL), server-timed.
 5. Result with topic scores and trust label. 6. **Learn**: cited resources for weak topics. 7. **Re-test** → uplift. 8. **Passport**: choose skills, share link, revoke.
 
+## Verify exam integrity controls
+
+The candidate Verify flow now requests browser screen sharing and full-screen mode before starting or resuming an attempt. Candidates choose the screen, window or tab in the browser's native permission picker. If sharing stops or full-screen mode is exited, the UI warns the candidate and disables SQL execution and answer submission until the required state is restored.
+
+During an active attempt, the frontend blocks ordinary copy, cut, paste, keyboard clipboard shortcuts and the context menu, and records copy/cut/paste attempts, window blur, hidden-tab events, full-screen exits and screen-sharing interruptions. The backend stores event counts with the attempt and includes them in the advisory trust label. Integrity signals do not change the score or automatically fail a candidate; the existing appeal and human-review approach remains.
+
+**Browser-enforced limits:** browsers do not let a website silently start screen sharing. The candidate must approve the browser prompt, and the browser may allow sharing a single tab/window instead of the entire desktop. A web page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, browser extensions or a determined user from bypassing client-side controls. These controls are deterrents and review signals, not a secure remote-proctoring system. No camera or microphone is requested, and the screen stream is not recorded or uploaded by this application. Use HTTPS (or localhost for development) and test in supported desktop browsers.
+
 ## What is real vs. mock (honest list)
 | Area | R0 status |
 |---|---|
