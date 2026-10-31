@@ -102,3 +102,18 @@ Demo jobs are explicitly marked MOCK and are not real vacancies. These credentia
 
 ### Known remaining PRD work
 This is an initial vertical slice, not a completed production platform. Alembic migrations, complete authorization/security tests, DeepSeek provider integration, pgvector RAG, payment webhooks, official score review, OCR fallback, hardened code execution and end-to-end production deployment remain future work.
+
+
+## Candidate workspace UI
+
+The candidate experience now has a dedicated responsive workspace with:
+- Overview dashboard and progress cards.
+- Editable professional profile: headline, contact/location, summary, LinkedIn/GitHub/portfolio.
+- Repeatable education, experience and project entries.
+- Job-search preferences (employment type, work mode and locations).
+- CV upload/analysis and skill confirmation, preserving the existing skill-verification journey.
+- Job marketplace search/filter, applications list and candidate-controlled assessment-result sharing.
+- Skill Gap, assessment, learning path, re-test, Skill Passport, and data export/deletion sections.
+- Responsive desktop/mobile navigation and explicit MOCK labelling for synthetic jobs.
+
+Candidate profile fields are persisted through `/api/candidate/profile` and the `candidate_profiles` PostgreSQL table. This is still an implementation milestone: verify the full PostgreSQL runtime, authorization, browser accessibility and end-to-end flows before production use.
