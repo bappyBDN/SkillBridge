@@ -150,6 +150,8 @@ def create_company_profile(body:CompanyProfile,user=Depends(current_user)):
 @router.post("/api/jobs")
 def create_job(body:JobCreate,user=Depends(current_user)):
     require_role(user,"company"); company=company_for(user); jid=uuid.uuid4().hex
+    if body.publish and not company["verified"]:
+        raise HTTPException(403, "Company verification is required before publishing jobs")
     skills=list(dict.fromkeys(s.strip() for s in body.skills if s.strip()))
     run("INSERT INTO jobs(id,company_id,title,description,location,employment_type,skills,status,is_mock,created) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (jid,company["id"],body.title.strip(),body.description.strip(),body.location.strip(),body.employment_type.strip(),json.dumps(skills),"published" if body.publish else "draft",0,time.time()))
@@ -197,6 +199,8 @@ def share_results(application_id:str,body:ShareResults,user=Depends(current_user
 @router.get("/api/company/applications")
 def company_applications(user=Depends(current_user)):
     require_role(user,"company"); company=company_for(user)
+    if not company["verified"]:
+        raise HTTPException(403, "Company verification is required before accessing applicant records")
     rows=allr("SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title AS job_title,u.id AS candidate_id,u.name AS candidate_name FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id WHERE j.company_id=? ORDER BY a.created DESC",(company["id"],))
     items=[]
     for row in rows:
@@ -386,7 +390,7 @@ def company_workspace(user=Depends(current_user)):
                        (company["id"],))
     recent = allr("""SELECT a.id AS application_id,a.status,a.created,j.title AS job_title,u.name AS candidate_name
                      FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id
-                     WHERE j.company_id=? ORDER BY a.created DESC LIMIT 6""", (company["id"],))
+                     WHERE j.company_id=? ORDER BY a.created DESC LIMIT 6""", (company["id"],)) if company["verified"] else []
     return {
         "company": {"id": company["id"], "name": company["name"], "website": company["website"] or "",
                     "verified": bool(company["verified"]), "role": role},
@@ -541,6 +545,8 @@ def company_analytics(user=Depends(current_user)):
 def company_application_detail(application_id: str, user=Depends(current_user)):
     company = company_for_access(user)
     require_company_permission(user, company, "owner", "recruiter", "hiring_manager", "viewer")
+    if not company["verified"]:
+        raise HTTPException(403, "Company verification is required before accessing applicant records")
     row = one("""SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title AS job_title,
                  j.skills AS job_skills,u.id AS candidate_id,u.name AS candidate_name
                  FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id
@@ -697,6 +703,8 @@ def list_phase_two(user=Depends(current_user)):
 def create_phase_two_invitation(application_id: str, body: PhaseTwoInviteInput, user=Depends(current_user)):
     company = company_for_access(user)
     require_company_permission(user, company, "owner", "recruiter")
+    if not company["verified"]:
+        raise HTTPException(403, "Company verification is required before inviting candidates to assessments")
     row = one("""SELECT a.id,a.job_id,a.status FROM applications a JOIN jobs j ON j.id=a.job_id
                  WHERE a.id=? AND j.company_id=?""", (application_id, company["id"]))
     if not row:
