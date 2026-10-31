@@ -60,7 +60,7 @@ function BridgeRail() {
 function Landing({ onAuthed }) {
   const t = useT();
   const [mode, setMode] = useState("register");
-  const [f, setF] = useState({ name: "", email: "", password: "" });
+  const [f, setF] = useState({ name: "", email: "", password: "", role: "candidate" });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e) => {
@@ -82,6 +82,7 @@ function Landing({ onAuthed }) {
         <form className="card" onSubmit={submit}>
           <h2>{mode === "register" ? t("register") : t("signIn")}</h2>
           {mode === "register" && <label>{t("name")}<input value={f.name} onChange={set("name")} required minLength={2} autoComplete="name" /></label>}
+          {mode === "register" && <label>Account type<select value={f.role} onChange={set("role")}><option value="candidate">Candidate / Job seeker</option><option value="company">Company / Recruiter</option></select></label>}
           <label>{t("email")}<input type="email" value={f.email} onChange={set("email")} required autoComplete="email" /></label>
           <label>{t("password")}<input type="password" value={f.password} onChange={set("password")} required minLength={8} autoComplete={mode === "register" ? "new-password" : "current-password"} /></label>
           <Err e={err} />
@@ -547,13 +548,17 @@ function PublicPassport({ id }) {
 function Shell({ lang, setLang }) {
   const t = useT();
   const [authed, setAuthed] = useState(!!getToken());
+  const [role, setRole] = useState(null);
   const [st, setSt] = useState(null);
   const [view, setView] = useState(null);
   const [tick, setTick] = useState(0);
 
   const refresh = useCallback(async () => {
-    try { const s = await api("/state"); setSt(s); setTick((x) => x + 1); return s; }
-    catch (e) { if (e.status === 401) { setToken(null); setAuthed(false); } }
+    try {
+      const identity = await api("/enterprise/me");
+      setRole(identity.role || "candidate");
+      const s = await api("/state"); setSt(s); setTick((x) => x + 1); return s;
+    } catch (e) { if (e.status === 401) { setToken(null); setAuthed(false); setRole(null); } }
   }, []);
   useEffect(() => { if (authed) refresh().then((s) => {
     if (!s) return;
@@ -562,7 +567,7 @@ function Shell({ lang, setLang }) {
     setView(active ? (active.kind === "post" ? "retest" : "assess") : !s.confirmed ? "profile" : done.length === 0 ? "gap" : done.length === 1 ? "learn" : "passport");
   }); }, [authed, refresh]);
 
-  const logout = () => { setToken(null); setAuthed(false); setSt(null); setView(null); };
+  const logout = () => { setToken(null); setAuthed(false); setRole(null); setSt(null); setView(null); };
   const Head = (
     <header className="top">
       <strong className="brand">{t("brand")}</strong>
