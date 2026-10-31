@@ -38,6 +38,91 @@ class CompanyAssessmentCreate(BaseModel):
     questions: List[dict] = Field(default_factory=list, max_length=100)
     job_id: Optional[str] = None
 
+
+class EducationItem(BaseModel):
+    institution: str = Field(min_length=2, max_length=160)
+    degree: str = Field(default="", max_length=160)
+    field: str = Field(default="", max_length=160)
+    start_year: str = Field(default="", max_length=10)
+    end_year: str = Field(default="", max_length=10)
+    details: str = Field(default="", max_length=1000)
+
+class ExperienceItem(BaseModel):
+    company: str = Field(min_length=2, max_length=160)
+    title: str = Field(min_length=2, max_length=160)
+    employment_type: str = Field(default="", max_length=60)
+    start_date: str = Field(default="", max_length=20)
+    end_date: str = Field(default="", max_length=20)
+    current: bool = False
+    description: str = Field(default="", max_length=2000)
+
+class ProjectItem(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    technologies: List[str] = Field(default_factory=list, max_length=30)
+    url: str = Field(default="", max_length=300)
+
+class CandidateProfileUpdate(BaseModel):
+    headline: str = Field(default="", max_length=180)
+    phone: str = Field(default="", max_length=40)
+    location: str = Field(default="", max_length=160)
+    summary: str = Field(default="", max_length=3000)
+    linkedin: str = Field(default="", max_length=300)
+    github: str = Field(default="", max_length=300)
+    portfolio: str = Field(default="", max_length=300)
+    education: List[EducationItem] = Field(default_factory=list, max_length=12)
+    experience: List[ExperienceItem] = Field(default_factory=list, max_length=20)
+    projects: List[ProjectItem] = Field(default_factory=list, max_length=20)
+    preferences: dict = Field(default_factory=dict)
+
+@router.get("/api/candidate/profile")
+def get_candidate_profile(user=Depends(current_user)):
+    require_role(user, "candidate")
+    row = one("SELECT * FROM candidate_profiles WHERE user_id=?", (user["id"],))
+    cv = one("SELECT extracted,confirmed,source,redaction FROM profiles WHERE user_id=?", (user["id"],))
+    result = {
+        "user": {"name": user["name"], "email": user["email"]},
+        "profile": {
+            "headline": "", "phone": "", "location": "", "summary": "",
+            "linkedin": "", "github": "", "portfolio": "",
+            "education": [], "experience": [], "projects": [],
+            "preferences": {"job_types": ["Internship", "Full-time"], "work_mode": "Any", "locations": []},
+            "updated": None,
+        },
+        "cv": {"uploaded": bool(cv and cv["extracted"]), "source": cv["source"] if cv else None,
+               "skills": json.loads(cv["confirmed"]) if cv and cv["confirmed"] else [],
+               "extracted_skills": json.loads(cv["extracted"]) if cv and cv["extracted"] else [],
+               "redaction": json.loads(cv["redaction"]) if cv and cv["redaction"] else {}},
+    }
+    if row:
+        p = dict(row)
+        for key in ("education", "experience", "projects", "preferences"):
+            p[key] = json.loads(p[key] or ("{}" if key == "preferences" else "[]"))
+        result["profile"].update({k: p[k] for k in ("headline","phone","location","summary","linkedin","github","portfolio","education","experience","projects","preferences","updated")})
+    return result
+
+@router.put("/api/candidate/profile")
+def update_candidate_profile(body: CandidateProfileUpdate, user=Depends(current_user)):
+    require_role(user, "candidate")
+    preferences = body.preferences if isinstance(body.preferences, dict) else {}
+    allowed_types = {"Internship", "Full-time", "Part-time", "Contract", "Temporary"}
+    allowed_modes = {"Any", "Remote", "Hybrid", "On-site"}
+    preferences["job_types"] = [x for x in preferences.get("job_types", []) if x in allowed_types][:5]
+    preferences["work_mode"] = preferences.get("work_mode", "Any") if preferences.get("work_mode", "Any") in allowed_modes else "Any"
+    preferences["locations"] = [str(x)[:100] for x in preferences.get("locations", [])[:10] if str(x).strip()]
+    run("""INSERT INTO candidate_profiles(user_id,headline,phone,location,summary,linkedin,github,portfolio,education,experience,projects,preferences,updated)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(user_id) DO UPDATE SET headline=excluded.headline,phone=excluded.phone,location=excluded.location,
+           summary=excluded.summary,linkedin=excluded.linkedin,github=excluded.github,portfolio=excluded.portfolio,
+           education=excluded.education,experience=excluded.experience,projects=excluded.projects,
+           preferences=excluded.preferences,updated=excluded.updated""",
+        (user["id"],body.headline.strip(),body.phone.strip(),body.location.strip(),body.summary.strip(),
+         body.linkedin.strip(),body.github.strip(),body.portfolio.strip(),
+         json.dumps([x.model_dump() for x in body.education]),json.dumps([x.model_dump() for x in body.experience]),
+         json.dumps([x.model_dump() for x in body.projects]),json.dumps(preferences),time.time()))
+    audit(user["id"], "candidate_profile_updated")
+    return {"ok": True, "updated": time.time()}
+
 @router.get("/api/enterprise/me")
 def enterprise_me(user=Depends(current_user)):
     return {"user":{"id":user["id"],"name":user["name"],"email":user["email"]},"role":role_of(user)}
