@@ -349,7 +349,6 @@ function ExamRun({ initial, onFinished, screenStream }) {
     const track = stream?.getVideoTracks()[0];
     if (!track) { setShareActive(false); return; }
     setShareActive(track.readyState === "live");
-    report("screen_share_started");
     const ended = () => {
       setShareActive(false);
       setShareNotice(t("shareStopped"));
@@ -382,6 +381,7 @@ function ExamRun({ initial, onFinished, screenStream }) {
     try {
       if (!navigator.mediaDevices?.getDisplayMedia) throw new Error(t("shareUnsupported"));
       const nextStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+      await api(`/attempts/${aid}/event`, { method: "POST", body: { type: "screen_share_started" } });
       setStream(nextStream);
       setShareActive(true);
       setShareNotice("");
@@ -546,6 +546,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       if (!document.fullscreenElement) throw new Error(t("fullscreenRequired"));
       const v = await api("/attempts", { method: "POST" });
       if (v.status === "active") {
+        await api(`/attempts/${v.attempt_id}/event`, { method: "POST", body: { type: "screen_share_started" } });
         setScreenStream(requestedStream);
         setActive(v);
       } else {
