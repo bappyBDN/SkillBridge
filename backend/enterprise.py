@@ -142,8 +142,13 @@ def public_jobs():
 def create_company_profile(body:CompanyProfile,user=Depends(current_user)):
     require_role(user,"company")
     current=one("SELECT id FROM companies WHERE owner_user_id=?",(user["id"],))
-    if current: run("UPDATE companies SET name=?,website=? WHERE owner_user_id=?",(body.name.strip(),body.website,user["id"]))
-    else: run("INSERT INTO companies(id,owner_user_id,name,website,verified,created) VALUES (?,?,?,?,?,?)",(uuid.uuid4().hex,user["id"],body.name.strip(),body.website,0,time.time()))
+    if current:
+        run("UPDATE companies SET name=?,website=? WHERE owner_user_id=?",(body.name.strip(),body.website,user["id"]))
+    else:
+        membership=one("SELECT id FROM company_members WHERE user_id=? AND status='active' LIMIT 1",(user["id"],))
+        if membership:
+            raise HTTPException(403,"Only the organisation owner can create or edit company identity details")
+        run("INSERT INTO companies(id,owner_user_id,name,website,verified,created) VALUES (?,?,?,?,?,?)",(uuid.uuid4().hex,user["id"],body.name.strip(),body.website,0,time.time()))
     audit(user["id"],"company_profile_saved",body.name.strip())
     return {"ok":True,"company":dict(one("SELECT id,name,website,verified FROM companies WHERE owner_user_id=?",(user["id"],)))}
 
@@ -740,3 +745,57 @@ def company_job_revisions(job_id: str, user=Depends(current_user)):
     rows = allr("SELECT revision,snapshot_json,actor_id,created FROM job_revisions WHERE job_id=? ORDER BY revision DESC",
                 (job_id,))
     return {"items": [{**dict(r), "snapshot": json.loads(r["snapshot_json"])} for r in rows]}
+
+
+# Platform review endpoints required to complete the company verification/job moderation loop.
+class CompanyReviewDecision(BaseModel):
+    decision: str
+    reason: str = Field(min_length=3, max_length=1500)
+
+
+@router.get("/api/admin/company-verifications")
+def admin_company_verifications(user=Depends(current_user)):
+    require_role(user, "admin")
+    rows = allr("""SELECT v.company_id,v.legal_name,v.country,v.business_id,v.evidence_note,v.status,
+                   v.decision_reason,v.submitted_at,c.name AS company_name,c.website
+                   FROM company_verification v JOIN companies c ON c.id=v.company_id
+                   ORDER BY v.submitted_at DESC""")
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.post("/api/admin/companies/{company_id}/verification-decision")
+def admin_company_verification_decision(company_id: str, body: CompanyReviewDecision, user=Depends(current_user)):
+    require_role(user, "admin")
+    if body.decision not in ("verified", "needs_information", "rejected"):
+        raise HTTPException(422, "Decision must be verified, needs_information or rejected")
+    row = one("SELECT company_id FROM company_verification WHERE company_id=?", (company_id,))
+    if not row:
+        raise HTTPException(404, "Verification request not found")
+    now = time.time()
+    run("""UPDATE company_verification SET status=?,decision_reason=?,reviewed_at=?,reviewed_by=?
+           WHERE company_id=?""", (body.decision, body.reason.strip(), now, user["id"], company_id))
+    run("UPDATE companies SET verified=? WHERE id=?", (1 if body.decision == "verified" else 0, company_id))
+    audit(user["id"], "company_verification_decision", company_id + ":" + body.decision + ":" + body.reason.strip())
+    return {"company_id": company_id, "status": body.decision}
+
+
+@router.get("/api/admin/job-review-queue")
+def admin_job_review_queue(user=Depends(current_user)):
+    require_role(user, "admin")
+    rows = allr("""SELECT j.id,j.title,j.description,j.location,j.employment_type,j.created,c.name AS company_name,c.id AS company_id
+                   FROM jobs j JOIN companies c ON c.id=j.company_id
+                   WHERE j.status='pending_review' ORDER BY j.created ASC""")
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.post("/api/admin/jobs/{job_id}/moderation-decision")
+def admin_job_moderation_decision(job_id: str, body: CompanyReviewDecision, user=Depends(current_user)):
+    require_role(user, "admin")
+    if body.decision not in ("published", "needs_changes", "rejected", "paused"):
+        raise HTTPException(422, "Unsupported moderation decision")
+    row = one("SELECT id FROM jobs WHERE id=?", (job_id,))
+    if not row:
+        raise HTTPException(404, "Job not found")
+    run("UPDATE jobs SET status=? WHERE id=?", (body.decision, job_id))
+    audit(user["id"], "job_moderation_decision", job_id + ":" + body.decision + ":" + body.reason.strip())
+    return {"job_id": job_id, "status": body.decision}
