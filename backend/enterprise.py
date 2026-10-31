@@ -154,7 +154,7 @@ def create_company_profile(body:CompanyProfile,user=Depends(current_user)):
 
 @router.post("/api/jobs")
 def create_job(body:JobCreate,user=Depends(current_user)):
-    require_role(user,"company"); company=company_for(user); jid=uuid.uuid4().hex
+    require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter"); jid=uuid.uuid4().hex
     if body.publish and not company["verified"]:
         raise HTTPException(403, "Company verification is required before publishing jobs")
     skills=list(dict.fromkeys(s.strip() for s in body.skills if s.strip()))
@@ -203,7 +203,7 @@ def share_results(application_id:str,body:ShareResults,user=Depends(current_user
 
 @router.get("/api/company/applications")
 def company_applications(user=Depends(current_user)):
-    require_role(user,"company"); company=company_for(user)
+    require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter", "hiring_manager")
     if not company["verified"]:
         raise HTTPException(403, "Company verification is required before accessing applicant records")
     rows=allr("SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title AS job_title,u.id AS candidate_id,u.name AS candidate_name FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id WHERE j.company_id=? ORDER BY a.created DESC",(company["id"],))
@@ -219,7 +219,9 @@ def company_applications(user=Depends(current_user)):
 
 @router.post("/api/company/assessments")
 def request_company_assessment(body:CompanyAssessmentCreate,user=Depends(current_user)):
-    require_role(user,"company"); company=company_for(user)
+    require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter")
+    if not company["verified"]:
+        raise HTTPException(403, "Company verification is required before requesting assessments")
     if body.job_id and not one("SELECT id FROM jobs WHERE id=? AND company_id=?",(body.job_id,company["id"])): raise HTTPException(404,"Job not found for this company")
     aid=uuid.uuid4().hex
     run("INSERT INTO company_assessments(id,company_id,job_id,title,requirements,questions,status,created) VALUES (?,?,?,?,?,?,?,?)",(aid,company["id"],body.job_id,body.title.strip(),body.requirements.strip(),json.dumps(body.questions),"requested",time.time()))
@@ -395,7 +397,7 @@ def company_workspace(user=Depends(current_user)):
                        (company["id"],))
     recent = allr("""SELECT a.id AS application_id,a.status,a.created,j.title AS job_title,u.name AS candidate_name
                      FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id
-                     WHERE j.company_id=? ORDER BY a.created DESC LIMIT 6""", (company["id"],)) if company["verified"] else []
+                     WHERE j.company_id=? ORDER BY a.created DESC LIMIT 6""", (company["id"],)) if company["verified"] and role in ("owner", "recruiter", "hiring_manager") else []
     return {
         "company": {"id": company["id"], "name": company["name"], "website": company["website"] or "",
                     "verified": bool(company["verified"]), "role": role},
@@ -534,7 +536,7 @@ def company_analytics(user=Depends(current_user)):
 @router.get("/api/company/applications/{application_id}")
 def company_application_detail(application_id: str, user=Depends(current_user)):
     company = company_for_access(user)
-    require_company_permission(user, company, "owner", "recruiter", "hiring_manager", "viewer")
+    require_company_permission(user, company, "owner", "recruiter", "hiring_manager")
     if not company["verified"]:
         raise HTTPException(403, "Company verification is required before accessing applicant records")
     row = one("""SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title AS job_title,
