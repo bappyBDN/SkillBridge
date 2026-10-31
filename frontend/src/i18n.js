@@ -43,6 +43,8 @@ const en = {
   shareActive: "Screen sharing active", shareStopped: "Screen sharing stopped", sharePrivacy: "The screen stream is not recorded or uploaded by SkillBridge. Only integrity event counts are saved.",
   restartShare: "Resume screen sharing", shareRequired: "Screen sharing is required to continue this assessment. Please allow it in your browser.",
   shareUnsupported: "This browser does not support screen sharing. Please use a supported desktop browser on HTTPS or localhost.",
+  fullscreenActive: "Full-screen mode active", fullscreenRequired: "Full-screen mode is required to continue. Please return to full-screen.",
+  restartFullscreen: "Return to full-screen", fullscreenUnsupported: "This browser does not support full-screen mode.",
   shareBeforeResume: "To resume an active assessment, start screen sharing again. Your saved progress will be kept.",
   clipboardBlocked: "Copy, cut and paste are disabled during Verify. This event has been recorded.",
   fullscreenWarning: "You left full-screen mode. Please return to full-screen; this event is recorded.",
@@ -107,6 +109,8 @@ const bn = {
   shareActive: "স্ক্রিন শেয়ার চালু", shareStopped: "স্ক্রিন শেয়ার বন্ধ হয়েছে", sharePrivacy: "SkillBridge স্ক্রিন রেকর্ড বা আপলোড করে না। শুধু সততা-সংক্রান্ত ঘটনার সংখ্যা সংরক্ষিত হয়।",
   restartShare: "স্ক্রিন শেয়ার আবার চালু করুন", shareRequired: "এই মূল্যায়ন চালিয়ে যেতে স্ক্রিন শেয়ার প্রয়োজন। ব্রাউজারে অনুমতি দিন।",
   shareUnsupported: "এই ব্রাউজারে স্ক্রিন শেয়ার সমর্থিত নয়। HTTPS বা localhost-এ সমর্থিত ডেস্কটপ ব্রাউজার ব্যবহার করুন।",
+  fullscreenActive: "ফুল-স্ক্রিন চালু", fullscreenRequired: "চালিয়ে যেতে ফুল-স্ক্রিন প্রয়োজন। আবার ফুল-স্ক্রিনে ফিরুন।",
+  restartFullscreen: "ফুল-স্ক্রিনে ফিরুন", fullscreenUnsupported: "এই ব্রাউজারে ফুল-স্ক্রিন সমর্থিত নয়।"
   shareBeforeResume: "চলমান মূল্যায়ন আবার শুরু করতে স্ক্রিন শেয়ার চালু করুন। আপনার সংরক্ষিত অগ্রগতি থাকবে।",
   clipboardBlocked: "Verify চলাকালে কপি, কাট ও পেস্ট বন্ধ। ঘটনাটি রেকর্ড করা হয়েছে।",
   fullscreenWarning: "আপনি ফুল-স্ক্রিন থেকে বের হয়েছেন। আবার ফুল-স্ক্রিনে ফিরুন; ঘটনাটি রেকর্ড হয়েছে।",
