@@ -48,6 +48,14 @@ def test_trust_never_fails():
     assert lab == "Needs review" and why
     assert trust_label({}, [])[0] == "High"
 
+def test_trust_integrity_events_are_advisory_and_explainable():
+    events = {"copy": 1, "cut": 1, "paste": 1, "tab_hidden": 2, "fullscreen_exit": 1, "screen_share_stopped": 1}
+    label, reasons = trust_label(events, [])
+    assert label == "Needs review"
+    assert {r["key"] for r in reasons} == set(events)
+    assert trust_label({}, [])[0] == "High"
+
+
 def test_path_honest():
     p = build_path({"sql": {"score": 80}, "python": {"score": 20}, "statistics": {"score": 80}, "visualization": {"score": 80}})
     assert p["gaps"] == ["python"] and all(i["url"].startswith("https://") and i["licence"] for i in p["items"])
