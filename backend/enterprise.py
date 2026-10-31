@@ -1,5 +1,5 @@
 """Initial hiring workflow APIs for SkillBridge PRD."""
-import json, time, uuid, os
+import json, time, uuid, os, re, secrets
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -1099,6 +1099,37 @@ def admin_console_staff(user=Depends(current_user)):
 
 class AdminStaffRoleInput(BaseModel):
     admin_role: str
+
+class AdminStaffCreateInput(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    email: str = Field(min_length=5, max_length=120)
+    password: str = Field(min_length=14, max_length=128)
+    admin_role: str = "support_agent"
+
+
+@router.post("/api/admin/console/staff")
+def admin_console_create_staff(body: AdminStaffCreateInput, user=Depends(current_user)):
+    admin_only(user, "staff")
+    email = body.email.strip().lower()
+    name = body.name.strip()
+    if not re.match(r"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", email):
+        raise HTTPException(422, "A valid email address is required")
+    allowed = {"super_admin", "trust_safety_reviewer", "question_content_admin",
+               "company_verification_admin", "support_agent", "finance_admin", "compliance_officer"}
+    if body.admin_role not in allowed:
+        raise HTTPException(422, "Unsupported admin staff role")
+    if one("SELECT id FROM users WHERE email=?", (email,)):
+        raise HTTPException(409, "An account with this email already exists")
+    from main import hash_pw
+    salt = secrets.token_hex(16)
+    user_id = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)",
+                  (email, name, salt, hash_pw(body.password, salt), time.time()))
+    run("INSERT INTO user_roles(user_id,role) VALUES (?, 'admin')", (user_id,))
+    run("""INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at)
+           VALUES (?,?,?,?)""", (user_id, body.admin_role, user["id"], time.time()))
+    audit(user["id"], "admin_staff_created", str(user_id) + ":" + email + ":" + body.admin_role)
+    return {"user_id": user_id, "name": name, "email": email, "admin_role": body.admin_role}
+
 
 @router.put("/api/admin/console/staff/{user_id}")
 def admin_console_set_staff_role(user_id: int, body: AdminStaffRoleInput, user=Depends(current_user)):
