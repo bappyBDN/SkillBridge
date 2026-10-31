@@ -1,5 +1,5 @@
 """Initial hiring workflow APIs for SkillBridge PRD."""
-import json, time, uuid
+import json, time, uuid, os
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -17,8 +17,14 @@ def require_role(user, *roles):
 
 def company_for(user):
     company = one("SELECT * FROM companies WHERE owner_user_id=?", (user["id"],))
-    if not company: raise HTTPException(409, "Create your company profile first")
-    return dict(company)
+    if company:
+        return dict(company)
+    # Membership lookup is tenant-scoped; company role alone never grants access.
+    member = one("""SELECT c.* FROM companies c JOIN company_members m ON m.company_id=c.id
+                    WHERE m.user_id=? AND m.status='active' LIMIT 1""", (user["id"],))
+    if not member:
+        raise HTTPException(409, "Your account is not connected to an organisation yet")
+    return dict(member)
 
 class CompanyProfile(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -154,7 +160,14 @@ def create_job(body:JobCreate,user=Depends(current_user)):
 def company_jobs(user=Depends(current_user)):
     require_role(user,"company"); company=company_for(user)
     rows=allr("SELECT * FROM jobs WHERE company_id=? ORDER BY created DESC",(company["id"],))
-    return {"items":[{**dict(r),"skills":json.loads(r["skills"]),"is_mock":bool(r["is_mock"])} for r in rows]}
+    items=[]
+    for row in rows:
+        item=dict(row); item["skills"]=json.loads(item["skills"] or "[]"); item["is_mock"]=bool(item["is_mock"])
+        detail=one("SELECT details_json,revision,updated FROM job_details WHERE job_id=?",(item["id"],))
+        item["details"]=json.loads(detail["details_json"]) if detail else {}
+        item["revision"]=detail["revision"] if detail else 1
+        items.append(item)
+    return {"items":items}
 
 @router.post("/api/jobs/{job_id}/apply")
 def apply_to_job(job_id:str,user=Depends(current_user)):
