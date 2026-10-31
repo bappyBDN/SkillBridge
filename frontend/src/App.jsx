@@ -544,7 +544,19 @@ function PublicPassport({ id }) {
   );
 }
 
-/* ---------- shell ---------- */
+function HiringWorkspace({role}) {
+  const [jobs,setJobs]=useState([]); const [items,setItems]=useState([]); const [name,setName]=useState(""); const [title,setTitle]=useState(""); const [description,setDescription]=useState(""); const [error,setError]=useState("");
+  const load=async()=>{try{if(role==="candidate"){const r=await api("/jobs");setJobs(r.items||[]);const a=await api("/applications/mine");setItems(a.items||[]);}else if(role==="company"){const j=await api("/company/jobs");setJobs(j.items||[]);const a=await api("/company/applications");setItems(a.items||[]);}else{const a=await api("/admin/overview");setItems(Object.entries(a.counts||{}).map(([key,value])=>({key,value})));}}catch(e){setError(e.message);}};
+  useEffect(()=>{load();},[role]);
+  const company=async e=>{e.preventDefault();try{await api("/company/profile",{method:"POST",body:{name,website:""}});setError("Company profile saved.");await load();}catch(e){setError(e.message);}};
+  const job=async e=>{e.preventDefault();try{await api("/jobs",{method:"POST",body:{title,description,skills:["Python","SQL"],publish:true}});setTitle("");setDescription("");setError("Job published.");await load();}catch(e){setError(e.message);}};
+  const apply=async id=>{try{await api("/jobs/"+id+"/apply",{method:"POST"});setError("Application submitted.");await load();}catch(e){setError(e.message);}};
+  return <main className="wrap"><section className="hero"><h1>{role==="company"?"Company workspace":role==="admin"?"Admin overview":"Job marketplace"}</h1><p className="lead">SkillBridge hiring workflows backed by PostgreSQL.</p><p className="note">Demo jobs are synthetic. Assessment results are shared only with candidate consent.</p></section>{error&&<p className="note" role="status">{error}</p>}
+  {role==="company"&&<><form className="card" onSubmit={company}><h2>Company profile</h2><label>Company name<input value={name} onChange={e=>setName(e.target.value)} required minLength={2}/></label><button className="btn">Save profile</button></form><form className="card" onSubmit={job}><h2>Publish job</h2><label>Title<input value={title} onChange={e=>setTitle(e.target.value)} required minLength={3}/></label><label>Description<textarea value={description} onChange={e=>setDescription(e.target.value)} required minLength={20}/></label><button className="btn">Publish</button></form><section className="card"><h2>Applications</h2>{items.map(a=><p key={a.application_id}>{a.candidate_name} — {a.job_title} · Results shared: {a.results_shared?"Yes":"No"}</p>)}</section></>}
+  {role==="candidate"&&<section className="card"><h2>Available jobs</h2>{jobs.map(j=><article className="card quiet" key={j.id}><h3>{j.title} {j.is_mock&&<span className="chip">MOCK</span>}</h3><p>{j.company_name} · {j.location}</p><p>{j.description}</p><button className="btn" onClick={()=>apply(j.id)}>Apply</button></article>)}<h2>My applications</h2>{items.map(a=><p key={a.application_id}>{a.title} — {a.company_name}</p>)}</section>}
+  {role==="admin"&&<section className="card"><h2>Platform totals</h2>{items.map(x=><p key={x.key}>{x.key}: {x.value}</p>)}</section>}<button className="btn ghost" onClick={load}>Refresh</button></main>;
+}
+\n/* ---------- shell ---------- */
 function Shell({ lang, setLang }) {
   const t = useT();
   const [authed, setAuthed] = useState(!!getToken());
