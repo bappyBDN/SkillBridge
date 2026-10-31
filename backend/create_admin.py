@@ -56,7 +56,7 @@ def main():
            updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
         (user_id, user_id, time.time()),
     )
-    print("\\nSuper Admin provisioned successfully.")
+    print("\nSuper Admin provisioned successfully.")
     print(f"Email: {email}")
     print("Password: use the password you entered (it is not displayed).")
     print("Sign in through the SkillBridge sign-in page; the Admin Console appears automatically for admin accounts.")
