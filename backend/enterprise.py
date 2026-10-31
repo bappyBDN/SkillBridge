@@ -801,6 +801,9 @@ def ensure_admin_console_schema():
         """CREATE TABLE IF NOT EXISTS admin_attempt_reviews (
             attempt_id TEXT PRIMARY KEY, decision TEXT NOT NULL, reason TEXT NOT NULL,
             reviewer_id INTEGER NOT NULL, reviewed_at REAL NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS admin_appeal_decisions (
+            attempt_id TEXT PRIMARY KEY, decision TEXT NOT NULL, reason TEXT NOT NULL,
+            reviewer_id INTEGER NOT NULL, decided_at REAL NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS admin_staff_roles (
             user_id INTEGER PRIMARY KEY, admin_role TEXT NOT NULL DEFAULT 'super_admin',
             updated_by INTEGER NOT NULL, updated_at REAL NOT NULL)"""
@@ -970,13 +973,14 @@ def admin_review_attempt(attempt_id: str, body: AdminReviewInput, user=Depends(c
             "note": "The original answer record and deterministic score were not modified."}
 
 
+
 @router.get("/api/admin/appeals")
 def admin_appeals(user=Depends(current_user)):
     admin_only(user, "appeals")
     rows = allr("""SELECT a.id AS attempt_id,a.appeal,a.kind,a.finished,u.id AS user_id,u.name AS candidate_name,
-                   u.email,r.decision,r.reason AS review_reason,r.reviewed_at,r.reviewer_id
+                   u.email,d.decision,d.reason AS review_reason,d.decided_at,d.reviewer_id
                    FROM attempts a JOIN users u ON u.id=a.user_id
-                   LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
+                   LEFT JOIN admin_appeal_decisions d ON d.attempt_id=a.id
                    WHERE a.appeal IS NOT NULL AND a.appeal!='' ORDER BY a.started DESC LIMIT 300""")
     return {"items":[dict(r) for r in rows]}
 
@@ -988,9 +992,12 @@ def admin_appeal_decision(attempt_id: str, body: AdminReviewInput, user=Depends(
         raise HTTPException(422, "Unsupported appeal decision")
     row=one("SELECT id FROM attempts WHERE id=? AND appeal IS NOT NULL AND appeal!=''",(attempt_id,))
     if not row: raise HTTPException(404,"Appeal not found")
-    run("""INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at)
+    prior=one("SELECT reviewer_id FROM admin_attempt_reviews WHERE attempt_id=?",(attempt_id,))
+    if prior and prior["reviewer_id"]==user["id"]:
+        raise HTTPException(409,"For separation of duties, an appeal should be reviewed by a different administrator.")
+    run("""INSERT INTO admin_appeal_decisions(attempt_id,decision,reason,reviewer_id,decided_at)
            VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
-           reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
+           reason=excluded.reason,reviewer_id=excluded.reviewer_id,decided_at=excluded.decided_at""",
         (attempt_id,body.decision,body.reason.strip(),user["id"],time.time()))
     audit(user["id"],"candidate_appeal_decided",attempt_id+":"+body.decision+":"+body.reason.strip())
     return {"attempt_id":attempt_id,"decision":body.decision}
