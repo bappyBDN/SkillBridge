@@ -59,45 +59,88 @@ function BridgeRail() {
 
 function Landing({ onAuthed }) {
   const t = useT();
-  const [mode, setMode] = useState("register");
+  const [mode, setMode] = useState(location.hash === "#signin" ? "login" : "register");
   const [f, setF] = useState({ name: "", email: "", password: "", role: "candidate" });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const isRegister = mode === "register";
+  useEffect(() => {
+    const syncMode = () => { if (location.hash === "#signin") setMode("login"); if (location.hash === "#signup") setMode("register"); };
+    window.addEventListener("hashchange", syncMode);
+    return () => window.removeEventListener("hashchange", syncMode);
+  }, []);
+  const changeMode = (next) => { setErr(null); setMode(next); history.replaceState(null, "", next === "login" ? "#signin" : "#signup"); };
   const submit = async (e) => {
     e.preventDefault(); setErr(null); setBusy(true);
     try {
-      const r = await api(mode === "register" ? "/auth/register" : "/auth/login", { method: "POST", body: mode === "register" ? f : { email: f.email, password: f.password } });
+      const r = await api(isRegister ? "/auth/register" : "/auth/login", { method: "POST", body: isRegister ? f : { email: f.email, password: f.password } });
       setToken(r.token); onAuthed();
     } catch (x) { setErr(x); } finally { setBusy(false); }
   };
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
-    <main className="wrap">
-      <section className="hero">
-        <h1>{t("heroTitle")}</h1>
-        <p className="lead">{t("heroSub")}</p>
-        <BridgeRail />
+    <main className="sb-marketing">
+      <section className="sb-hero" id="top">
+        <div className="sb-hero-copy">
+          <div className="sb-eyebrow"><span className="sb-eyebrow-dot"/> {isRegister ? "YOUR NEXT CHAPTER STARTS HERE" : "WELCOME BACK TO SKILLBRIDGE"}</div>
+          <h1>{isRegister ? <>Build skills.<br/><em>Prove your potential.</em></> : <>Good to see<br/><em>you again.</em></>}</h1>
+          <p className="sb-hero-lead">{isRegister ? "A clearer path from what you know to what you can do. Build your skill profile, take practical assessments and share verified evidence of your abilities." : "Sign in to continue your skill journey, review your progress and pick up right where you left off."}</p>
+          <div className="sb-hero-points">
+            <div><span className="sb-point-icon">01</span><span><b>Show what you can do</b><small>Turn skills into structured evidence.</small></span></div>
+            <div><span className="sb-point-icon">02</span><span><b>Know what to improve</b><small>See where your strengths can grow.</small></span></div>
+            <div><span className="sb-point-icon">03</span><span><b>Move forward with confidence</b><small>Share a skills passport when you're ready.</small></span></div>
+          </div>
+          <div className="sb-hero-foot"><span className="sb-avatar-stack"><i>C</i><i>R</i><i>S</i></span><span>One platform for candidates and hiring teams</span></div>
+        </div>
+        <div className="sb-auth-wrap" id="signup">
+          <div className="sb-auth-glow"/>
+          <div className="sb-auth-card">
+            <div className="sb-auth-card-top"><span className="sb-auth-mark">S</span><span className="sb-auth-secure"><span/> Secure account access</span></div>
+            <div className="sb-auth-heading">
+              <div className="sb-kicker">{isRegister ? "GET STARTED — IT'S FREE TO JOIN" : "YOUR SKILLBRIDGE ACCOUNT"}</div>
+              <h2>{isRegister ? "Create your account" : "Sign in to SkillBridge"}</h2>
+              <p>{isRegister ? "A few details to get your journey moving." : "Enter your details to access your workspace."}</p>
+            </div>
+            <div className="sb-auth-tabs" role="tablist" aria-label="Account access">
+              <button type="button" role="tab" aria-selected={isRegister} className={isRegister ? "active" : ""} onClick={() => changeMode("register")}>Create account</button>
+              <button type="button" role="tab" aria-selected={!isRegister} className={!isRegister ? "active" : ""} onClick={() => changeMode("login")}>Sign in</button>
+            </div>
+            <form className="sb-auth-form" onSubmit={submit}>
+              {isRegister && <>
+                <label>Full name<input value={f.name} onChange={set("name")} required minLength={2} autoComplete="name" placeholder="e.g. Samira Ahmed"/></label>
+                <div className="sb-field-label">I’m joining as</div>
+                <div className="sb-role-choices">
+                  <button type="button" className={f.role === "candidate" ? "selected" : ""} onClick={() => setF({...f,role:"candidate"})}><span className="sb-role-icon">↗</span><span><b>Candidate</b><small>Build my skill profile</small></span><i>{f.role === "candidate" ? "✓" : ""}</i></button>
+                  <button type="button" className={f.role === "company" ? "selected" : ""} onClick={() => setF({...f,role:"company"})}><span className="sb-role-icon">⌂</span><span><b>Company</b><small>Hire with confidence</small></span><i>{f.role === "company" ? "✓" : ""}</i></button>
+                </div>
+              </>}
+              <label>Email address<input type="email" value={f.email} onChange={set("email")} required autoComplete="email" placeholder="you@example.com"/></label>
+              <label>Password<div className="sb-password-field"><input type={showPassword ? "text" : "password"} value={f.password} onChange={set("password")} required minLength={8} autoComplete={isRegister ? "new-password" : "current-password"} placeholder="At least 8 characters"/><button type="button" onClick={() => setShowPassword(v=>!v)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button></div></label>
+              <Err e={err}/>
+              <button className="sb-submit" disabled={busy}>{busy ? "Please wait…" : isRegister ? "Create my account" : "Sign in securely"}<span>→</span></button>
+            </form>
+            <div className="sb-auth-switch">{isRegister ? "Already have an account?" : "New to SkillBridge?"} <button type="button" onClick={() => changeMode(isRegister ? "login" : "register")}>{isRegister ? "Sign in" : "Create an account"}</button></div>
+            <div className="sb-auth-legal">By continuing, you agree to use SkillBridge responsibly and provide accurate information.</div>
+          </div>
+          <div className="sb-auth-note"><span>✦</span> A more meaningful way to demonstrate what you know.</div>
+        </div>
       </section>
-      <section className="split">
-        <form className="card" onSubmit={submit}>
-          <h2>{mode === "register" ? t("register") : t("signIn")}</h2>
-          {mode === "register" && <label>{t("name")}<input value={f.name} onChange={set("name")} required minLength={2} autoComplete="name" /></label>}
-          {mode === "register" && <label>Account type<select value={f.role} onChange={set("role")}><option value="candidate">Candidate / Job seeker</option><option value="company">Company / Recruiter</option></select></label>}
-          <label>{t("email")}<input type="email" value={f.email} onChange={set("email")} required autoComplete="email" /></label>
-          <label>{t("password")}<input type="password" value={f.password} onChange={set("password")} required minLength={8} autoComplete={mode === "register" ? "new-password" : "current-password"} /></label>
-          <Err e={err} />
-          <button className="btn" disabled={busy}>{mode === "register" ? t("register") : t("signIn")}</button>
-          <button type="button" className="link" onClick={() => setMode(mode === "register" ? "login" : "register")}>{mode === "register" ? t("haveAcct") : t("noAcct")}</button>
-        </form>
-        <aside className="card quiet">
-          <h2>{t("limitsTitle")}</h2>
-          <ul>{t("limits").map((x, i) => <li key={i}>{x}</li>)}</ul>
-        </aside>
+      <section className="sb-proof-strip" aria-label="SkillBridge journey">
+        <div className="sb-proof-title">A journey built around evidence</div>
+        <div className="sb-journey"><span><i>01</i> Profile</span><b>—</b><span><i>02</i> Assess</span><b>—</b><span><i>03</i> Improve</span><b>—</b><span><i>04</i> Reassess</span><b>—</b><span><i>05</i> Share</span></div>
       </section>
+      <section className="sb-value-section" id="how-it-works">
+        <div className="sb-section-intro"><div className="sb-kicker">ONE BRIDGE. TWO SIDES.</div><h2>Make skills easier to see.<br/><em>And easier to trust.</em></h2><p>SkillBridge brings candidate development and evidence-led hiring into one connected experience.</p></div>
+        <div className="sb-value-grid">
+          <article className="sb-value-card"><div className="sb-value-number">01 / FOR CANDIDATES</div><div className="sb-value-icon">↗</div><h3>Turn your potential into proof.</h3><p>Build a structured profile, understand skill gaps, practise through assessments and share your skills passport with control.</p><button type="button" onClick={() => {setF(v=>({...v,role:"candidate"}));changeMode("register");document.getElementById("signup")?.scrollIntoView({behavior:"smooth"});}}>Start as a candidate <span>→</span></button></article>
+          <article className="sb-value-card sb-value-card-dark"><div className="sb-value-number">02 / FOR COMPANIES</div><div className="sb-value-icon">⌂</div><h3>Hire with a clearer picture.</h3><p>Organise roles, review applicants, manage hiring stages and use structured assessment evidence to support decisions.</p><button type="button" onClick={() => {setF(v=>({...v,role:"company"}));changeMode("register");document.getElementById("signup")?.scrollIntoView({behavior:"smooth"});}}>Build your hiring workspace <span>→</span></button></article>
+        </div>
+      </section>
+      <footer className="sb-footer"><div><span className="sb-footer-mark">S</span><b>SkillBridge</b><small>Skills. Evidence. Opportunity.</small></div><span>Connecting capability with opportunity.</span><a href="#top">Back to top ↑</a></footer>
     </main>
   );
 }
-
 /* ---------- consent ---------- */
 function Consent({ lang, onDone }) {
   const t = useT();
@@ -776,13 +819,14 @@ function Shell({ lang, setLang }) {
   const logout = () => { setToken(null); setAuthed(false); setRole(null); setSt(null); setView(null); };
   const Head = (
     <header className="top">
-      <strong className="brand">{t("brand")}</strong>
+      <a className="brand sb-top-brand" href="#top"><span className="sb-brand-mark">S</span><span>SkillBridge<small>SKILLS · EVIDENCE · OPPORTUNITY</small></span></a>
+      {!authed && <nav className="sb-top-nav"><a href="#how-it-works">How it works</a><a href="#signup">For candidates & companies</a></nav>}
       <span className="grow" />
       <div className="seg" role="group" aria-label="Language">
         <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
         <button className={lang === "bn" ? "on" : ""} onClick={() => setLang("bn")}>বাংলা</button>
       </div>
-      {authed && <button className="link" onClick={logout}>{t("logout")}</button>}
+      {authed ? <button className="link" onClick={logout}>{t("logout")}</button> : <a className="sb-top-signin" href="#signin">Sign in <span>→</span></a>}
     </header>
   );
 
