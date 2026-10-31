@@ -1083,7 +1083,7 @@ def admin_quality(user=Depends(current_user)):
     attempts=one("SELECT COUNT(*) AS n FROM attempts WHERE status='done'")["n"]
     appeals=one("SELECT COUNT(*) AS n FROM attempts WHERE appeal IS NOT NULL AND appeal!=''")["n"]
     reviewed=one("SELECT COUNT(*) AS n FROM admin_attempt_reviews")["n"]
-    overturns=one("SELECT COUNT(*) AS n FROM admin_attempt_reviews WHERE decision='overturned'")["n"]
+    overturns=one("SELECT COUNT(*) AS n FROM admin_appeal_decisions WHERE decision='overturned'")["n"]
     return {"completed_attempts":attempts,"appeals":appeals,"reviewed_attempts":reviewed,
             "appeal_overturns":overturns,"appeal_overturn_rate":(round(overturns/appeals,4) if appeals else None),
             "demographic_analysis":"not_collected",
