@@ -334,8 +334,8 @@ class CompanyJobInput(BaseModel):
     employment_type: str = Field(default="Full-time", max_length=40)
     work_mode: str = Field(default="Remote", max_length=30)
     experience_level: str = Field(default="Any", max_length=40)
-    salary_min: Optional[int] = None
-    salary_max: Optional[int] = None
+    salary_min: Optional[int] = Field(default=None, ge=0)
+    salary_max: Optional[int] = Field(default=None, ge=0)
     salary_currency: str = Field(default="BDT", max_length=8)
     deadline: str = Field(default="", max_length=30)
     required_skills: List[str] = Field(default_factory=list, max_length=30)
@@ -432,21 +432,6 @@ def submit_company_verification(body: CompanyVerificationInput, user=Depends(cur
     run("UPDATE companies SET verified=0 WHERE id=?", (company["id"],))
     audit(user["id"], "company_verification_submitted", company["id"])
     return {"status": "pending_review", "message": "Verification request submitted for review."}
-
-
-@router.get("/api/company/jobs")
-def company_jobs_v2(user=Depends(current_user)):
-    company = company_for_access(user)
-    rows = allr("SELECT * FROM jobs WHERE company_id=? ORDER BY created DESC", (company["id"],))
-    items = []
-    for row in rows:
-        item = dict(row)
-        item["skills"] = json.loads(item["skills"] or "[]")
-        detail = one("SELECT details_json,revision,updated FROM job_details WHERE job_id=?", (item["id"],))
-        item["details"] = json.loads(detail["details_json"]) if detail else {}
-        item["revision"] = detail["revision"] if detail else 1
-        items.append(item)
-    return {"items": items}
 
 
 @router.post("/api/company/jobs")
@@ -579,7 +564,7 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
                  (application_id, company["id"]))
     history = allr("SELECT from_stage,to_stage,reason,actor_id,created FROM application_history WHERE application_id=? AND company_id=? ORDER BY created DESC",
                    (application_id, company["id"]))
-    item["notes"] = [dict(n) for n in notes]
+    item["notes"] = [dict(n) for n in notes] if company_role_for(user, company) in ("owner", "recruiter", "hiring_manager") else []
     item["history"] = [dict(h) for h in history]
     item["profile_visibility"] = "Candidate profile details are not exposed by this prototype unless a dedicated sharing flow is implemented."
     return item
@@ -638,7 +623,7 @@ def add_application_note(application_id: str, body: RecruiterNote, user=Depends(
 @router.get("/api/company/team")
 def company_team(user=Depends(current_user)):
     company = company_for_access(user)
-    require_company_permission(user, company, "owner", "recruiter", "hiring_manager", "viewer")
+    require_company_permission(user, company, "owner")
     rows = allr("SELECT id,email,company_role,status,created FROM company_members WHERE company_id=? ORDER BY created",
                 (company["id"],))
     return {"owner": {"name": one("SELECT name FROM users WHERE id=?", (company["owner_user_id"],))["name"]},
@@ -793,9 +778,11 @@ def admin_job_moderation_decision(job_id: str, body: CompanyReviewDecision, user
     require_role(user, "admin")
     if body.decision not in ("published", "needs_changes", "rejected", "paused"):
         raise HTTPException(422, "Unsupported moderation decision")
-    row = one("SELECT id FROM jobs WHERE id=?", (job_id,))
+    row = one("SELECT j.id,j.company_id,c.verified FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.id=?", (job_id,))
     if not row:
         raise HTTPException(404, "Job not found")
+    if body.decision == "published" and not row["verified"]:
+        raise HTTPException(409, "Company verification must be completed before a job can be published")
     run("UPDATE jobs SET status=? WHERE id=?", (body.decision, job_id))
     audit(user["id"], "job_moderation_decision", job_id + ":" + body.decision + ":" + body.reason.strip())
     return {"job_id": job_id, "status": body.decision}
