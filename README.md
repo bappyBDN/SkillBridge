@@ -5,13 +5,14 @@ AI-native skill verification loop for one role (**Junior Data Analyst**):
 Built from the *SkillBridge Global BRD & PRD v1.0* (Release **R0**, PRD §11) and the *SkillBridge BD* report.
 
 - **Frontend:** React 18 + Vite (served by nginx)
-- **Backend:** FastAPI + SQLite (single file DB in a Docker volume)
+- **Backend:** FastAPI + PostgreSQL 16 (Docker volume); SQLite remains available for lightweight local engine tests when DATABASE_URL is unset
 - **Run / deploy:** Docker Compose
 
 ## Run
 
 ```bash
-cp .env.example .env          # set SECRET_KEY; ANTHROPIC_API_KEY is optional
+cp .env.example .env          # change SECRET_KEY and POSTGRES_PASSWORD outside local demos
+# Docker Compose wires the backend to PostgreSQL
 docker compose up --build
 # open http://localhost:8080   (health check: http://localhost:8080/api/health)
 ```
@@ -76,3 +77,28 @@ docker-compose.yml · .env.example · .github/workflows/ci.yml
 
 ## Compliance notes
 Planning prototype, not legal advice. Confirm privacy/employment-AI obligations with counsel per market (BRD §12). Third-party resource terms must be checked before launch.
+
+
+## PRD implementation branch: PostgreSQL + hiring workflow
+
+Branch: feature/prd-postgres-enterprise
+
+This branch adds a PostgreSQL 16 service, persistent storage, a health check, a psycopg-backed database adapter (SQLite fallback for engine tests), and the first company/job/application API slice.
+
+### Hiring API slice
+- Candidate and company account roles; public registration cannot assign the admin role.
+- Company profile and job publishing.
+- Candidate job applications and opt-in, revocable sharing of assessment results with the employer.
+- Recruiter application listing; assessment scores are omitted unless the candidate has opted in.
+- Admin-only overview, user list and company-specific assessment request list.
+
+### Synthetic demo data
+When SEED_DEMO=true, synthetic demo accounts are seeded (password demo12345):
+- Candidate: demo@skillbridge.test
+- Recruiter: recruiter@skillbridge.test
+- Admin: admin@skillbridge.test
+
+Demo jobs are explicitly marked MOCK and are not real vacancies. These credentials are local-demo-only; do not enable public demo accounts in production.
+
+### Known remaining PRD work
+This is an initial vertical slice, not a completed production platform. Alembic migrations, complete authorization/security tests, DeepSeek provider integration, pgvector RAG, payment webhooks, official score review, OCR fallback, hardened code execution and end-to-end production deployment remain future work.
