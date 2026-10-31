@@ -1106,3 +1106,11 @@ def admin_console_set_staff_role(user_id: int, body: AdminStaffRoleInput, user=D
         (user_id,body.admin_role,user["id"],time.time()))
     audit(user["id"],"admin_staff_role_changed",str(user_id)+":"+body.admin_role)
     return {"user_id":user_id,"admin_role":body.admin_role}
+
+@router.get("/api/admin/console/me")
+def admin_console_me(user=Depends(current_user)):
+    require_role(user, "admin")
+    row=one("SELECT admin_role FROM admin_staff_roles WHERE user_id=?",(user["id"],))
+    staff_role=row["admin_role"] if row else "super_admin"
+    scopes=sorted([scope for scope,roles in ADMIN_SCOPE_ROLES.items() if staff_role in roles])
+    return {"user_id":user["id"],"admin_role":staff_role,"scopes":scopes}
