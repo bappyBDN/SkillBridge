@@ -26,25 +26,45 @@ cd frontend && npm install && npm run dev                                       
 
 Deploy on any VPS with Docker: clone, create `.env` (strong `SECRET_KEY`), `docker compose up -d --build`, put HTTPS (Caddy/Traefik/Cloudflare) in front of port 8080. Set `RETEST_COOLDOWN_HOURS=336` for the spec's 14-day cooldown (0 is for demos).
 
-## Deploy on Render (one click)
+## Deploy: Vercel frontend + Render API
 
-The repo has a `render.yaml` Blueprint plus a single-container `Dockerfile` that serves the built frontend and the API from one process.
+The frontend and FastAPI backend are separate deployments. The Vercel project should use the `frontend` directory; Render runs the API and managed PostgreSQL.
 
-1. Push this repo to GitHub.
-2. Render dashboard → **New → Blueprint** → connect the GitHub repo. Render reads `render.yaml` and creates one **web service** (free plan).
-3. During setup, Render asks for the optional `ANTHROPIC_API_KEY` (leave empty to use the offline rule-based skill extractor). `SECRET_KEY` is auto-generated.
-4. On first deploy the container **seeds a demo account** (`SEED_DEMO=true`):
+### 1. Deploy the backend on Render
 
-   - **Email:** `demo@skillbridge.test`
-   - **Password:** `demo12345`
+1. Open Render Dashboard → **New → Blueprint** and connect this repository. Render reads the root `render.yaml`.
+2. Review the resources before confirming. The Blueprint creates a Render web service and a **paid, persistent PostgreSQL database** on the lowest paid database tier. The web service is configured on Render's free tier and may sleep when idle.
+3. The backend service uses `backend/Dockerfile`, exposes `/api/health`, receives `DATABASE_URL` from the managed database, generates `SECRET_KEY`, and allows the current Vercel origin through CORS.
+4. Wait for the Render service to finish deploying. Its default URL is `https://skillbridge.onrender.com`. Verify `https://skillbridge.onrender.com/api/health` returns JSON with `"ok": true`.
 
-   That account already has a consented profile, a pre assessment (55%), a post assessment (92%) with uplift, and a valid Skill Passport — so every screen is populated. Create a fresh account to walk the full flow yourself.
+### 2. Connect the Vercel frontend
 
-Notes:
-- `healthCheckPath` is `/api/health`.
-- Free plan: the SQLite DB lives on the instance's ephemeral disk, so it resets on each redeploy (the demo account is re-seeded automatically). Add a persistent disk or Render Postgres for real persistence.
-- Free services sleep after ~15 min idle and wake on the next request (a short cold start).
-- Set `RETEST_COOLDOWN_HOURS=336` in Render's environment to enforce the spec's 14-day re-test cooldown (it is `0` for demos).
+In Vercel → SkillBridge project → **Settings → Environment Variables**, add:
+
+- **Name:** `VITE_API_BASE_URL`
+- **Value:** `https://skillbridge.onrender.com`
+- **Environments:** Production, Preview, and Development as needed.
+
+Keep **Root Directory** set to `frontend`. Redeploy the Vercel project so Vite includes the new build-time variable. The frontend API client now prefixes every `/api` request with this origin. If you use a custom Vercel domain, add that exact origin to Render's `CORS_ORIGINS` environment variable (comma-separated), then redeploy the backend.
+
+### 3. Create your Super Admin account
+
+After the Render backend is live, open the service's **Shell** and run:
+
+```bash
+cd /app
+python create_admin.py
+```
+
+Enter your own email and a unique password of at least 14 characters when prompted. Do not put the password in source code or commit it. Then sign in from the Vercel site; the Admin Console is shown for the provisioned admin account. The production Blueprint sets `SEED_DEMO=false`, so it does not create the public demo account.
+
+### 4. Production settings
+
+- Keep `SECRET_KEY` generated and stable; do not rotate it casually because it signs active login tokens and Skill Passports.
+- Keep `DATABASE_URL` connected to the managed PostgreSQL database. Do not use SQLite on an ephemeral web-service filesystem for production.
+- The Blueprint sets `RETEST_COOLDOWN_HOURS=336` and disables demo seeding.
+- Add any additional frontend domains to `CORS_ORIGINS` and redeploy the API.
+- Add `ANTHROPIC_API_KEY` in Render only if you want the optional LLM extraction path.
 
 ## Demo path (about 5 minutes)
 1. Create account → accept consent. 2. **Use sample CV** → Analyse (see what was redacted) → confirm skills.
