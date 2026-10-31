@@ -4,14 +4,14 @@ from main import hash_pw, init_db, one, run
 
 PASSWORD = "demo12345"
 
-def create_user(email, name, role):
+def create_user(email, name, role, password=PASSWORD):
     row = one("SELECT id FROM users WHERE email=?", (email,))
     if row:
         uid = row["id"]
         run("INSERT INTO user_roles(user_id,role) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET role=excluded.role", (uid, role))
         return uid
     salt = secrets.token_hex(16)
-    uid = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)", (email, name, salt, hash_pw(PASSWORD, salt), time.time()))
+    uid = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)", (email, name, salt, hash_pw(password, salt), time.time()))
     run("INSERT INTO user_roles(user_id,role) VALUES (?,?)", (uid, role))
     return uid
 
@@ -20,6 +20,7 @@ def seed():
     create_user("demo@skillbridge.test", "Demo Candidate (Synthetic)", "candidate")
     recruiter = create_user("recruiter@skillbridge.test", "Demo Recruiter (Synthetic)", "company")
     create_user("admin@skillbridge.test", "Demo Admin (Synthetic)", "admin")
+    create_user("admin@test.com", "Admin (Test)", "admin", password="12345678")
     row = one("SELECT id FROM companies WHERE owner_user_id=?", (recruiter,))
     if row:
         cid = row["id"]

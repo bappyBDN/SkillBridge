@@ -9,6 +9,7 @@ services:
     plan: free
     region: oregon
     healthCheckPath: /api/health
+    startCommand: sh start.sh
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -23,7 +24,7 @@ services:
       - key: MAX_ATTEMPTS_90D
         value: "3"
       - key: SEED_DEMO
-        value: "false"
+        value: "true"
       - key: CORS_ORIGINS
         value: https://skillbridge-seven-peach.vercel.app,https://skillbridge.onrender.com
       - key: ANTHROPIC_API_KEY

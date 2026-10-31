@@ -56,13 +56,15 @@ cd /app
 python create_admin.py
 ```
 
-Enter your own email and a unique password of at least 14 characters when prompted. Do not put the password in source code or commit it. Then sign in from the Vercel site; the Admin Console is shown for the provisioned admin account. The production Blueprint sets `SEED_DEMO=false`, so it does not create the public demo account.
+Enter your own email and a unique password of at least 14 characters when prompted. Do not put the password in source code or commit it. Then sign in from the Vercel site; the Admin Console is shown for the provisioned admin account.
+
+> ⚠️ The Blueprint currently sets `SEED_DEMO=true`, so the synthetic demo accounts (including `admin@test.com` / `12345678`) are seeded on the Render service startup via `start.sh`. **Set `SEED_DEMO=false` before any public launch** — these are known, hardcoded local-demo credentials and must never exist on a publicly reachable deployment.
 
 ### 4. Production settings
 
 - Keep `SECRET_KEY` generated and stable; do not rotate it casually because it signs active login tokens and Skill Passports.
 - Keep `DATABASE_URL` connected to the managed PostgreSQL database. Do not use SQLite on an ephemeral web-service filesystem for production.
-- The Blueprint sets `RETEST_COOLDOWN_HOURS=336` and disables demo seeding.
+- The Blueprint sets `RETEST_COOLDOWN_HOURS=336`. `SEED_DEMO` is enabled for local/demo testing; disable it before a public launch.
 - Add any additional frontend domains to `CORS_ORIGINS` and redeploy the API.
 - Add `ANTHROPIC_API_KEY` in Render only if you want the optional LLM extraction path.
 
@@ -117,6 +119,9 @@ When SEED_DEMO=true, synthetic demo accounts are seeded (password demo12345):
 - Candidate: demo@skillbridge.test
 - Recruiter: recruiter@skillbridge.test
 - Admin: admin@skillbridge.test
+
+A second admin account for reaching the Admin Console is also seeded:
+- Admin: admin@test.com / password 12345678 (local demo only)
 
 Demo jobs are explicitly marked MOCK and are not real vacancies. These credentials are local-demo-only; do not enable public demo accounts in production.
 
