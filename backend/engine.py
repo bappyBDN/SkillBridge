@@ -158,13 +158,22 @@ def score(answers):
     return {"overall": overall, "level": level_of(overall), "topics": out}
 
 def trust_label(events, answers):
-    """Never pass/fail: High / Medium / Needs review, with human-readable reasons. A human reviews 'Needs review'."""
-    paste, blur = events.get("paste", 0), events.get("blur", 0)
+    """Integrity telemetry is advisory only; it never changes a score or automatically fails a candidate."""
+    counts = {
+        "copy": events.get("copy", 0),
+        "cut": events.get("cut", 0),
+        "paste": events.get("paste", 0),
+        "blur": events.get("blur", 0),
+        "tab_hidden": events.get("tab_hidden", 0),
+        "fullscreen_exit": events.get("fullscreen_exit", 0),
+        "screen_share_stopped": events.get("screen_share_stopped", 0),
+        "screen_share_unavailable": events.get("screen_share_unavailable", 0),
+    }
     fast = sum(1 for a in answers if a["type"] == "mcq" and a["correct"] and a["difficulty"] >= 2 and a["seconds"] < 3)
-    pts = 2 * paste + blur + 2 * fast
-    reasons = []
-    if paste: reasons.append({"key": "paste", "n": paste})
-    if blur: reasons.append({"key": "blur", "n": blur})
+    pts = 2 * (counts["copy"] + counts["cut"] + counts["paste"])
+    pts += counts["blur"] + counts["tab_hidden"] + counts["fullscreen_exit"]
+    pts += 3 * (counts["screen_share_stopped"] + counts["screen_share_unavailable"]) + 2 * fast
+    reasons = [{"key": key, "n": n} for key, n in counts.items() if n]
     if fast: reasons.append({"key": "fast", "n": fast})
     return ("High" if pts <= 1 else "Medium" if pts <= 4 else "Needs review"), reasons
 
