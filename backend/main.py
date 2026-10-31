@@ -546,6 +546,9 @@ def public_passport(pid: str):
     return {"revoked": False, "expired": payload["expires"] < time.strftime("%Y-%m-%d"), "signature_valid": valid, "signature": p["signature"][:16], "passport": payload}
 
 
+# Initialise the base schema before enterprise/admin modules create their extension tables.
+init_db()
+
 # PRD expansion: company, job and recruiter/admin APIs.
 from enterprise import router as enterprise_router
 app.include_router(enterprise_router)
