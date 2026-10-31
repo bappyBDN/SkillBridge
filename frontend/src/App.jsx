@@ -527,37 +527,86 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const t = useT();
   const [active, setActive] = useState(null);
   const [screenStream, setScreenStream] = useState(null);
+  const [shareReady, setShareReady] = useState(false);
+  const [fullscreenReady, setFullscreenReady] = useState(Boolean(document.fullscreenElement));
+  const [setupBusy, setSetupBusy] = useState(false);
   const [err, setErr] = useState(null);
   const done = st.attempts.filter((a) => a.status === "done");
   const mine = kind === "pre" ? done[0] : done.length > 1 ? done[done.length - 1] : null;
   const act = st.attempts.find((a) => a.status === "active");
-  const start = useCallback(async () => {
+
+  // Keep the setup status in sync if the candidate exits full-screen.
+  useEffect(() => {
+    const syncFullscreen = () => setFullscreenReady(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
+  // Stop a pending screen capture if the candidate leaves the setup screen.
+  useEffect(() => () => {
+    screenStream?.getTracks().forEach((track) => track.stop());
+  }, [screenStream]);
+
+  // Ask for screen sharing in its own click so the browser can show its picker.
+  const enableScreenShare = async () => {
     setErr(null);
-    let requestedStream = null;
     try {
       if (!navigator.mediaDevices?.getDisplayMedia) throw new Error(t("shareUnsupported"));
-      // Both browser permission prompts must be initiated directly from this click.
-      const shareRequest = navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
-      const fullscreenRequest = document.documentElement.requestFullscreen
-        ? document.documentElement.requestFullscreen().catch(() => null)
-        : Promise.resolve(null);
-      requestedStream = await shareRequest;
-      await fullscreenRequest;
+      const requestedStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 5 },
+        audio: false,
+      });
+      setScreenStream(requestedStream);
+      setShareReady(requestedStream.getVideoTracks().some((track) => track.readyState === "live"));
+    } catch (e) {
+      setShareReady(false);
+      setErr(e?.name === "NotAllowedError" ? new Error(t("shareRequired")) : e);
+    }
+  };
+
+  // Full-screen must be requested directly from a separate user click.
+  const enableFullscreen = async () => {
+    setErr(null);
+    try {
+      if (!document.documentElement.requestFullscreen) throw new Error(t("fullscreenUnsupported"));
+      await document.documentElement.requestFullscreen();
+      setFullscreenReady(Boolean(document.fullscreenElement));
       if (!document.fullscreenElement) throw new Error(t("fullscreenRequired"));
+    } catch (e) {
+      setFullscreenReady(Boolean(document.fullscreenElement));
+      setErr(e?.name === "NotAllowedError"
+        ? new Error(t("fullscreenClickAgain"))
+        : new Error(e.message || t("fullscreenUnsupported")));
+    }
+  };
+
+  const start = useCallback(async () => {
+    setErr(null);
+    const sharing = screenStream?.getVideoTracks().some((track) => track.readyState === "live");
+    const fullscreen = Boolean(document.fullscreenElement);
+    setShareReady(Boolean(sharing));
+    setFullscreenReady(fullscreen);
+    if (!sharing || !fullscreen) {
+      setErr(new Error(!sharing ? t("shareRequired") : t("fullscreenRequired")));
+      return;
+    }
+    setSetupBusy(true);
+    try {
       const v = await api("/attempts", { method: "POST" });
       if (v.status === "active") {
         await api(`/attempts/${v.attempt_id}/event`, { method: "POST", body: { type: "screen_share_started" } });
-        setScreenStream(requestedStream);
         setActive(v);
       } else {
-        requestedStream.getTracks().forEach((track) => track.stop());
+        screenStream?.getTracks().forEach((track) => track.stop());
+        setScreenStream(null);
         refresh();
       }
     } catch (e) {
-      requestedStream?.getTracks().forEach((track) => track.stop());
-      setErr(e?.name === "NotAllowedError" ? new Error(t("shareRequired")) : e);
+      setErr(e);
+    } finally {
+      setSetupBusy(false);
     }
-  }, [refresh, t]);
+  }, [refresh, screenStream, t]);
   const finished = async () => {
     screenStream?.getTracks().forEach((track) => track.stop());
     setScreenStream(null);
@@ -586,8 +635,25 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       <h2>{kind === "pre" ? t("startTest") : t("steps").retest}</h2>
       <p>{kind === "pre" ? t("testIntro") : t("retestIntro")}</p>
       <p className="exam-integrity-note">{t("examIntegrityIntro")}</p>
+      <div className="card exam-setup-steps">
+        <div className="row">
+          <span>{shareReady ? "✓" : "1."} {t("shareSetupStep")}</span>
+          <button type="button" className="btn ghost sm" onClick={enableScreenShare} disabled={setupBusy}>
+            {shareReady ? t("shareActive") : t("restartShare")}
+          </button>
+        </div>
+        <div className="row">
+          <span>{fullscreenReady ? "✓" : "2."} {t("fullscreenSetupStep")}</span>
+          <button type="button" className="btn ghost sm" onClick={enableFullscreen} disabled={setupBusy}>
+            {fullscreenReady ? t("fullscreenActive") : t("restartFullscreen")}
+          </button>
+        </div>
+        <p className="muted">{t("examSetupHint")}</p>
+      </div>
       <Err e={err} />
-      <button className="btn" onClick={start}>{t("startTest")}</button>
+      <button className="btn" onClick={start} disabled={setupBusy || !shareReady || !fullscreenReady}>
+        {setupBusy ? t("saving") : t("startTest")}
+      </button>
     </section>
   );
 }
