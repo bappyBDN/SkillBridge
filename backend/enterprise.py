@@ -831,7 +831,7 @@ class AdminReviewInput(BaseModel):
     reason: str = Field(min_length=3, max_length=1500)
 
 
-@router.get("/api/admin/overview")
+@router.get("/api/admin/console/overview")
 def admin_overview_v2(user=Depends(current_user)):
     admin_only(user)
     counts = {
@@ -854,7 +854,7 @@ def admin_overview_v2(user=Depends(current_user)):
             "note": "Counts may include explicitly labelled synthetic demo records. Billing and AI cost telemetry are not connected in this deployment."}
 
 
-@router.get("/api/admin/users")
+@router.get("/api/admin/console/users")
 def admin_users_v2(user=Depends(current_user), q: str = "", role: str = "all", status: str = "all"):
     admin_only(user)
     query = """SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created,
@@ -894,7 +894,7 @@ def admin_set_user_status(user_id: int, body: AdminUserStatusInput, user=Depends
     return {"user_id": user_id, "status": body.status}
 
 
-@router.get("/api/admin/company-verifications")
+@router.get("/api/admin/console/company-verifications")
 def admin_company_verifications_v2(user=Depends(current_user)):
     admin_only(user)
     rows = allr("""SELECT v.company_id,v.legal_name,v.country,v.business_id,v.evidence_note,v.status,
@@ -904,7 +904,7 @@ def admin_company_verifications_v2(user=Depends(current_user)):
     return {"items": [dict(r) for r in rows]}
 
 
-@router.get("/api/admin/job-review-queue")
+@router.get("/api/admin/console/job-review-queue")
 def admin_job_review_queue_v2(user=Depends(current_user)):
     admin_only(user)
     rows = allr("""SELECT j.id,j.title,j.description,j.location,j.employment_type,j.status,j.created,
