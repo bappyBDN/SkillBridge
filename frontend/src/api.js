@@ -1,6 +1,6 @@
 const KEY = "sb_token";
 // Set VITE_API_BASE_URL in Vercel to the deployed FastAPI origin (for example, https://skillbridge.onrender.com).
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\\/+$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
 export const getToken = () => localStorage.getItem(KEY);
 export const setToken = (t) => (t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY));
 
