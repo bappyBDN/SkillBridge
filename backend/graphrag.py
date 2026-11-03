@@ -186,8 +186,12 @@ def _external_retrieval(query: str, category_id: str | None = None) -> tuple[lis
             from neo4j import GraphDatabase
             with GraphDatabase.driver(neo_uri, auth=(neo_user, neo_password)) as driver:
                 records = driver.execute_query(
-                    "MATCH p=(s:Skill)-[:RELATED_TO*0..2]-(t:Topic)-[:HAS_QUESTION]-(q:Question) "
+                    "MATCH (s:Skill)-[:HAS_QUESTION]-(q:Question) "
                     "WHERE toLower(s.name) CONTAINS toLower($query) "
+                    "RETURN q.id AS id, 0 AS hops "
+                    "UNION "
+                    "MATCH p=(s:Skill)-[:RELATED_TO*0..2]-(t:Topic)-[:HAS_QUESTION]-(q:Question) "
+                    "WHERE toLower(s.name) CONTAINS toLower($query) OR toLower(t.name) CONTAINS toLower($query) "
                     "RETURN q.id AS id, length(p) AS hops ORDER BY hops ASC LIMIT 80",
                     query=query, database_=os.getenv("NEO4J_DATABASE", "neo4j")
                 ).records
