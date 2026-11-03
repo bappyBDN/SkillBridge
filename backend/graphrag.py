@@ -71,7 +71,7 @@ FUNDAMENTAL_CATEGORY_MAP = {
     "DSA": {"category_ids": {"CAT-02"}, "terms": ("dsa", "data structure", "algorithm", "complexity", "array", "tree", "graph", "sorting")},
     "OOP": {"category_ids": {"CAT-05", "CAT-08", "CAT-03"}, "terms": ("oop", "object oriented", "class", "inheritance", "polymorphism", "encapsulation", "abstraction")},
     "Networking": {"category_ids": {"CAT-08"}, "terms": ("network", "tcp", "udp", "dns", "http", "osi", "subnet", "routing")},
-    "Coding": {"category_ids": {"CAT-03"}, "terms": ("coding", "programming", "function", "debug", "code", "implementation")},
+    "Coding": {"category_ids": {"CAT-03"}, "terms": ("coding", "programming", "problem solving", "function", "debug", "code", "implementation")},
     "Database": {"category_ids": {"CAT-01", "CAT-08"}, "terms": ("database", "sql", "dbms", "query", "join", "index", "transaction", "normalization")},
     "Critical Thinking": {"category_ids": {"CAT-06", "CAT-07"}, "terms": ("critical thinking", "scenario", "reasoning", "trade-off", "decision", "troubleshoot", "case study")},
 }
@@ -178,7 +178,10 @@ def _topic_match(q: dict, topic: str) -> bool:
     spec = FUNDAMENTAL_CATEGORY_MAP[topic]
     if q.get("category_id") not in spec["category_ids"]:
         return False
-    haystack = _norm(" ".join([str(q.get("subcategory", "")), str(q.get("question_text", "")), str(q.get("question_type", ""))]))
+    fields = [str(q.get("subcategory", "")), str(q.get("question_text", ""))]
+    if topic != "Coding":
+        fields.append(str(q.get("question_type", "")))
+    haystack = _norm(" ".join(fields))
     return any(_norm(term) in haystack for term in spec["terms"])
 
 def _skill_match(q: dict, skill: CVSkill) -> bool:
