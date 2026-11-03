@@ -973,10 +973,12 @@ def admin_assessment_reviews(user=Depends(current_user)):
         evidence = []
         if state.get("graphrag"):
             saved_answers = state.get("answers", {})
+            grade_map = {x.get("question_id"): x for x in (item.get("result") or {}).get("question_results", [])}
             for index, question in enumerate(state.get("selected_questions", []), start=1):
                 raw_answer = saved_answers.get(question.get("id"))
+                grade = grade_map.get(question.get("id"), {})
                 qtype = str(question.get("question_type", "")).lower()
-                objective = qtype in ("mcq", "multiple choice")
+                objective = qtype in ("mcq", "multiple choice") or ("sql" in qtype and bool(question.get("reference_answer")))
                 evidence.append({
                     "number": index, "question_id": question.get("id"),
                     "topic": question.get("assessment_topic"), "assessment_section": question.get("assessment_section"),
@@ -984,11 +986,12 @@ def admin_assessment_reviews(user=Depends(current_user)):
                     "question": question.get("question_text") or "Question text unavailable",
                     "options": question.get("options") or [], "candidate_answer": raw_answer,
                     "selected_option": raw_answer if objective else None,
-                    "expected_answer": question.get("correct_answer") if objective else question.get("reference_answer"),
+                    "expected_answer": grade.get("correct_answer") or (question.get("correct_answer") if objective else question.get("reference_answer")),
                     "explanation": question.get("explanation"),
                     "grading_rubric": question.get("grading_rubric"),
                     "answer_available": raw_answer is not None and str(raw_answer).strip() != "",
-                    "automated_correct": None, "review_status": "objective_auto_graded" if objective else "pending_human_review",
+                    "automated_correct": (grade.get("review_status") == "correct") if objective else None,
+                    "review_status": grade.get("review_status") or ("objective_auto_graded" if objective else "pending_human_review"),
                     "marks": question.get("marks", 1), "time_allocation": question.get("time_allocation")
                 })
         else:
