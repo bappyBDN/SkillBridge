@@ -537,3 +537,10 @@ summary { cursor: pointer; font-weight: 600; margin: .4rem 0; }
 .gr-exam-actions>span{margin-right:auto;color:#8b9990;font-size:.58rem}
 .gr-exam-actions .btn{min-height:35px;padding:0 12px;font-size:.6rem}
 @media(max-width:640px){.gr-question-current{padding:13px}.gr-exam-actions{justify-content:stretch}.gr-exam-actions .btn{flex:1}.gr-exam-actions>span{width:100%;text-align:center}.gr-question-label{font-size:.51rem}}
+
+
+.ad-graphrag-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:17px 19px;border:1px solid #dce9e1;border-radius:12px;background:#f6faf7}
+.ad-graphrag-panel h3{margin:5px 0;color:#294b3a;font-size:.88rem}
+.ad-graphrag-panel p{margin:0 0 5px;color:#63796b;font-size:.62rem}
+.ad-graphrag-panel small{color:#8a9990;font-size:.54rem;line-height:1.5}
+@media(max-width:700px){.ad-graphrag-panel{align-items:flex-start;flex-direction:column}}
