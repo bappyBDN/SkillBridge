@@ -31,16 +31,24 @@ def complete_bank():
     }
     rows = []
     n = 0
+    special_formats = {
+        "DSA": {"Easy": "Coding"}, "OOP": {"Easy": "Explanation"},
+        "Networking": {"Medium": "Explanation"}, "Coding": {"Easy": "Coding"},
+        "Database": {"Easy": "SQL"}, "Critical Thinking": {"Medium": "Scenario-Based"},
+    }
     for topic, counts in FUNDAMENTAL_DIFFICULTY_MATRIX.items():
         category, subcategory, prompt = categories[topic]
         for difficulty, count in counts.items():
-            for _ in range(count):
+            for index in range(count):
                 n += 1
-                rows.append(question(f"fund-{n}", category, subcategory, f"{prompt}: explain case {n}", difficulty))
+                qtype = special_formats.get(topic, {}).get(difficulty, "MCQ")
+                if topic == "DSA" and index > 0: qtype = "MCQ"
+                rows.append(question(f"fund-{n}", category, subcategory, f"{prompt}: explain case {n}", difficulty, qtype))
+    cv_formats = {"Easy": ["Coding"], "Medium": ["Scenario-Based", "MCQ"], "Hard": ["Explanation", "Coding"]}
     for difficulty, count in {"Easy": 1, "Medium": 2, "Hard": 2}.items():
         for i in range(count):
             n += 1
-            rows.append(question(f"py-{n}", "CAT-03", "Python", f"Python practical problem {i}", difficulty, "Coding", 90))
+            rows.append(question(f"py-{n}", "CAT-03", "Python", f"Python practical problem {i}", difficulty, cv_formats[difficulty][i], 90))
     return rows
 
 
