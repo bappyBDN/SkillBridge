@@ -468,7 +468,7 @@ function Result({ aid, next, nextLabel }) {
     <section>
       <h2>{t("resultTitle")}</h2>
       <div className="card result">
-        <div className="bignum"><span>{r.overall}</span><small>%</small></div>
+        <div className="bignum"><span>{r.overall==null?"Pending":r.overall}</span><small>{r.overall==null?"review":"%"}</small></div>
         <dl className="facts">
           <div><dt>{t("level")}</dt><dd>{t("levels")[r.level]}</dd></div>
           <div><dt>{t("trust")}</dt><dd><TrustChip trust={r.trust} /></dd></div>
@@ -480,8 +480,8 @@ function Result({ aid, next, nextLabel }) {
         <ul className="gaps">
           {Object.entries(r.topics).map(([k, v]) => (
             <li key={k}>
-              <div className="gaprow"><strong>{k}</strong><span className="muted">{t("levels")[v.level]}</span><span>{v.score}%</span></div>
-              <Bar score={v.score} />
+              <div className="gaprow"><strong>{k}</strong><span className="muted">{v.score==null?"Pending review":t("levels")[v.level]}</span><span>{v.score==null?"—":v.score+"%"}</span></div>
+              <Bar score={v.score??0} />
             </li>
           ))}
         </ul>
