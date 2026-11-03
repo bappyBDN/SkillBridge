@@ -448,6 +448,27 @@ def seen_before(uid):
 
 def view(att):
     st = json.loads(att["state"])
+    if st.get("graphrag"):
+        import graphrag as G
+        questions = st["selected_questions"]
+        duration = int(st["duration_seconds"])
+        remaining = max(0, int(att["started"] + duration - time.time()))
+        index = int(st.get("question_index", 0))
+        current = questions[index] if questions else None
+        page = G.question_page(questions, index // G.QUESTION_PAGE_SIZE, st.get("answers", {}))
+        public = None
+        if current:
+            public = {k: current.get(k) for k in ("id", "assessment_section", "assessment_topic",
+                "skill_id", "question_type", "difficulty_level", "marks", "time_allocation")}
+            public["prompt"] = current.get("question_text", "")
+            public["options"] = current.get("options", [])
+            public["index"] = index
+            public["total"] = len(questions)
+        return {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"],
+            "remaining": remaining, "answered": len(st.get("answers", {})), "total": len(questions),
+            "graphrag": True, "blueprint_id": st["blueprint_id"], "question": public,
+            "page": page, "question_index": index, "duration_seconds": duration,
+            "manual_review_count": sum(1 for q in questions if str(q.get("question_type", "")).lower() not in ("mcq", "multiple choice"))}
     remaining = max(0, int(att["started"] + E.TEST_SECONDS - time.time()))
     out = {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"], "remaining": remaining, "answered": len(st["answers"]), "total": len(E.SLOTS)}
     if att["status"] == "active" and st["current"]:
@@ -463,9 +484,48 @@ def save(att_id, st, **kw):
 
 def finalize(att, st):
     ev = {r["type"]: r["n"] for r in allr("SELECT type, COUNT(*) n FROM events WHERE attempt_id=? GROUP BY type", (att["id"],))}
-    res = E.score(st["answers"])
-    label, reasons = E.trust_label(ev, st["answers"])
-    res.update({"trust": label, "trust_reasons": reasons, "percentile": None, "kind": att["kind"], "date": time.strftime("%Y-%m-%d")})
+    if st.get("graphrag"):
+        answers = st.get("answers", {})
+        topics = {}
+        review_rows, trust_answers = [], []
+        for q in st["selected_questions"]:
+            raw_answer = answers.get(q["id"], "")
+            qtype = str(q.get("question_type", "")).lower()
+            objective = qtype in ("mcq", "multiple choice")
+            correct = (str(raw_answer).strip().casefold() == str(q.get("correct_answer", "")).strip().casefold()) if objective and raw_answer != "" else (False if objective else None)
+            topic = q.get("assessment_topic") or "General"
+            metric = topics.setdefault(topic, {"earned": 0, "possible": 0, "n": 0})
+            if objective:
+                metric["possible"] += int(q.get("marks") or 1)
+                metric["n"] += 1
+                if correct: metric["earned"] += int(q.get("marks") or 1)
+            review_rows.append({"question_id": q["id"], "topic": topic, "question": q["question_text"],
+                "question_type": q.get("question_type"), "answer": raw_answer,
+                "correct_answer": q.get("correct_answer") if objective else None,
+                "explanation": q.get("explanation") if objective else None,
+                "review_status": ("correct" if correct else "incorrect") if objective else "pending_human_review"})
+            trust_answers.append({"type": "mcq" if objective else "subjective", "correct": bool(correct),
+                "difficulty": {"Easy": 1, "Medium": 2, "Hard": 3}.get(q.get("difficulty_level"), 2), "seconds": 999})
+        topic_scores = {}
+        for topic, metric in topics.items():
+            pct = round(100 * metric["earned"] / metric["possible"]) if metric["possible"] else None
+            topic_scores[topic] = {"score": pct, "level": E.level_of(pct or 0), "n": metric["n"]}
+        possible = sum(x["possible"] for x in topics.values())
+        earned = sum(x["earned"] for x in topics.values())
+        overall = round(100 * earned / possible) if possible else None
+        label, reasons = E.trust_label(ev, trust_answers)
+        manual = any(x["review_status"] == "pending_human_review" for x in review_rows)
+        res = {"overall": overall, "level": E.level_of(overall or 0), "topics": topic_scores,
+            "trust": label, "trust_reasons": reasons, "percentile": None,
+            "kind": att["kind"], "date": time.strftime("%Y-%m-%d"),
+            "review_status": "pending_human_review" if manual else "auto_graded",
+            "manual_review_required": manual, "question_results": review_rows,
+            "blueprint_id": st["blueprint_id"], "total_questions": len(st["selected_questions"]),
+            "answered_questions": len(answers)}
+    else:
+        res = E.score(st["answers"])
+        label, reasons = E.trust_label(ev, st["answers"])
+        res.update({"trust": label, "trust_reasons": reasons, "percentile": None, "kind": att["kind"], "date": time.strftime("%Y-%m-%d")})
     run("UPDATE attempts SET status='done', finished=?, result=?, state=? WHERE id=?", (time.time(), json.dumps(res), json.dumps(st), att["id"]))
     audit(att["user_id"], "attempt_done", att["id"])
 
