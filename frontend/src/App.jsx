@@ -533,7 +533,15 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const act = st.attempts.find((a) => a.status === "active");
   const start = useCallback(async () => {
     setErr(null);
-    try { const v = await api("/attempts", { method: "POST" }); if (v.status === "active") setActive(v); else refresh(); } catch (e) { setErr(e); }
+    try {
+      const blueprint = await api("/assessment/blueprint", {method:"POST"});
+      if (blueprint.status !== "ready") {
+        const missing = (blueprint.shortages || []).slice(0, 5).map((x) => `${x.topic} · ${x.difficulty}: ${x.available_selected}/${x.required}`).join("; ");
+        throw new Error("The approved question bank is not ready yet. " + (missing || "Add and approve the required questions in Admin → Question Bank."));
+      }
+      const v = await api("/attempts", {method:"POST",body:{blueprint_id:blueprint.blueprint_id}});
+      if (v.status === "active") setActive(v); else refresh();
+    } catch (e) { setErr(e); }
   }, [refresh]);
   const finished = async () => { setActive(null); await refresh(); };
 
