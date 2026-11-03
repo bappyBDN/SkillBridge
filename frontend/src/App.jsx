@@ -273,6 +273,7 @@ function Gap({ onStart, refreshKey }) {
 
 /* ---------- exam ---------- */
 function ExamRun({ initial, onFinished }) {
+  if (initial.graphrag) return <GraphRAGExamRun initial={initial} onFinished={onFinished} />;
   const t = useT();
   const [v, setV] = useState(initial);
   const [ans, setAns] = useState("");
@@ -323,20 +324,131 @@ function ExamRun({ initial, onFinished }) {
         <>
           <details open><summary>{t("schema")}</summary><pre className="pre">{q.schema}</pre></details>
           <p className="note">{t("sqlHelp")}</p>
-          <textarea className="code" rows={6} spellCheck={false} value={ans} onChange={(e) => setAns(e.target.value)} onPaste={onPaste} placeholder="SELECT ..." />
+          <textarea className="code" rows={6} spellCheck={false} value={ans} onChange={(e) => setAns(e.target.value)} onPaste={onPaste} placeholder="Write your answer..." />
           <p className="muted">{t("pasteNote")}</p>
-          <button className="btn ghost" onClick={runSql} disabled={!ans.trim()}>{t("run")}</button>
-          {out && (out.error ? <p className="err">{t("sqlError")}: {out.error}</p> : (
-            <div className="tablewrap">
-              <table><thead><tr>{out.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-                <tbody>{out.rows.slice(0, 20).map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{String(c)}</td>)}</tr>)}</tbody></table>
-              <small className="muted">{out.rows.length} {t("rows")}</small>
-            </div>
-          ))}
+          {String(q.type).toLowerCase().includes("sql") && <button className="btn ghost" onClick={runSql} disabled={!ans.trim()}>{t("run")}</button>}
+          {out && <pre className="pre">{JSON.stringify(out, null, 2)}</pre>}
         </>
       )}
       <Err e={err} />
       <button className="btn" onClick={submit} disabled={busy || String(ans).trim() === ""}>{busy ? t("saving") : t("submit")}</button>
+    </section>
+  );
+}
+
+function GraphRAGExamRun({ initial, onFinished }) {
+  const [v, setV] = useState(initial);
+  const [ans, setAns] = useState(initial.page?.answers?.[initial.question?.id] || "");
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [left, setLeft] = useState(initial.remaining);
+  const [sqlOut, setSqlOut] = useState(null);
+  const aid = v.attempt_id;
+  const q = v.question;
+  const page = v.page || {questions:[], page:0, page_count:0, answers:{}};
+
+  useEffect(() => { const i = setInterval(() => setLeft((x) => Math.max(0, x - 1)), 1000); return () => clearInterval(i); }, []);
+  useEffect(() => { setAns(page.answers?.[q?.id] || ""); setSqlOut(null); }, [q?.id, v.question_index]);
+  useEffect(() => {
+    const onBlur = () => api(`/attempts/${aid}/event`, {method:"POST",body:{type:"blur"}}).catch(()=>{});
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [aid]);
+
+  const saveAnswer = async () => {
+    if (!q || !String(ans).trim()) return v;
+    const next = await api(`/attempts/${aid}/answer`, {method:"POST",body:{question_id:q.id,answer:String(ans)}});
+    setV(next);
+    return next;
+  };
+  const goTo = async (index) => {
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      await saveAnswer();
+      const next = await api(`/attempts/${aid}/navigate`, {method:"POST",body:{index}});
+      setV(next); setAns(next.page?.answers?.[next.question?.id] || "");
+    } catch(e) { setErr(e); } finally { setBusy(false); }
+  };
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try { await saveAnswer(); } catch(e) { setErr(e); } finally { setBusy(false); }
+  };
+  const runSql = async () => {
+    try { setSqlOut(await api(`/attempts/${aid}/sql-run`,{method:"POST",body:{sql:ans}})); } catch(e) { setErr(e); }
+  };
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await saveAnswer();
+      const r = await api(`/attempts/${aid}/submit`,{method:"POST"});
+      if (r.status === "done") onFinished(aid); else setV(r);
+    } catch(e) { setErr(e); } finally { setBusy(false); }
+  };
+  if (!q) return <p>Loading assessment…</p>;
+  const isChoice = ["mcq","multiple choice"].includes(String(q.question_type).toLowerCase());
+  const answered = page.answers?.[q.id] != null && String(page.answers[q.id]).trim() !== "";
+  const previousIndex = Math.max(0, page.page * 5 - 1);
+  const nextIndex = Math.min(v.total - 1, (page.page + 1) * 5);
+  return (
+    <section className="card exam gr-exam">
+      <div className="examhead">
+        <span>Question {v.answered} of {v.total} answered</span>
+        <progress value={v.answered} max={v.total} />
+        <span className={"timer" + (left < 120 ? " low" : "")}>Time left: {fmt(left)}</span>
+      </div>
+      <div className="gr-exam-meta">
+        <span>{v.total} questions · {Math.ceil(v.duration_seconds / 60)} minutes allocated</span>
+        <span>Fundamental + CV skills</span>
+      </div>
+      <div className="gr-question-table">
+        <table>
+          <thead><tr><th>#</th><th>Question / Topic</th><th>Level</th><th>Type</th><th>Status</th></tr></thead>
+          <tbody>{page.questions.map((item) => (
+            <tr key={item.id} className={item.id === q.id ? "selected" : ""} onClick={() => goTo(item.question_number - 1)}>
+              <td>{item.question_number}</td>
+              <td><strong>{item.assessment_topic}</strong><small>{item.question_text}</small></td>
+              <td>{item.difficulty_level}</td><td>{item.question_type}</td>
+              <td>{page.answers?.[item.id] ? "Answered" : "Pending"}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <div className="gr-question-current">
+        <div className="gr-question-label">
+          <span>{q.assessment_section === "cv" ? "CV-BASED" : "FUNDAMENTAL"} · {q.assessment_topic}</span>
+          <span>{q.difficulty_level} · {q.question_type}</span>
+        </div>
+        <h3 className="qtext">{q.prompt}</h3>
+        {isChoice ? (
+          <fieldset className="opts">
+            {q.options.map((option, index) => (
+              <label key={index} className={"opt" + (String(ans) === String(option) ? " on" : "")}>
+                <input type="radio" name={"gr-option-"+q.id} checked={String(ans) === String(option)} onChange={() => setAns(String(option))} /> {option}
+              </label>
+            ))}
+          </fieldset>
+        ) : (
+          <>
+            <textarea className="code" rows={7} spellCheck={false} value={ans} onChange={(e)=>setAns(e.target.value)}
+              onPaste={()=>api(`/attempts/${aid}/event`,{method:"POST",body:{type:"paste"}}).catch(()=>{})}
+              placeholder={String(q.question_type).toLowerCase().includes("sql") ? "SELECT ..." : "Write your explanation, scenario response or code here…"} />
+            {String(q.question_type).toLowerCase().includes("sql") && <button className="btn ghost" onClick={runSql} disabled={!ans.trim()}>Run SQL</button>}
+            {sqlOut && <pre className="pre">{JSON.stringify(sqlOut,null,2)}</pre>}
+          </>
+        )}
+      </div>
+      <div className="gr-exam-actions">
+        <button className="btn ghost" onClick={()=>goTo(previousIndex)} disabled={page.page===0 || busy}>Previous 5</button>
+        <span>Page {page.page+1} of {page.page_count}</span>
+        <button className="btn ghost" onClick={()=>goTo(nextIndex)} disabled={!page.has_next || busy}>Next 5</button>
+        <button className="btn ghost" onClick={save} disabled={busy || !String(ans).trim()}>Save answer</button>
+        <button className="btn" onClick={submit} disabled={busy || v.answered + (answered ? 0 : (String(ans).trim() ? 1 : 0)) < v.total}>
+          {busy ? "Saving…" : "Submit assessment"}
+        </button>
+      </div>
+      <p className="muted">Answers are saved to your attempt. Correct answers and explanations remain hidden until submission. Coding, SQL, scenario and explanation responses may require human review.</p>
+      <Err e={err} />
     </section>
   );
 }
