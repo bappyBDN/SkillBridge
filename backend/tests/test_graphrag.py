@@ -65,6 +65,8 @@ def test_fundamental_and_cv_quotas_are_exact_and_non_overlapping():
     for difficulty, count in {"Easy": 10, "Medium": 8, "Hard": 7}.items():
         assert sum(q["difficulty_level"] == difficulty for q in result["fundamental"]) == count
     assert [sum(q["difficulty_level"] == d for q in result["cv_based"]) for d in ("Easy", "Medium", "Hard")] == [1, 2, 2]
+    assert {"scenario", "explanation", "sql", "coding"} <= set(result["fundamental_formats"])
+    assert {"coding", "scenario"} <= set(result["cv_format_coverage"]["python"])
 
 
 def test_incomplete_bank_fails_closed_with_shortage_details():
