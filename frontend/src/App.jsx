@@ -568,6 +568,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     <section className="card narrow">
       <h2>{kind === "pre" ? t("startTest") : t("steps").retest}</h2>
       <p>{kind === "pre" ? t("testIntro") : t("retestIntro")}</p>
+      <p className="muted">This assessment uses 25 fundamental questions plus five questions for every CV skill you confirm. Analyse your CV and confirm the detected technologies first. The question bank must also contain enough approved questions for every topic, difficulty and question format.</p>
       <Err e={err} />
       <button className="btn" onClick={start}>{t("startTest")}</button>
     </section>
