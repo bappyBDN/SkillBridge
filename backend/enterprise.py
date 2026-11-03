@@ -835,7 +835,7 @@ ADMIN_SCOPE_ROLES = {
     "job_moderation": {"super_admin", "company_verification_admin"}, "assessment_review": {"super_admin", "trust_safety_reviewer"},
     "appeals": {"super_admin", "trust_safety_reviewer"}, "phase_two": {"super_admin", "question_content_admin", "company_verification_admin"},
     "questions": {"super_admin", "question_content_admin"}, "ai": {"super_admin", "compliance_officer"},
-    "billing": {"super_admin", "finance_admin"}, "learning": {"super_admin", "question_content_admin"}, "privacy": {"super_admin", "compliance_officer"},
+    "billing": {"super_admin", "finance_admin"}, "learning": {"super_admin", "question_content_admin", "finance_admin"}, "privacy": {"super_admin", "compliance_officer"},
     "quality": {"super_admin", "compliance_officer", "trust_safety_reviewer"}, "audit": {"super_admin", "compliance_officer"},
     "staff": {"super_admin"},
 }
@@ -1761,7 +1761,7 @@ def admin_learning_workspace(user=Depends(current_user)):
 
 @router.post("/api/admin/learning/resources")
 def admin_create_learning_resource(body: LearningResourceInput,user=Depends(current_user)):
-    admin_only(user,"learning")
+    admin_only(user,"questions")
     if not _valid_resource_url(body.url): raise HTTPException(422,"Resource URL must be a valid HTTPS URL.")
     rid=uuid.uuid4().hex
     now=time.time()
@@ -1781,7 +1781,7 @@ class LearningResourceDecision(BaseModel):
 
 @router.patch("/api/admin/learning/resources/{resource_id}")
 def admin_review_learning_resource(resource_id: str,body: LearningResourceDecision,user=Depends(current_user)):
-    admin_only(user,"learning")
+    admin_only(user,"questions")
     if body.status not in ("verified","quarantined","retired","pending_review"):
         raise HTTPException(422,"Unsupported resource status")
     row=one("SELECT id FROM learning_resources WHERE id=?",(resource_id,))
