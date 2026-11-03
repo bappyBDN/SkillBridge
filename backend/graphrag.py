@@ -164,9 +164,13 @@ def _topic_match(q: dict, topic: str) -> bool:
     return any(_norm(term) in haystack for term in spec["terms"])
 
 def _skill_match(q: dict, skill: CVSkill) -> bool:
-    haystack = _norm(" ".join([str(q.get("subcategory", "")), str(q.get("question_text", "")), str(q.get("grading_rubric", ""))]))
+    haystack = " ".join([str(q.get("subcategory", "")), str(q.get("question_text", "")),
+                         str(q.get("grading_rubric", ""))]).lower()
     aliases = SKILL_ALIASES.get(skill.skill_id, [skill.label.lower()])
-    return any(_norm(alias) in haystack for alias in aliases) or _norm(skill.label) in haystack
+    def contains(alias: str) -> bool:
+        pattern = r"(?<![a-z0-9])" + re.escape(alias.lower()) + r"(?![a-z0-9])"
+        return bool(re.search(pattern, haystack))
+    return any(contains(alias) for alias in aliases) or contains(skill.label)
 
 def _external_retrieval(query: str, category_id: str | None = None) -> tuple[list[str], list[str]]:
     """Return IDs ordered by Meilisearch and Neo4j. Missing services are a normal fallback."""
