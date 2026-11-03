@@ -375,6 +375,37 @@ def generate_assessment_blueprint(u=Depends(current_user)):
     }
 
 
+@app.get("/api/admin/assessment/graphrag/status")
+def admin_graphrag_status(u=Depends(current_user)):
+    import enterprise as admin_data
+    admin_data.admin_only(u, "questions")
+    import graphrag as G
+    rows = allr("SELECT category_id,difficulty_level,COUNT(*) AS n FROM question_bank WHERE status='active' GROUP BY category_id,difficulty_level")
+    return {
+        "active_question_count": one("SELECT COUNT(*) AS n FROM question_bank WHERE status='active'")["n"],
+        "question_distribution": [dict(r) for r in rows],
+        "fundamental_targets": G.FUNDAMENTAL_TARGETS,
+        "fundamental_difficulty_matrix": G.FUNDAMENTAL_DIFFICULTY_MATRIX,
+        "cv_questions_per_skill": G.PER_SKILL_TARGETS,
+        "meilisearch_configured": bool(os.getenv("MEILISEARCH_URL")),
+        "neo4j_configured": bool(os.getenv("NEO4J_URI")),
+        "note": "Only active, curator-approved question-bank records are eligible for retrieval."
+    }
+
+
+@app.post("/api/admin/assessment/graphrag/reindex")
+def admin_graphrag_reindex(u=Depends(current_user)):
+    import enterprise as admin_data
+    admin_data.admin_only(u, "questions")
+    import graphrag as G
+    admin_data._seed_question_bank()
+    rows = allr("SELECT * FROM question_bank WHERE status='active'")
+    result = G.index_question_bank(rows)
+    audit(u["id"], "graphrag_question_bank_reindex",
+          f"active={result['active_questions']};meili={result['meilisearch']};neo4j={result['neo4j']}")
+    return result
+
+
 @app.get("/api/assessment/blueprint/{blueprint_id}")
 def get_assessment_blueprint(blueprint_id: str, u=Depends(current_user)):
     row = one("SELECT status,payload,created FROM assessment_blueprints WHERE id=? AND user_id=?",
