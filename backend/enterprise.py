@@ -835,7 +835,7 @@ ADMIN_SCOPE_ROLES = {
     "job_moderation": {"super_admin", "company_verification_admin"}, "assessment_review": {"super_admin", "trust_safety_reviewer"},
     "appeals": {"super_admin", "trust_safety_reviewer"}, "phase_two": {"super_admin", "question_content_admin", "company_verification_admin"},
     "questions": {"super_admin", "question_content_admin"}, "ai": {"super_admin", "compliance_officer"},
-    "billing": {"super_admin", "finance_admin"}, "learning": {"super_admin", "question_content_admin", "finance_admin"}, "privacy": {"super_admin", "compliance_officer"},
+    "billing": {"super_admin", "finance_admin"}, "learning": {"super_admin", "question_content_admin"}, "privacy": {"super_admin", "compliance_officer"},
     "quality": {"super_admin", "compliance_officer", "trust_safety_reviewer"}, "audit": {"super_admin", "compliance_officer"},
     "staff": {"super_admin"},
 }
@@ -1690,6 +1690,10 @@ class LearningProgressInput(BaseModel):
     helpful: Optional[bool] = None
     comment: str = Field(default="", max_length=1000)
 
+class LearningFeedbackInput(BaseModel):
+    helpful: bool
+    comment: str = Field(default="", max_length=1000)
+
 
 @router.patch("/api/learning/resources/{resource_id}/progress")
 def update_learning_progress(resource_id: str, body: LearningProgressInput, user=Depends(current_user)):
@@ -1712,7 +1716,7 @@ def update_learning_progress(resource_id: str, body: LearningProgressInput, user
 
 
 @router.post("/api/learning/resources/{resource_id}/feedback")
-def learning_resource_feedback(resource_id: str, body: LearningProgressInput, user=Depends(current_user)):
+def learning_resource_feedback(resource_id: str, body: LearningFeedbackInput, user=Depends(current_user)):
     require_role(user,"candidate")
     if body.helpful is None: raise HTTPException(422,"Feedback helpful value is required")
     if not one("SELECT id FROM learning_resources WHERE id=? AND verification_status='verified'",(resource_id,)):
@@ -1801,7 +1805,7 @@ class LearningRetakePolicyInput(BaseModel):
 
 @router.put("/api/admin/learning/policy")
 def admin_update_learning_policy(body: LearningRetakePolicyInput,user=Depends(current_user)):
-    admin_only(user,"learning")
+    admin_only(user,"billing")
     now=time.time()
     run("""UPDATE learning_retake_policy SET cooldown_hours=?,max_attempts_90d=?,credits_per_attempt=?,
            updated_by=?,updated_at=? WHERE id=1""",
@@ -1818,8 +1822,9 @@ class LearningCreditGrant(BaseModel):
 
 @router.post("/api/admin/learning/credits")
 def admin_adjust_learning_credits(body: LearningCreditGrant,user=Depends(current_user)):
-    admin_only(user,"learning")
-    if not one("SELECT id FROM users WHERE id=?",(body.user_id,)):
+    admin_only(user,"billing")
+    target=one("SELECT u.id,COALESCE(r.role,'candidate') AS role FROM users u LEFT JOIN user_roles r ON r.user_id=u.id WHERE u.id=?",(body.user_id,))
+    if not target or target["role"]!="candidate":
         raise HTTPException(404,"Candidate account not found")
     now=time.time()
     run("""INSERT INTO billing_credit_ledger(id,user_id,delta,entry_type,source_ref,reason,actor_id,created)
