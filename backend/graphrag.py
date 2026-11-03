@@ -240,7 +240,8 @@ def index_question_bank(rows: Iterable[Any]) -> dict:
         text = " ".join([str(q.get("question_text", "")), str(q.get("subcategory", "")), str(q.get("grading_rubric", ""))])
         topics = [name for name in FUNDAMENTAL_TARGETS if _topic_match(q, name)]
         skills = [sid for sid, aliases in SKILL_ALIASES.items()
-                  if any(_norm(alias) in _norm(text) for alias in aliases)]
+                  if any(re.search(r"(?<![a-z0-9])" + re.escape(alias.lower()) + r"(?![a-z0-9])", text.lower())
+                         for alias in aliases)]
         docs.append({"id": str(q["id"]), "category_id": q.get("category_id", ""),
             "subcategory": q.get("subcategory", ""), "question_text": q.get("question_text", ""),
             "difficulty_level": _difficulty(q), "question_type": q.get("question_type", ""),
@@ -267,31 +268,36 @@ def index_question_bank(rows: Iterable[Any]) -> dict:
     neo_uri = os.getenv("NEO4J_URI", "")
     if neo_uri:
         try:
-            from neo4j import GraphDatabase
-            with GraphDatabase.driver(neo_uri, auth=(os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", ""))) as driver:
-                with driver.session(database=os.getenv("NEO4J_DATABASE", "neo4j")) as session:
-                    for doc in docs:
-                        session.run("MERGE (q:Question {id:$id}) SET q.text=$text, q.category_id=$category, q.difficulty=$difficulty, q.status='active', q.version=$version",
-                            id=doc["id"], text=doc["question_text"], category=doc["category_id"],
-                            difficulty=doc["difficulty_level"], version=doc["version"])
-                        for topic in doc["topics"]:
-                            session.run("MERGE (t:Topic {name:$topic}) MERGE (q:Question {id:$id}) MERGE (t)-[:HAS_QUESTION]->(q)",
-                                topic=topic, id=doc["id"])
-                        for skill in doc["skills"]:
-                            session.run("MERGE (s:Skill {name:$skill}) MERGE (q:Question {id:$id}) MERGE (s)-[:HAS_QUESTION]->(q)",
-                                skill=skill, id=doc["id"])
-                            related = {
-                                "python": ["Coding", "DSA"], "javascript": ["Coding", "DSA"],
-                                "java": ["Coding", "OOP"], "ai_ml": ["Coding", "DSA"],
-                                "sql": ["Database"], "networking": ["Networking"],
-                                "dsa": ["DSA"], "oop": ["OOP"],
-                                "git": ["Coding"], "docker": ["Coding"],
-                            }.get(skill, [])
-                            for topic in related:
-                                session.run("MERGE (s:Skill {name:$skill}) MERGE (t:Topic {name:$topic}) MERGE (s)-[:RELATED_TO]->(t)",
-                                    skill=skill, topic=topic)
-                    neo_result = "indexed"
-                    graph_count = len(docs)
+            relation_map = {
+                "python": ["Coding", "DSA"], "javascript": ["Coding", "DSA"],
+                "java": ["Coding", "OOP"], "ai_ml": ["Coding", "DSA"],
+                "sql": ["Database"], "networking": ["Networking"],
+                "dsa": ["DSA"], "oop": ["OOP"], "git": ["Coding"], "docker": ["Coding"],
+            }
+            relations = [{"skill": skill, "topic": topic} for doc in docs
+                         for skill in doc["skills"] for topic in relation_map.get(skill, [])]
+            driver = _neo4j_driver()
+            with driver.session(database=os.getenv("NEO4J_DATABASE", "neo4j")) as session:
+                session.run(
+                    "UNWIND $docs AS doc MERGE (q:Question {id:doc.id}) "
+                    "SET q.text=doc.question_text, q.category_id=doc.category_id, "
+                    "q.difficulty=doc.difficulty_level, q.status='active', q.version=doc.version",
+                    docs=docs)
+                session.run(
+                    "UNWIND $docs AS doc MATCH (q:Question {id:doc.id}) "
+                    "UNWIND doc.topics AS topic MERGE (t:Topic {name:topic}) MERGE (t)-[:HAS_QUESTION]->(q)",
+                    docs=docs)
+                session.run(
+                    "UNWIND $docs AS doc MATCH (q:Question {id:doc.id}) "
+                    "UNWIND doc.skills AS skill MERGE (s:Skill {name:skill}) MERGE (s)-[:HAS_QUESTION]->(q)",
+                    docs=docs)
+                if relations:
+                    session.run(
+                        "UNWIND $relations AS rel MERGE (s:Skill {name:rel.skill}) "
+                        "MERGE (t:Topic {name:rel.topic}) MERGE (s)-[:RELATED_TO]->(t)",
+                        relations=relations)
+            neo_result = "indexed"
+            graph_count = len(docs)
         except Exception as exc:
             neo_result = "error:" + type(exc).__name__
             log.warning("Neo4j indexing failed: %s", type(exc).__name__)
