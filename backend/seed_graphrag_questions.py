@@ -6,9 +6,6 @@ Safe to re-run: fixed IDs + ON CONFLICT DO NOTHING. Does not create users or tou
 import json
 import time
 
-from main import init_db, run
-import enterprise
-
 ACTOR = "SkillBridge synthetic GraphRAG demo seed"
 NOW = time.time()
 
@@ -58,13 +55,13 @@ CV_QUESTIONS = [
 # Git
 ("Git","Easy","MCQ","Which Git command creates a local commit from staged changes?","git commit",["git push","git commit","git fetch","git clone"],"git commit records staged changes in local history.","","Basic Git workflow.",60),
 ("Git","Medium","Scenario-Based","Scenario (Git): Two developers changed the same lines in a shared branch and a merge reports conflicts. Describe a safe resolution workflow.","Inspect status and conflict markers; understand both changes; edit intended result; run tests; git add resolved files; complete merge/rebase; review diff and push.","","","No blind acceptance of ours/theirs; test the merged result.","Score safe conflict resolution.",120),
-("Git","Medium","Explanation","Explain the difference between git fetch and git pull, and when you would use each on a team project.","fetch downloads remote refs without integrating; pull fetches and then integrates (merge or rebase depending on config). Fetch first to inspect incoming commits.","","","Clear distinction and practical usage.","Score accuracy.",90),
+("Git","Medium","Coding","Git command task: Show the commands to create a feature branch named feature/report, stage only report.py, and create a commit with message Add report export.","git switch -c feature/report\ngit add report.py\ngit commit -m \"Add report export\"","","","Commands should create the branch, stage only the requested file and commit it.","Score command order and scope.",90),
 ("Git","Hard","Scenario-Based","Scenario (Git): A secret API key was committed and pushed to a public repository. What steps do you take immediately and afterward?","Revoke/rotate the exposed key immediately; notify owners; audit usage; remove from current code and history if appropriate; force-push coordinated rewrite; invalidate caches/forks where possible; add secret scanning and prevention.","","","History rewrite alone does not make a leaked secret safe.","Score incident response and prevention.",150),
 ("Git","Hard","Explanation","Explain how you would use interactive rebase to clean up a feature branch before review, and identify when not to rewrite history.","Use rebase -i to squash/reword/reorder commits and resolve conflicts; run tests. Avoid rewriting shared/public history without coordination; prefer merge commits when history preservation is required.","","","Discuss shared branch safety.","Score workflow and collaboration.",120),
 # AI & Machine Learning
 ("AI & Machine Learning","Easy","MCQ","In supervised machine learning, what does the training dataset contain?","Examples with input features and target labels",["Only unlabelled inputs","Examples with input features and target labels","Only model weights","Only evaluation metrics"],"Supervised learning uses labelled examples.","","Basic supervised-learning concept.",60),
 ("AI & Machine Learning","Medium","Scenario-Based","Scenario (AI/ML): A model has 99% training accuracy but 72% validation accuracy. Name likely causes and the first checks you would perform.","Suspect overfitting, leakage or distribution mismatch; inspect split strategy, duplicates/leakage, class balance, learning curves and regularization; compare validation data provenance.","","","Evidence-based diagnosis, not just tuning.","Score likely causes and validation plan.",120),
-("AI & Machine Learning","Medium","Explanation","Explain precision and recall and describe a situation where a fraud detection team may prioritize recall.","Precision is TP/(TP+FP); recall is TP/(TP+FN). High recall may be prioritized to catch more fraud, accepting more false alerts for review.","","","Correct formulas and trade-off.","Score definitions and use case.",90),
+("AI & Machine Learning","Medium","Coding","Coding task (machine learning): Given true-positive, false-positive and false-negative counts, write a Python function returning precision and recall, using 0 when a denominator is zero.","def precision_recall(tp, fp, fn):\n    precision = tp / (tp + fp) if tp + fp else 0\n    recall = tp / (tp + fn) if tp + fn else 0\n    return precision, recall","","","Use correct denominators and guard zero division.","Score formulas and edge cases.",120),
 ("AI & Machine Learning","Hard","Scenario-Based","Scenario (AI/ML): Your production classifier's performance drops after a new customer segment launches. Explain how you would detect and respond to model drift.","Monitor feature/label distributions and delayed outcome metrics by segment; check data pipeline/schema changes; compare cohorts; alert, investigate, retrain only after validation and controlled rollout.","","","Distinguish data drift from concept drift and protect deployment.","Score monitoring, segmentation and controlled response.",150),
 ("AI & Machine Learning","Hard","Explanation","Explain how you would evaluate a retrieval-augmented generation system beyond answer fluency, including retrieval and groundedness.","Measure retrieval recall/precision and ranking; assess context relevance, answer faithfulness/groundedness, citation correctness, answer relevance, latency and cost; use curated test sets and human review.","","","Separate retrieval quality from generation quality.","Score metric coverage and evaluation discipline.",150),
 # SQL
@@ -88,6 +85,8 @@ def insert_question(qid, category, subcategory, difficulty, qtype, prompt, answe
     ))
 
 def seed():
+    from main import init_db, run
+    import enterprise
     init_db()
     # Ensure admin question-bank tables exist and preserve existing legacy sample data.
     enterprise._seed_question_bank()
