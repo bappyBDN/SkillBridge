@@ -468,13 +468,17 @@ def view(att):
                 "skill_id", "question_type", "difficulty_level", "marks", "time_allocation")}
             public["prompt"] = current.get("question_text", "")
             public["options"] = current.get("options", [])
+            if "sql" in str(current.get("question_type", "")).lower():
+                public["schema"] = E.SQL_SCHEMA
             public["index"] = index
             public["total"] = len(questions)
         return {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"],
             "remaining": remaining, "answered": len(st.get("answers", {})), "total": len(questions),
             "graphrag": True, "blueprint_id": st["blueprint_id"], "question": public,
             "page": page, "question_index": index, "duration_seconds": duration,
-            "manual_review_count": sum(1 for q in questions if str(q.get("question_type", "")).lower() not in ("mcq", "multiple choice"))}
+            "manual_review_count": sum(1 for q in questions if not (
+                str(q.get("question_type", "")).lower() in ("mcq", "multiple choice") or
+                ("sql" in str(q.get("question_type", "")).lower() and bool(str(q.get("reference_answer", "")).strip()))))}
     remaining = max(0, int(att["started"] + E.TEST_SECONDS - time.time()))
     out = {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"], "remaining": remaining, "answered": len(st["answers"]), "total": len(E.SLOTS)}
     if att["status"] == "active" and st["current"]:
@@ -497,8 +501,15 @@ def finalize(att, st):
         for q in st["selected_questions"]:
             raw_answer = answers.get(q["id"], "")
             qtype = str(q.get("question_type", "")).lower()
-            objective = qtype in ("mcq", "multiple choice")
-            correct = (str(raw_answer).strip().casefold() == str(q.get("correct_answer", "")).strip().casefold()) if objective and raw_answer != "" else (False if objective else None)
+            is_mcq = qtype in ("mcq", "multiple choice")
+            is_sql_auto = "sql" in qtype and bool(str(q.get("reference_answer", "")).strip())
+            objective = is_mcq or is_sql_auto
+            if is_mcq:
+                correct = (str(raw_answer).strip().casefold() == str(q.get("correct_answer", "")).strip().casefold()) if raw_answer != "" else False
+            elif is_sql_auto:
+                correct = E.grade_sql(st["seed"], {"ref": q["reference_answer"]}, str(raw_answer or ""))
+            else:
+                correct = None
             topic = q.get("assessment_topic") or "General"
             metric = topics.setdefault(topic, {"earned": 0, "possible": 0, "n": 0})
             if objective:
@@ -507,7 +518,7 @@ def finalize(att, st):
                 if correct: metric["earned"] += int(q.get("marks") or 1)
             review_rows.append({"question_id": q["id"], "topic": topic, "question": q["question_text"],
                 "question_type": q.get("question_type"), "answer": raw_answer,
-                "correct_answer": q.get("correct_answer") if objective else None,
+                "correct_answer": (q.get("correct_answer") if is_mcq else q.get("reference_answer")) if objective else None,
                 "explanation": q.get("explanation") if objective else None,
                 "review_status": ("correct" if correct else "incorrect") if objective else "pending_human_review"})
             trust_answers.append({"type": "mcq" if objective else "subjective", "correct": bool(correct),
