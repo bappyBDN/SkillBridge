@@ -178,7 +178,7 @@ def _topic_match(q: dict, topic: str) -> bool:
     spec = FUNDAMENTAL_CATEGORY_MAP[topic]
     if q.get("category_id") not in spec["category_ids"]:
         return False
-    haystack = _norm(" ".join([str(q.get("subcategory", "")), str(q.get("question_text", ""))]))
+    haystack = _norm(" ".join([str(q.get("subcategory", "")), str(q.get("question_text", "")), str(q.get("question_type", ""))]))
     return any(_norm(term) in haystack for term in spec["terms"])
 
 def _skill_match(q: dict, skill: CVSkill) -> bool:
