@@ -992,7 +992,8 @@ def admin_assessment_reviews(user=Depends(current_user)):
                     "answer_available": raw_answer is not None and str(raw_answer).strip() != "",
                     "automated_correct": (grade.get("review_status") == "correct") if objective else None,
                     "review_status": grade.get("review_status") or ("objective_auto_graded" if objective else "pending_human_review"),
-                    "marks": question.get("marks", 1), "time_allocation": question.get("time_allocation")
+                    "marks": question.get("marks", 1), "time_allocation": question.get("time_allocation"),
+                    "time_seconds": grade.get("time_seconds", 0)
                 })
         else:
             for index, saved in enumerate(state.get("answers", []), start=1):
