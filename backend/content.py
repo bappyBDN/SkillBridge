@@ -10,6 +10,21 @@ TAXONOMY = {
     "excel": {"name": "Excel", "aliases": ["excel", "spreadsheet", "spreadsheets", "pivot table", "vlookup", "google sheets"]},
     "git": {"name": "Git", "aliases": ["git", "github", "gitlab"]},
     "communication": {"name": "Communication", "aliases": ["communication", "presentation", "presentations", "report writing", "stakeholder"]},
+    "ai_ml": {"name": "AI & Machine Learning", "aliases": ["artificial intelligence", "machine learning", "deep learning", "tensorflow", "pytorch", "scikit-learn", "sklearn"]},
+    "javascript": {"name": "JavaScript & TypeScript", "aliases": ["javascript", "typescript", "react", "node.js", "nodejs", "next.js"]},
+    "java": {"name": "Java", "aliases": ["java", "spring boot"]},
+    "docker": {"name": "Docker", "aliases": ["docker", "docker compose"]},
+    "kubernetes": {"name": "Kubernetes", "aliases": ["kubernetes", "k8s"]},
+    "aws": {"name": "AWS", "aliases": ["aws", "amazon web services"]},
+    "azure": {"name": "Microsoft Azure", "aliases": ["azure"]},
+    "gcp": {"name": "Google Cloud", "aliases": ["gcp", "google cloud"]},
+    "mongodb": {"name": "MongoDB", "aliases": ["mongodb", "mongo"]},
+    "neo4j": {"name": "Neo4j", "aliases": ["neo4j", "cypher"]},
+    "meilisearch": {"name": "Meilisearch", "aliases": ["meilisearch"]},
+    "linux": {"name": "Linux & Bash", "aliases": ["linux", "bash", "shell scripting"]},
+    "networking": {"name": "Computer Networking", "aliases": ["computer networks", "networking", "tcp/ip", "dns", "osi model"]},
+    "dsa": {"name": "Data Structures & Algorithms", "aliases": ["data structures", "algorithms", "big o", "dynamic programming"]},
+    "oop": {"name": "Object-Oriented Programming", "aliases": ["object oriented programming", "oop", "polymorphism", "encapsulation", "inheritance"]},
 }
 TESTABLE = ["sql", "python", "statistics", "visualization"]
 
