@@ -126,7 +126,7 @@ def _spacy_terms(text: str) -> set[str]:
         return {part for token in doc for part in _norm(token.text).split() if part}
     except Exception as exc:
         log.info("spaCy unavailable; using alias matcher (%s)", type(exc).__name__)
-        return set(re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]*", text.lower()))
+        return {part for token in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]*", text.lower()) for part in _norm(token).split() if part}
 
 @lru_cache(maxsize=1)
 def _meilisearch_index():
