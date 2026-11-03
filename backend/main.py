@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, company_id TEXT NOT NULL, t
 CREATE TABLE IF NOT EXISTS applications(id TEXT PRIMARY KEY, job_id TEXT NOT NULL, candidate_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'submitted', results_shared INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, UNIQUE(job_id, candidate_id));
 CREATE TABLE IF NOT EXISTS company_assessments(id TEXT PRIMARY KEY, company_id TEXT NOT NULL, job_id TEXT, title TEXT NOT NULL, requirements TEXT NOT NULL, questions TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'draft', created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS candidate_profiles(user_id INTEGER PRIMARY KEY, headline TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', linkedin TEXT NOT NULL DEFAULT '', github TEXT NOT NULL DEFAULT '', portfolio TEXT NOT NULL DEFAULT '', education TEXT NOT NULL DEFAULT '[]', experience TEXT NOT NULL DEFAULT '[]', projects TEXT NOT NULL DEFAULT '[]', preferences TEXT NOT NULL DEFAULT '{}', updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS assessment_blueprints(id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL, created REAL NOT NULL);
 """
 
 
@@ -331,6 +332,64 @@ def confirm_skills(b: Confirm, u=Depends(current_user)):
     ids = [s for s in dict.fromkeys(b.skills) if s in TAXONOMY]
     run("INSERT INTO profiles(user_id,confirmed) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET confirmed=excluded.confirmed", (u["id"], json.dumps(ids)))
     return {"confirmed": ids}
+
+# ------------------------------------------------------------------ GraphRAG assessment blueprint
+@app.post("/api/assessment/blueprint")
+def generate_assessment_blueprint(u=Depends(current_user)):
+    """Retrieve an auditable question set from the approved bank; no LLM question fabrication."""
+    need_consent(u)
+    prof = one("SELECT redacted,confirmed FROM profiles WHERE user_id=?", (u["id"],))
+    if not prof or not prof["redacted"]:
+        raise HTTPException(409, "Upload and analyse your CV before generating a CV-based assessment")
+    confirmed = set(json.loads(prof["confirmed"] or "[]")) if prof["confirmed"] else set()
+    if not confirmed:
+        raise HTTPException(409, "Confirm your CV skills before generating the assessment")
+    from graphrag import CVSkill, build_assessment, extract_cv_skills
+    extracted = extract_cv_skills(prof["redacted"])
+    skills = [s for s in extracted if s.skill_id in confirmed]
+    if not skills:
+        raise HTTPException(422, "No confirmed technical skills were found in the CV evidence")
+    import enterprise as admin_data
+    admin_data._seed_question_bank()
+    rows = allr("SELECT * FROM question_bank WHERE status='active' ORDER BY created_at DESC")
+    result = build_assessment(rows, skills, retrieval=True)
+    blueprint_id = uuid.uuid4().hex
+    snapshot = {**result, "user_id": u["id"], "blueprint_id": blueprint_id}
+    run("INSERT INTO assessment_blueprints(id,user_id,status,payload,created) VALUES (?,?,?,?,?)",
+        (blueprint_id, u["id"], result["status"], json.dumps(snapshot), time.time()))
+    audit(u["id"], "assessment_blueprint_generated",
+          f"{blueprint_id};questions={result['total_questions']};status={result['status']};ms={result['retrieval_ms']}")
+    return {
+        "blueprint_id": blueprint_id, "status": result["status"],
+        "fundamental_count": result["fundamental_count"], "cv_count": result["cv_count"],
+        "total_questions": result["total_questions"], "skills": result["skills"],
+        "estimated_duration_seconds": result["estimated_duration_seconds"],
+        "estimated_duration_minutes": result["estimated_duration_minutes"],
+        "difficulty_targets": result["difficulty_targets"],
+        "fundamental_targets": result["fundamental_targets"],
+        "fundamental_difficulty_matrix": result["fundamental_difficulty_matrix"],
+        "per_skill_targets": result["per_skill_targets"], "shortages": result["shortages"],
+        "retrieval_ms": result["retrieval_ms"], "retrieval_providers": result["retrieval_providers"],
+        "message": "Assessment question bank is ready." if result["status"] == "ready"
+            else "The approved question bank does not yet contain enough questions for every required quota. No questions were fabricated."
+    }
+
+
+@app.get("/api/assessment/blueprint/{blueprint_id}")
+def get_assessment_blueprint(blueprint_id: str, u=Depends(current_user)):
+    row = one("SELECT status,payload,created FROM assessment_blueprints WHERE id=? AND user_id=?",
+              (blueprint_id, u["id"]))
+    if not row:
+        raise HTTPException(404, "Assessment blueprint not found")
+    payload = json.loads(row["payload"])
+    return {"blueprint_id": blueprint_id, "status": row["status"],
+            "total_questions": payload["total_questions"],
+            "fundamental_count": payload["fundamental_count"], "cv_count": payload["cv_count"],
+            "estimated_duration_seconds": payload["estimated_duration_seconds"],
+            "retrieval_ms": payload["retrieval_ms"], "shortages": payload["shortages"],
+            "created": row["created"]}
+
+
 
 
 # ------------------------------------------------------------------ job + gap
