@@ -456,6 +456,7 @@ function GraphRAGExamRun({ initial, onFinished }) {
 function Result({ aid, next, nextLabel }) {
   const t = useT();
   const [r, setR] = useState(null);
+  const [reviewPage,setReviewPage]=useState(0);
   const [note, setNote] = useState("");
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState(null);
@@ -485,7 +486,16 @@ function Result({ aid, next, nextLabel }) {
           ))}
         </ul>
         <p className="muted">{t("percentile")}</p>
+        {r.manual_review_required&&<p className="note">Some coding, SQL, scenario or explanation responses are awaiting human review. The displayed score covers automatically gradable questions only.</p>}
       </div>
+      {r.question_results?.length>0&&<div className="card gr-review">
+        <h3>Question and answer review</h3>
+        <p className="muted">Correct answers are revealed only after submission. Five questions are shown per page.</p>
+        <div className="gr-question-table"><table><thead><tr><th>#</th><th>Question</th><th>Your answer</th><th>Expected answer / review</th><th>Status</th></tr></thead><tbody>
+          {r.question_results.slice(reviewPage*5,reviewPage*5+5).map((item,index)=><tr key={item.question_id}><td>{reviewPage*5+index+1}</td><td>{item.question}</td><td>{item.answer||"No answer"}</td><td>{item.correct_answer||"Pending human review"}</td><td>{item.review_status}</td></tr>)}
+        </tbody></table></div>
+        <div className="gr-exam-actions"><button className="btn ghost" onClick={()=>setReviewPage(x=>Math.max(0,x-1))} disabled={reviewPage===0}>Previous 5</button><span>Page {reviewPage+1} of {Math.ceil(r.question_results.length/5)}</span><button className="btn ghost" onClick={()=>setReviewPage(x=>Math.min(Math.ceil(r.question_results.length/5)-1,x+1))} disabled={(reviewPage+1)*5>=r.question_results.length}>Next 5</button></div>
+      </div>}
       <div className="card quiet">
         <p>{t("trustNote")}</p>
         {r.trust_reasons.length > 0 && <ul>{r.trust_reasons.map((x) => <li key={x.key}>{x.n} × {t("reasonLabels")[x.key]}</li>)}</ul>}
