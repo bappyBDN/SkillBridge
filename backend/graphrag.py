@@ -13,6 +13,7 @@ import os
 import re
 import time
 from collections import defaultdict
+from functools import lru_cache
 from typing import Any, Iterable
 
 from pydantic import BaseModel, Field, ValidationError
@@ -109,20 +110,36 @@ class RetrievalTrace(BaseModel):
     selected_rank: int
     reasons: list[str] = Field(default_factory=list)
 
-def _spacy_terms(text: str) -> set[str]:
-    """Use spaCy when a model is installed; regex aliases remain the deterministic fallback."""
+@lru_cache(maxsize=1)
+def _spacy_nlp():
+    import spacy
+    model = os.getenv("SPACY_MODEL", "en_core_web_sm")
     try:
-        import spacy
-        model = os.getenv("SPACY_MODEL", "en_core_web_sm")
-        try:
-            nlp = spacy.load(model, disable=["ner", "parser", "lemmatizer"])
-        except OSError:
-            nlp = spacy.blank("en")
-        doc = nlp(text[:30000])
+        return spacy.load(model, disable=["ner", "parser", "lemmatizer"])
+    except OSError:
+        return spacy.blank("en")
+
+def _spacy_terms(text: str) -> set[str]:
+    """Use a cached spaCy tokenizer; regex aliases remain the deterministic fallback."""
+    try:
+        doc = _spacy_nlp()(text[:30000])
         return {token.text.lower() for token in doc if token.is_alpha or token.text in {"c++", "c#"}}
     except Exception as exc:
         log.info("spaCy unavailable; using alias matcher (%s)", type(exc).__name__)
         return set(re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]*", text.lower()))
+
+@lru_cache(maxsize=1)
+def _meilisearch_index():
+    import meilisearch
+    url = os.getenv("MEILISEARCH_URL", "").rstrip("/")
+    client = meilisearch.Client(url, os.getenv("MEILISEARCH_API_KEY", "") or None)
+    return client.index(os.getenv("MEILISEARCH_QUESTION_INDEX", "skillbridge_questions"))
+
+@lru_cache(maxsize=1)
+def _neo4j_driver():
+    from neo4j import GraphDatabase
+    return GraphDatabase.driver(os.getenv("NEO4J_URI", ""),
+        auth=(os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", "")))
 
 def extract_cv_skills(redacted_cv: str) -> list[CVSkill]:
     """Extract explicit technology mentions only; no inference from job title or seniority."""
@@ -179,9 +196,7 @@ def _external_retrieval(query: str, category_id: str | None = None) -> tuple[lis
     meili_url, meili_key = os.getenv("MEILISEARCH_URL", "").rstrip("/"), os.getenv("MEILISEARCH_API_KEY", "")
     if meili_url:
         try:
-            import meilisearch
-            client = meilisearch.Client(meili_url, meili_key or None)
-            index = client.index(os.getenv("MEILISEARCH_QUESTION_INDEX", "skillbridge_questions"))
+            index = _meilisearch_index()
             params = {"limit": 80}
             if category_id:
                 params["filter"] = f'category_id = "{category_id}"'
@@ -192,19 +207,18 @@ def _external_retrieval(query: str, category_id: str | None = None) -> tuple[lis
     neo_uri, neo_user, neo_password = (os.getenv("NEO4J_URI", ""), os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", ""))
     if neo_uri:
         try:
-            from neo4j import GraphDatabase
-            with GraphDatabase.driver(neo_uri, auth=(neo_user, neo_password)) as driver:
-                records = driver.execute_query(
-                    "MATCH (s:Skill)-[:HAS_QUESTION]-(q:Question) "
-                    "WHERE toLower(s.name) CONTAINS toLower($query) "
-                    "RETURN q.id AS id, 0 AS hops "
-                    "UNION "
-                    "MATCH p=(s:Skill)-[:RELATED_TO*0..2]-(t:Topic)-[:HAS_QUESTION]-(q:Question) "
-                    "WHERE toLower(s.name) CONTAINS toLower($query) OR toLower(t.name) CONTAINS toLower($query) "
-                    "RETURN q.id AS id, length(p) AS hops ORDER BY hops ASC LIMIT 80",
-                    query=query, database_=os.getenv("NEO4J_DATABASE", "neo4j")
-                ).records
-                graph_ids = [str(r["id"]) for r in records if r.get("id")]
+            driver = _neo4j_driver()
+            records = driver.execute_query(
+                "MATCH (s:Skill)-[:HAS_QUESTION]-(q:Question) "
+                "WHERE toLower(s.name) CONTAINS toLower($query) "
+                "RETURN q.id AS id, 0 AS hops "
+                "UNION "
+                "MATCH p=(s:Skill)-[:RELATED_TO*0..2]-(t:Topic)-[:HAS_QUESTION]-(q:Question) "
+                "WHERE toLower(s.name) CONTAINS toLower($query) OR toLower(t.name) CONTAINS toLower($query) "
+                "RETURN q.id AS id, length(p) AS hops ORDER BY hops ASC LIMIT 80",
+                query=query, database_=os.getenv("NEO4J_DATABASE", "neo4j")
+            ).records
+            graph_ids = [str(r["id"]) for r in records if r.get("id")]
         except Exception as exc:
             log.warning("Neo4j retrieval fallback: %s", type(exc).__name__)
     return keyword_ids, graph_ids
