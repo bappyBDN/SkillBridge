@@ -354,9 +354,11 @@ def question_page(questions: list[dict], page: int, answers: dict | None = None)
     pages = [questions[i:i+QUESTION_PAGE_SIZE] for i in range(0, total, QUESTION_PAGE_SIZE)]
     page = max(0, min(page, max(0, len(pages)-1)))
     rows = []
-    for q in pages[page]:
-        rows.append({k: q.get(k) for k in ("id", "assessment_section", "assessment_topic", "skill_id",
-            "question_type", "difficulty_level", "question_text", "options", "marks", "time_allocation")})
+    for offset, q in enumerate(pages[page]):
+        item = {k: q.get(k) for k in ("id", "assessment_section", "assessment_topic", "skill_id",
+            "question_type", "difficulty_level", "question_text", "options", "marks", "time_allocation")}
+        item["question_number"] = page * QUESTION_PAGE_SIZE + offset + 1
+        rows.append(item)
     return {"page": page, "page_size": QUESTION_PAGE_SIZE, "page_count": len(pages),
             "total_questions": total, "questions": rows,
             "answers": {q["id"]: (answers or {}).get(q["id"]) for q in pages[page]},
