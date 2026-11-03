@@ -396,17 +396,42 @@ def start_attempt(u=Depends(current_user)):
         else:
             return view(dict(act))                       # resume after a dropped connection
     done = allr("SELECT finished FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC", (u["id"],))
-    if len([d for d in done if d["finished"] > time.time() - 90 * 86400]) >= MAX_ATTEMPTS_90D:
+    policy = one("SELECT cooldown_hours,max_attempts_90d,credits_per_attempt FROM learning_retake_policy WHERE id=1")
+    cooldown_hours = int(policy["cooldown_hours"]) if policy else COOLDOWN_HOURS
+    max_attempts = int(policy["max_attempts_90d"]) if policy else MAX_ATTEMPTS_90D
+    credit_cost = int(policy["credits_per_attempt"]) if policy else 1
+    recent = [d for d in done if d["finished"] and d["finished"] > time.time() - 90 * 86400]
+    if len(recent) >= max_attempts:
         raise HTTPException(429, "attempt_cap")
-    if done and COOLDOWN_HOURS > 0 and time.time() < done[0]["finished"] + COOLDOWN_HOURS * 3600:
+    if done and cooldown_hours > 0 and time.time() < done[0]["finished"] + cooldown_hours * 3600:
         raise HTTPException(429, "cooldown")
     seed = secrets.randbelow(10**9)
     st = E.new_state(seed)
     q = E.pick_question(st, seen_before(u["id"]))
     st["current"], st["served_at"] = q["id"], time.time()
     aid = uuid.uuid4().hex[:12]
-    run("INSERT INTO attempts(id,user_id,kind,seed,status,state,started) VALUES (?,?,?,?,?,?,?)",
-        (aid, u["id"], "post" if done else "pre", seed, "active", json.dumps(st), time.time()))
+    now = time.time()
+    kind = "post" if done else "pre"
+    if done:
+        # Lock the candidate row and consume the retake entitlement in the same transaction
+        # as attempt creation. A concurrent request cannot spend the same credit twice.
+        with db() as conn:
+            if DATABASE_URL:
+                conn.execute("SELECT id FROM users WHERE id=? FOR UPDATE", (u["id"],)).fetchone()
+            else:
+                conn.execute("BEGIN IMMEDIATE")
+            balance_row = conn.execute("SELECT COALESCE(SUM(delta),0) AS balance FROM billing_credit_ledger WHERE user_id=?", (u["id"],)).fetchone()
+            balance = int(balance_row["balance"] or 0)
+            if balance < credit_cost:
+                raise HTTPException(402, "retake_credit_required")
+            conn.execute("INSERT INTO attempts(id,user_id,kind,seed,status,state,started) VALUES (?,?,?,?,?,?,?)",
+                         (aid, u["id"], kind, seed, "active", json.dumps(st), now))
+            conn.execute("INSERT INTO billing_credit_ledger(id,user_id,delta,entry_type,source_ref,reason,actor_id,created) VALUES (?,?,?,?,?,?,?,?)",
+                         (uuid.uuid4().hex, u["id"], -credit_cost, "retake_consumption", aid,
+                          "Retake credit consumed for official assessment attempt", u["id"], now))
+    else:
+        run("INSERT INTO attempts(id,user_id,kind,seed,status,state,started) VALUES (?,?,?,?,?,?,?)",
+            (aid, u["id"], kind, seed, "active", json.dumps(st), now))
     audit(u["id"], "attempt_start", aid)
     return view(get_att(aid, u["id"]))
 
