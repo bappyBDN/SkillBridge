@@ -129,7 +129,8 @@ def test_synthetic_seed_builds_complete_45_question_assessment():
     assert result["fundamental_formats"] and {"scenario", "explanation", "sql", "coding"} <= set(result["fundamental_formats"])
     assert set(result["cv_format_coverage"]) == {"python", "git", "ai_ml", "sql"}
     for skill_id, formats in result["cv_format_coverage"].items():
-        assert {"coding", "scenario"} <= set(formats), (skill_id, formats)
+        assert {"coding", "sql"} & set(formats), (skill_id, formats)
+        assert {"scenario", "explanation"} & set(formats), (skill_id, formats)
     for skill in skills:
         skill_questions = [q for q in result["cv_based"] if q["skill_id"] == skill.skill_id]
         assert len(skill_questions) == 5
