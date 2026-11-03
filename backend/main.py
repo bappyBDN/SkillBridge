@@ -628,6 +628,8 @@ def answer(aid: str, b: Ans, u=Depends(current_user)):
         question = next((q for q in st["selected_questions"] if q["id"] == b.question_id), None)
         if not question:
             raise HTTPException(404, "Question is not part of this assessment")
+        if b.question_id != st.get("current"):
+            raise HTTPException(409, "Navigate to this question before saving its answer")
         answer_value = str(b.answer or "")
         revision = one("SELECT COUNT(*) AS n FROM assessment_answer_events WHERE attempt_id=? AND question_id=?",
                        (aid, b.question_id))["n"] + 1
@@ -667,6 +669,7 @@ def navigate_question(aid: str, b: NavigateQuestion, u=Depends(current_user)):
         raise HTTPException(422, "Question index is outside this assessment")
     st["question_index"] = b.index
     st["current"] = st["selected_questions"][b.index]["id"]
+    run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, "question_navigate", time.time()))
     save(aid, st)
     return view(get_att(aid, u["id"]))
 
