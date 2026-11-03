@@ -382,9 +382,14 @@ def admin_graphrag_status(u=Depends(current_user)):
     admin_data.admin_only(u, "questions")
     import graphrag as G
     rows = allr("SELECT category_id,difficulty_level,COUNT(*) AS n FROM question_bank WHERE status='active' GROUP BY category_id,difficulty_level")
+    active_rows = allr("SELECT * FROM question_bank WHERE status='active'")
+    fundamental_check = G.build_assessment(active_rows, [], retrieval=False)
     return {
         "active_question_count": one("SELECT COUNT(*) AS n FROM question_bank WHERE status='active'")["n"],
         "question_distribution": [dict(r) for r in rows],
+        "fundamental_readiness": fundamental_check["status"],
+        "fundamental_selected_count": fundamental_check["fundamental_count"],
+        "fundamental_shortages": fundamental_check["shortages"],
         "fundamental_targets": G.FUNDAMENTAL_TARGETS,
         "fundamental_difficulty_matrix": G.FUNDAMENTAL_DIFFICULTY_MATRIX,
         "cv_questions_per_skill": G.PER_SKILL_TARGETS,
