@@ -129,11 +129,14 @@ def _spacy_terms(text: str) -> set[str]:
         return {part for token in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]*", text.lower()) for part in _norm(token).split() if part}
 
 @lru_cache(maxsize=1)
-def _meilisearch_index():
+def _meilisearch_client():
     import meilisearch
     url = os.getenv("MEILISEARCH_URL", "").rstrip("/")
-    client = meilisearch.Client(url, os.getenv("MEILISEARCH_API_KEY", "") or None)
-    return client.index(os.getenv("MEILISEARCH_QUESTION_INDEX", "skillbridge_questions"))
+    return meilisearch.Client(url, os.getenv("MEILISEARCH_API_KEY", "") or None)
+
+@lru_cache(maxsize=1)
+def _meilisearch_index():
+    return _meilisearch_client().index(os.getenv("MEILISEARCH_QUESTION_INDEX", "skillbridge_questions"))
 
 @lru_cache(maxsize=1)
 def _neo4j_driver():
@@ -247,11 +250,15 @@ def index_question_bank(rows: Iterable[Any]) -> dict:
     meili_url, meili_key = os.getenv("MEILISEARCH_URL", "").rstrip("/"), os.getenv("MEILISEARCH_API_KEY", "")
     if meili_url:
         try:
-            import meilisearch
-            client = meilisearch.Client(meili_url, meili_key or None)
-            index = client.index(os.getenv("MEILISEARCH_QUESTION_INDEX", "skillbridge_questions"))
-            index.update_filterable_attributes(["category_id", "difficulty_level", "topics", "skills", "status"])
-            index.add_documents(docs, primary_key="id")
+            client = _meilisearch_client()
+            index = _meilisearch_index()
+            tasks = [
+                index.update_filterable_attributes(["category_id", "difficulty_level", "topics", "skills", "status"]),
+                index.add_documents(docs, primary_key="id"),
+            ]
+            for task in tasks:
+                if getattr(task, "task_uid", None) is not None:
+                    client.wait_for_task(task.task_uid, timeout_in_ms=120000, interval_in_ms=250)
             meili_result = "indexed"
         except Exception as exc:
             meili_result = "error:" + type(exc).__name__
