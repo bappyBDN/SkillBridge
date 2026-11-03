@@ -495,6 +495,12 @@ def save(att_id, st, **kw):
 def finalize(att, st):
     ev = {r["type"]: r["n"] for r in allr("SELECT type, COUNT(*) n FROM events WHERE attempt_id=? GROUP BY type", (att["id"],))}
     if st.get("graphrag"):
+        now = time.time()
+        current_id = st.get("current")
+        if current_id:
+            elapsed = max(0, now - float(st.get("question_viewed_at") or now))
+            times = st.setdefault("question_time_seconds", {})
+            times[current_id] = round(float(times.get(current_id, 0)) + elapsed, 1)
         answers = st.get("answers", {})
         topics = {}
         review_rows, trust_answers = [], []
@@ -520,9 +526,11 @@ def finalize(att, st):
                 "question_type": q.get("question_type"), "answer": raw_answer,
                 "correct_answer": (q.get("correct_answer") if is_mcq else q.get("reference_answer")) if objective else None,
                 "explanation": q.get("explanation") if objective else None,
-                "review_status": ("correct" if correct else "incorrect") if objective else "pending_human_review"})
+                "review_status": ("correct" if correct else "incorrect") if objective else "pending_human_review",
+                "time_seconds": st.get("question_time_seconds", {}).get(q["id"], 0)})
             trust_answers.append({"type": "mcq" if objective else "subjective", "correct": bool(correct),
-                "difficulty": {"Easy": 1, "Medium": 2, "Hard": 3}.get(q.get("difficulty_level"), 2), "seconds": 999})
+                "difficulty": {"Easy": 1, "Medium": 2, "Hard": 3}.get(q.get("difficulty_level"), 2),
+                "seconds": st.get("question_time_seconds", {}).get(q["id"], 0)})
         topic_scores = {}
         for topic, metric in topics.items():
             pct = round(100 * metric["earned"] / metric["possible"]) if metric["possible"] else None
@@ -581,7 +589,7 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
             raise HTTPException(409, "Assessment blueprint validation failed")
         st = {"graphrag": True, "blueprint_id": b.blueprint_id, "selected_questions": selected,
               "question_index": 0, "answers": {}, "duration_seconds": int(payload["estimated_duration_seconds"]),
-              "served_at": time.time(), "seed": seed}
+              "served_at": time.time(), "question_viewed_at": time.time(), "question_time_seconds": {}, "seed": seed}
         st["current"] = selected[0]["id"]
     else:
         st = E.new_state(seed)
@@ -683,9 +691,16 @@ def navigate_question(aid: str, b: NavigateQuestion, u=Depends(current_user)):
         return view(get_att(aid, u["id"]))
     if b.index >= len(st["selected_questions"]):
         raise HTTPException(422, "Question index is outside this assessment")
+    now = time.time()
+    previous_id = st.get("current")
+    if previous_id:
+        elapsed = max(0, now - float(st.get("question_viewed_at") or now))
+        times = st.setdefault("question_time_seconds", {})
+        times[previous_id] = round(float(times.get(previous_id, 0)) + elapsed, 1)
     st["question_index"] = b.index
     st["current"] = st["selected_questions"][b.index]["id"]
-    run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, "question_navigate", time.time()))
+    st["question_viewed_at"] = now
+    run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, "question_navigate", now))
     save(aid, st)
     return view(get_att(aid, u["id"]))
 
