@@ -720,13 +720,13 @@ function AdminConsole({ onLogout }) {
   };
   const openQuestionEditor=(question=null)=>{
     setQuestionEditing(question);
-    setQuestionDraft(question?{...question,options:(question.options||[]).join("\\n"),time_minutes:Math.round((question.time_allocation||60)/60)}:
+    setQuestionDraft(question?{...question,options:(question.options||[]).join("\n"),time_minutes:Math.round((question.time_allocation||60)/60)}:
       {category_id:questionCategory==="all"?"CAT-01":questionCategory,subcategory:"",question_type:"MCQ",difficulty_level:"Medium",question_text:"",options:"",correct_answer:"",explanation:"",reference_answer:"",grading_rubric:"",marks:2,time_minutes:2,status:"draft"});
     setQuestionModal(true);
   };
   const saveQuestion=async(e)=>{
     e.preventDefault();setQuestionSaving(true);setError("");
-    const payload={...questionDraft,options:questionDraft.options.split("\\n").map(x=>x.trim()).filter(Boolean),marks:Number(questionDraft.marks),time_allocation:Number(questionDraft.time_minutes)*60};delete payload.time_minutes;
+    const payload={...questionDraft,options:questionDraft.options.split("\n").map(x=>x.trim()).filter(Boolean),marks:Number(questionDraft.marks),time_allocation:Number(questionDraft.time_minutes)*60};delete payload.time_minutes;
     try{if(questionEditing)await api("/admin/questions/"+questionEditing.id,{method:"PUT",body:payload});else await api("/admin/questions",{method:"POST",body:payload});
       setQuestionModal(false);flash(questionEditing?"Question updated successfully.":"Question added to the bank.");await load();
     }catch(x){setError(x.message||"Could not save question.");}finally{setQuestionSaving(false);}
