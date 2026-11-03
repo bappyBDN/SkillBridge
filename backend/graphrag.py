@@ -186,16 +186,68 @@ def _external_retrieval(query: str, category_id: str | None = None) -> tuple[lis
             from neo4j import GraphDatabase
             with GraphDatabase.driver(neo_uri, auth=(neo_user, neo_password)) as driver:
                 records = driver.execute_query(
-                    "MATCH (s:Skill)-[:RELATED_TO*0..2]-(t:Topic)-[:HAS_QUESTION]-(q:Question) "
-                    "WHERE toLower(s.name) CONTAINS toLower($query) OR toLower(t.name) CONTAINS toLower($query) "
-                    "RETURN q.id AS id, min(length((s)-[:RELATED_TO*0..2]-(t))) AS hops "
-                    "ORDER BY hops ASC LIMIT 80",
+                    "MATCH (s:Skill)-[:HAS_QUESTION]-(q:Question) "
+                    "WHERE toLower(s.name) CONTAINS toLower($query) "
+                    "RETURN q.id AS id, 1 AS hops ORDER BY hops ASC LIMIT 80",
                     query=query, database_=os.getenv("NEO4J_DATABASE", "neo4j")
                 ).records
                 graph_ids = [str(r["id"]) for r in records if r.get("id")]
         except Exception as exc:
             log.warning("Neo4j retrieval fallback: %s", type(exc).__name__)
     return keyword_ids, graph_ids
+
+def index_question_bank(rows: Iterable[Any]) -> dict:
+    """Upsert approved question metadata into Meilisearch and Neo4j."""
+    docs, graph_count = [], 0
+    for row in rows:
+        q = _record(row)
+        if q.get("status") != "active":
+            continue
+        text = " ".join([str(q.get("question_text", "")), str(q.get("subcategory", "")), str(q.get("grading_rubric", ""))])
+        topics = [name for name in FUNDAMENTAL_TARGETS if _topic_match(q, name)]
+        skills = [sid for sid, aliases in SKILL_ALIASES.items()
+                  if any(_norm(alias) in _norm(text) for alias in aliases)]
+        docs.append({"id": str(q["id"]), "category_id": q.get("category_id", ""),
+            "subcategory": q.get("subcategory", ""), "question_text": q.get("question_text", ""),
+            "difficulty_level": _difficulty(q), "question_type": q.get("question_type", ""),
+            "search_text": text, "topics": topics, "skills": skills, "status": "active",
+            "version": int(q.get("version") or 1)})
+    meili_result = "not_configured"
+    meili_url, meili_key = os.getenv("MEILISEARCH_URL", "").rstrip("/"), os.getenv("MEILISEARCH_API_KEY", "")
+    if meili_url:
+        try:
+            import meilisearch
+            client = meilisearch.Client(meili_url, meili_key or None)
+            index = client.index(os.getenv("MEILISEARCH_QUESTION_INDEX", "skillbridge_questions"))
+            index.update_filterable_attributes(["category_id", "difficulty_level", "topics", "skills", "status"])
+            index.add_documents(docs, primary_key="id")
+            meili_result = "indexed"
+        except Exception as exc:
+            meili_result = "error:" + type(exc).__name__
+            log.warning("Meilisearch indexing failed: %s", type(exc).__name__)
+    neo_result = "not_configured"
+    neo_uri = os.getenv("NEO4J_URI", "")
+    if neo_uri:
+        try:
+            from neo4j import GraphDatabase
+            with GraphDatabase.driver(neo_uri, auth=(os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", ""))) as driver:
+                with driver.session(database=os.getenv("NEO4J_DATABASE", "neo4j")) as session:
+                    for doc in docs:
+                        session.run("MERGE (q:Question {id:$id}) SET q.text=$text, q.category_id=$category, q.difficulty=$difficulty, q.status='active', q.version=$version",
+                            id=doc["id"], text=doc["question_text"], category=doc["category_id"],
+                            difficulty=doc["difficulty_level"], version=doc["version"])
+                        for topic in doc["topics"]:
+                            session.run("MERGE (t:Topic {name:$topic}) MERGE (q:Question {id:$id}) MERGE (t)-[:HAS_QUESTION]->(q)",
+                                topic=topic, id=doc["id"])
+                        for skill in doc["skills"]:
+                            session.run("MERGE (s:Skill {name:$skill}) MERGE (q:Question {id:$id}) MERGE (s)-[:HAS_QUESTION]->(q)",
+                                skill=skill, id=doc["id"])
+                    neo_result = "indexed"
+                    graph_count = len(docs)
+        except Exception as exc:
+            neo_result = "error:" + type(exc).__name__
+            log.warning("Neo4j indexing failed: %s", type(exc).__name__)
+    return {"active_questions": len(docs), "meilisearch": meili_result, "neo4j": neo_result, "graph_questions": graph_count}
 
 def _rrf_order(keyword_ids: Iterable[str], graph_ids: Iterable[str]) -> dict[str, float]:
     scores: dict[str, float] = defaultdict(float)
