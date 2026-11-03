@@ -54,7 +54,7 @@ def complete_bank():
 
 def test_fundamental_and_cv_quotas_are_exact_and_non_overlapping():
     result = build_assessment(complete_bank(), [CVSkill(skill_id="python", label="Python")], retrieval=False)
-    assert result["status"] == "ready"
+    assert result["status"] == "ready", result["shortages"]
     assert result["fundamental_count"] == 25
     assert result["cv_count"] == 5
     assert result["total_questions"] == 30
