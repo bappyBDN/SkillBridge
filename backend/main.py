@@ -536,8 +536,12 @@ def get_att(att_id, uid):
     return dict(a)
 
 
+class StartAttempt(BaseModel):
+    blueprint_id: Optional[str] = None
+
+
 @app.post("/api/attempts")
-def start_attempt(u=Depends(current_user)):
+def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
     need_consent(u)
     act = one("SELECT * FROM attempts WHERE user_id=? AND status='active'", (u["id"],))
     if act:
@@ -547,9 +551,25 @@ def start_attempt(u=Depends(current_user)):
             return view(dict(act))                       # resume after a dropped connection
 
     seed = secrets.randbelow(10**9)
-    st = E.new_state(seed)
-    q = E.pick_question(st, seen_before(u["id"]))
-    st["current"], st["served_at"] = q["id"], time.time()
+    if b and b.blueprint_id:
+        blueprint = one("SELECT status,payload FROM assessment_blueprints WHERE id=? AND user_id=?",
+                        (b.blueprint_id, u["id"]))
+        if not blueprint:
+            raise HTTPException(404, "Assessment blueprint not found")
+        if blueprint["status"] != "ready":
+            raise HTTPException(409, "The approved question bank is incomplete for this assessment")
+        payload = json.loads(blueprint["payload"])
+        selected = payload.get("questions") or []
+        if not selected or len(selected) != payload.get("total_questions"):
+            raise HTTPException(409, "Assessment blueprint validation failed")
+        st = {"graphrag": True, "blueprint_id": b.blueprint_id, "selected_questions": selected,
+              "question_index": 0, "answers": {}, "duration_seconds": int(payload["estimated_duration_seconds"]),
+              "served_at": time.time(), "seed": seed}
+        st["current"] = selected[0]["id"]
+    else:
+        st = E.new_state(seed)
+        q = E.pick_question(st, seen_before(u["id"]))
+        st["current"], st["served_at"] = q["id"], time.time()
     aid = uuid.uuid4().hex[:12]
     now = time.time()
     # Serialize attempt creation per candidate. This prevents double-clicks or
@@ -603,6 +623,14 @@ def answer(aid: str, b: Ans, u=Depends(current_user)):
     st = json.loads(att["state"])
     if time.time() > att["started"] + E.TEST_SECONDS + E.GRACE:      # server owns the timer
         finalize(att, st); return view(get_att(aid, u["id"]))
+    if st.get("graphrag"):
+        question = next((q for q in st["selected_questions"] if q["id"] == b.question_id), None)
+        if not question:
+            raise HTTPException(404, "Question is not part of this assessment")
+        st.setdefault("answers", {})[b.question_id] = str(b.answer or "")
+        st["current"] = b.question_id
+        save(aid, st)
+        return view(get_att(aid, u["id"]))
     if b.question_id != st["current"]: raise HTTPException(409, "Question mismatch")
     q = QBYID[st["current"]]
     E.record_answer(st, q, b.answer, time.time() - (st["served_at"] or time.time()))
@@ -613,6 +641,43 @@ def answer(aid: str, b: Ans, u=Depends(current_user)):
         st["current"], st["served_at"] = nq["id"], time.time()
         save(aid, st)
     return view(get_att(aid, u["id"]))                      # never reveals correctness during the exam
+
+
+class NavigateQuestion(BaseModel):
+    index: int = Field(ge=0)
+
+
+@app.post("/api/attempts/{aid}/navigate")
+def navigate_question(aid: str, b: NavigateQuestion, u=Depends(current_user)):
+    att = get_att(aid, u["id"])
+    st = json.loads(att["state"])
+    if att["status"] != "active" or not st.get("graphrag"):
+        raise HTTPException(409, "Question navigation is unavailable")
+    if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
+        finalize(att, st)
+        return view(get_att(aid, u["id"]))
+    if b.index >= len(st["selected_questions"]):
+        raise HTTPException(422, "Question index is outside this assessment")
+    st["question_index"] = b.index
+    st["current"] = st["selected_questions"][b.index]["id"]
+    save(aid, st)
+    return view(get_att(aid, u["id"]))
+
+
+@app.post("/api/attempts/{aid}/submit")
+def submit_graphrag_attempt(aid: str, u=Depends(current_user)):
+    att = get_att(aid, u["id"])
+    st = json.loads(att["state"])
+    if att["status"] != "active" or not st.get("graphrag"):
+        raise HTTPException(409, "This is not an active GraphRAG assessment")
+    if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
+        finalize(att, st)
+        return view(get_att(aid, u["id"]))
+    unanswered = len(st["selected_questions"]) - len(st.get("answers", {}))
+    if unanswered:
+        raise HTTPException(409, {"message": "Please answer all questions before submitting.", "unanswered": unanswered})
+    finalize(att, st)
+    return view(get_att(aid, u["id"]))
 
 
 class SqlRun(BaseModel):
