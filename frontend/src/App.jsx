@@ -789,7 +789,7 @@ function AdminConsole({ onLogout }) {
     const endpoints={
       overview:"/admin/console/overview",users:"/admin/console/users",staff:"/admin/console/staff",companies:"/admin/console/company-verifications",
       jobs:"/admin/console/job-review-queue",assessments:"/admin/assessment-reviews",appeals:"/admin/appeals",
-      questions:"/admin/questions",learning:"/admin/learning",ai:"/admin/ai-operations",billing:"/admin/billing",privacy:"/admin/privacy",
+      questions:"/admin/questions",graphrag:"/admin/assessment/graphrag/status",learning:"/admin/learning",ai:"/admin/ai-operations",billing:"/admin/billing",privacy:"/admin/privacy",
       quality:"/admin/quality",audit:"/admin/audit-logs",phaseTwo:"/admin/phase-two-requests"
     };
     const keys=Object.keys(endpoints);
@@ -909,6 +909,10 @@ function AdminConsole({ onLogout }) {
           const activeCategory=cats.find(c=>c.id===questionCategory);
           return <section className="ad-question-workspace">
             <div className="ad-question-hero"><div><div className="ad-eyebrow">ASSESSMENT CONTENT · GOVERNANCE</div><h2>Build a stronger question bank.</h2><p>Organise, author and import assessment questions across nine skill domains. Every change is versioned and audited.</p><div className="ad-question-hero-tags"><span>✓ Database-backed</span><span>◈ Versioned edits</span><span>↗ Bulk import</span></div></div><div className="ad-question-hero-icon">Q<span>+</span></div></div>
+            <div className="ad-graphrag-panel">
+              <div><span className="ad-eyebrow">GRAPH RETRIEVAL · ASSESSMENT READINESS</span><h3>CV + Fundamental GraphRAG</h3><p>{data.graphrag?.active_question_count??"—"} active questions · Meilisearch {data.graphrag?.meilisearch_configured?"configured":"not connected"} · Neo4j {data.graphrag?.neo4j_configured?"configured":"not connected"}</p><small>Required: 25 fundamental questions plus 5 approved questions for every confirmed CV skill. Use category + subcategory and difficulty carefully.</small></div>
+              <button className="ad-q-add-btn" onClick={async()=>{try{const result=await api("/admin/assessment/graphrag/reindex",{method:"POST"});flash("Graph index updated · "+result.active_questions+" approved questions.");await load();}catch(x){setError(x.message||"Graph index update failed.");}}}>Rebuild search + graph index</button>
+            </div>
             <div className="ad-question-stats"><article><span className="ad-qstat-icon">▤</span><div><small>Total questions</small><strong>{qdata.summary?.total??allQuestions.length}</strong><em>Across all categories</em></div></article><article><span className="ad-qstat-icon ad-qstat-green">✓</span><div><small>Active</small><strong>{qdata.summary?.active??0}</strong><em>Ready for use</em></div></article><article><span className="ad-qstat-icon ad-qstat-amber">◷</span><div><small>Draft</small><strong>{qdata.summary?.draft??0}</strong><em>Awaiting approval</em></div></article><article><span className="ad-qstat-icon ad-qstat-grey">▣</span><div><small>Archived</small><strong>{qdata.summary?.archived??0}</strong><em>Retained for history</em></div></article></div>
             <div className="ad-question-section-head"><div><h3>Explore by category</h3><p>Select a domain to view its question inventory.</p></div><button className="ad-q-add-btn" onClick={()=>openQuestionEditor()}>＋ Create question</button></div>
             <div className="ad-category-grid">{cats.map((c,i)=><button key={c.id} className={"ad-category-card "+(questionCategory===c.id?"selected":"")} onClick={()=>setQuestionCategory(questionCategory===c.id?"all":c.id)}><span className={"ad-category-icon ad-cat-"+(i+1)}>{c.icon}</span><span className="ad-category-copy"><b>{c.name}</b><small>{c.description}</small></span><strong>{c.count||0}<small>questions</small></strong></button>)}</div>
