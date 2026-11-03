@@ -39,6 +39,11 @@ PER_SKILL_TARGETS = {"Easy": 1, "Medium": 2, "Hard": 2}
 QUESTION_PAGE_SIZE = 5
 
 SKILL_ALIASES = {
+    "dsa": ["dsa", "data structures", "algorithms", "big o", "dynamic programming"],
+    "oop": ["oop", "object oriented programming", "polymorphism", "encapsulation", "inheritance"],
+    "statistics": ["statistics", "statistical analysis", "hypothesis testing", "regression"],
+    "visualization": ["data visualization", "tableau", "power bi", "matplotlib", "seaborn", "plotly"],
+    "excel": ["excel", "spreadsheet", "pivot table", "vlookup", "google sheets"],
     "python": ["python", "pandas", "numpy", "fastapi", "django", "flask"],
     "git": ["git", "github", "gitlab", "bitbucket"],
     "ai_ml": ["ai", "artificial intelligence", "machine learning", "ml", "deep learning", "tensorflow", "pytorch", "scikit-learn", "sklearn"],
