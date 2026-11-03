@@ -269,9 +269,25 @@ def _rrf_order(keyword_ids: Iterable[str], graph_ids: Iterable[str]) -> dict[str
     for rank, qid in enumerate(graph_ids, 1): scores[qid] += 1 / (60 + rank)
     return scores
 
-def _allocate(pool: list[dict], count: int, difficulty: str, used: set[str], external: dict[str, float]) -> list[dict]:
+def _format_kind(q: dict) -> str:
+    qtype = str(q.get("question_type", "")).lower()
+    prompt = str(q.get("question_text", "")).lower()
+    if "sql" in qtype:
+        return "sql"
+    if any(x in qtype for x in ("coding", "code", "programming")):
+        return "coding"
+    if "scenario" in qtype or "case study" in qtype or prompt.startswith(("scenario:", "you are ", "imagine ")):
+        return "scenario"
+    if any(x in qtype for x in ("explanation", "short answer", "descriptive", "essay")):
+        return "explanation"
+    return "mcq"
+
+def _allocate(pool: list[dict], count: int, difficulty: str, used: set[str], external: dict[str, float],
+              preferred_formats: set[str] | None = None) -> list[dict]:
     candidates = [q for q in pool if q["id"] not in used and _difficulty(q) == difficulty]
-    candidates.sort(key=lambda q: (-(external.get(q["id"], 0)), q["id"]))
+    preferred_formats = preferred_formats or set()
+    candidates.sort(key=lambda q: (0 if _format_kind(q) in preferred_formats else 1,
+                                   -(external.get(q["id"], 0)), q["id"]))
     selected = candidates[:count]
     used.update(q["id"] for q in selected)
     return selected
@@ -295,6 +311,7 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
     selected: list[dict] = []
     trace: list[RetrievalTrace] = []
     shortages: list[dict] = []
+    fundamental_formats: set[str] = set()
 
     # One dual-retrieval pass per fundamental topic.
     for topic, target in FUNDAMENTAL_TARGETS.items():
@@ -303,8 +320,10 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
         keyword_ids, graph_ids = _external_retrieval(topic) if retrieval else ([], [])
         external = _rrf_order(keyword_ids, graph_ids)
         for difficulty, count in FUNDAMENTAL_DIFFICULTY_MATRIX[topic].items():
-            chosen = _allocate(pool, count, difficulty, used, external)
+            preferred = {"scenario", "explanation", "sql", "coding"} - fundamental_formats
+            chosen = _allocate(pool, count, difficulty, used, external, preferred)
             for q in chosen:
+                fundamental_formats.add(_format_kind(q))
                 selected.append({**q, "assessment_section": "fundamental", "assessment_topic": topic, "skill_id": None})
                 trace.append(RetrievalTrace(question_id=q["id"], section="fundamental", topic=topic, difficulty=difficulty,
                     keyword_rank=(keyword_ids.index(q["id"])+1 if q["id"] in keyword_ids else None),
@@ -313,14 +332,22 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
             if len(chosen) < count:
                 shortages.append({"section": "fundamental", "topic": topic, "difficulty": difficulty,
                                   "required": count, "available_selected": len(chosen)})
+    required_fundamental_formats = {"scenario", "explanation", "sql", "coding"}
+    for missing_format in sorted(required_fundamental_formats - fundamental_formats):
+        shortages.append({"section": "fundamental", "topic": "Question format mix", "difficulty": "Any",
+                          "required": 1, "available_selected": 0, "format": missing_format})
     # CV skills are explicit mentions and should be confirmed by the candidate in the UI.
+    cv_format_coverage = {}
     for skill in cv_skills:
         pool = [q for q in bank if _skill_match(q, skill)]
+        cv_formats: set[str] = set()
         keyword_ids, graph_ids = _external_retrieval(skill.label) if retrieval else ([], [])
         external = _rrf_order(keyword_ids, graph_ids)
         for difficulty, count in PER_SKILL_TARGETS.items():
-            chosen = _allocate(pool, count, difficulty, used, external)
+            preferred = ({"coding", "sql"} if not ({"coding", "sql"} & cv_formats) else set()) | ({"scenario", "explanation"} if not ({"scenario", "explanation"} & cv_formats) else set())
+            chosen = _allocate(pool, count, difficulty, used, external, preferred)
             for q in chosen:
+                cv_formats.add(_format_kind(q))
                 selected.append({**q, "assessment_section": "cv", "assessment_topic": skill.label, "skill_id": skill.skill_id})
                 trace.append(RetrievalTrace(question_id=q["id"], section="cv", topic=skill.label, difficulty=difficulty,
                     keyword_rank=(keyword_ids.index(q["id"])+1 if q["id"] in keyword_ids else None),
@@ -329,6 +356,11 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
             if len(chosen) < count:
                 shortages.append({"section": "cv", "topic": skill.label, "difficulty": difficulty,
                                   "required": count, "available_selected": len(chosen)})
+        cv_format_coverage[skill.skill_id] = sorted(cv_formats)
+        if not ({"coding", "sql"} & cv_formats):
+            shortages.append({"section": "cv", "topic": skill.label, "difficulty": "Any", "required": 1, "available_selected": 0, "format": "coding_or_sql"})
+        if not ({"scenario", "explanation"} & cv_formats):
+            shortages.append({"section": "cv", "topic": skill.label, "difficulty": "Any", "required": 1, "available_selected": 0, "format": "scenario_or_explanation"})
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     fundamental = [q for q in selected if q["assessment_section"] == "fundamental"]
     cv_questions = [q for q in selected if q["assessment_section"] == "cv"]
@@ -345,6 +377,7 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
         "fundamental_targets": FUNDAMENTAL_TARGETS,
         "per_skill_targets": PER_SKILL_TARGETS,
         "skills": [s.model_dump() for s in cv_skills],
+        "fundamental_formats": sorted(fundamental_formats), "cv_format_coverage": cv_format_coverage,
         "shortages": shortages, "retrieval_trace": [t.model_dump() for t in trace],
         "retrieval_ms": elapsed_ms,
         "retrieval_providers": {
