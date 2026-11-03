@@ -123,7 +123,7 @@ def _spacy_terms(text: str) -> set[str]:
     """Use a cached spaCy tokenizer; regex aliases remain the deterministic fallback."""
     try:
         doc = _spacy_nlp()(text[:30000])
-        return {token.text.lower() for token in doc if token.is_alpha or token.text in {"c++", "c#"}}
+        return {part for token in doc for part in _norm(token.text).split() if part}
     except Exception as exc:
         log.info("spaCy unavailable; using alias matcher (%s)", type(exc).__name__)
         return set(re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]*", text.lower()))
@@ -148,7 +148,8 @@ def extract_cv_skills(redacted_cv: str) -> list[CVSkill]:
     lower = text.lower()
     found: list[CVSkill] = []
     for skill_id, aliases in SKILL_ALIASES.items():
-        matches = [alias for alias in aliases if re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", lower)]
+        matches = [alias for alias in aliases if set(_norm(alias).split()).issubset(tokens)
+                   and re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", lower)]
         if not matches:
             continue
         alias = max(matches, key=len)
