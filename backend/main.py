@@ -688,6 +688,11 @@ class SqlRun(BaseModel):
 def sql_run(aid: str, b: SqlRun, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     st = json.loads(att["state"])
+    if st.get("graphrag"):
+        q = next((x for x in st["selected_questions"] if x["id"] == st.get("current")), None)
+        if att["status"] != "active" or not q or "sql" not in str(q.get("question_type", "")).lower():
+            raise HTTPException(409, "No SQL question active")
+        return E.run_query(att["seed"], b.sql)
     if att["status"] != "active" or not st["current"] or QBYID[st["current"]]["type"] != "sql": raise HTTPException(409, "No SQL question active")
     return E.run_query(att["seed"], b.sql)                  # visible dataset only; scoring uses hidden datasets
 
