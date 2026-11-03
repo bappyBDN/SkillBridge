@@ -26,6 +26,15 @@ FUNDAMENTAL_TARGETS = {
     "Coding": 5, "Database": 5, "Critical Thinking": 2,
 }
 FUNDAMENTAL_TOTAL = 25
+# Per-topic quotas sum exactly to 25 and roll up to 10 Easy / 8 Medium / 7 Hard.
+FUNDAMENTAL_DIFFICULTY_MATRIX = {
+    "DSA": {"Easy": 2, "Medium": 2, "Hard": 1},
+    "OOP": {"Easy": 2, "Medium": 1, "Hard": 1},
+    "Networking": {"Easy": 2, "Medium": 1, "Hard": 1},
+    "Coding": {"Easy": 2, "Medium": 2, "Hard": 1},
+    "Database": {"Easy": 2, "Medium": 1, "Hard": 2},
+    "Critical Thinking": {"Easy": 0, "Medium": 1, "Hard": 1},
+}
 PER_SKILL_TARGETS = {"Easy": 1, "Medium": 2, "Hard": 2}
 QUESTION_PAGE_SIZE = 5
 
@@ -227,7 +236,7 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
         pool = [q for q in bank if _topic_match(q, topic)]
         keyword_ids, graph_ids = _external_retrieval(topic, next(iter(spec["category_ids"]))) if retrieval else ([], [])
         external = _rrf_order(keyword_ids, graph_ids)
-        for difficulty, count in DIFFICULTY_TARGETS.items():
+        for difficulty, count in FUNDAMENTAL_DIFFICULTY_MATRIX[topic].items():
             chosen = _allocate(pool, count, difficulty, used, external)
             for q in chosen:
                 selected.append({**q, "assessment_section": "fundamental", "assessment_topic": topic, "skill_id": None})
@@ -266,6 +275,7 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
         "estimated_duration_seconds": total_seconds,
         "estimated_duration_minutes": round(total_seconds / 60, 1),
         "difficulty_targets": DIFFICULTY_TARGETS,
+        "fundamental_difficulty_matrix": FUNDAMENTAL_DIFFICULTY_MATRIX,
         "fundamental_targets": FUNDAMENTAL_TARGETS,
         "per_skill_targets": PER_SKILL_TARGETS,
         "skills": [s.model_dump() for s in cv_skills],
