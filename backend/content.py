@@ -25,6 +25,10 @@ TAXONOMY = {
     "networking": {"name": "Computer Networking", "aliases": ["computer networks", "networking", "tcp/ip", "dns", "osi model"]},
     "dsa": {"name": "Data Structures & Algorithms", "aliases": ["data structures", "algorithms", "big o", "dynamic programming"]},
     "oop": {"name": "Object-Oriented Programming", "aliases": ["object oriented programming", "oop", "polymorphism", "encapsulation", "inheritance"]},
+    "cpp": {"name": "C++", "aliases": ["c++", "cpp"]},
+    "csharp": {"name": "C#", "aliases": ["c#", "c sharp", ".net"]},
+    "redis": {"name": "Redis", "aliases": ["redis"]},
+    "html_css": {"name": "HTML & CSS", "aliases": ["html", "css", "tailwind", "bootstrap"]},
 }
 TESTABLE = ["sql", "python", "statistics", "visualization"]
 
