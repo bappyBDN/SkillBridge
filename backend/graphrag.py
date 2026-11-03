@@ -186,9 +186,9 @@ def _external_retrieval(query: str, category_id: str | None = None) -> tuple[lis
             from neo4j import GraphDatabase
             with GraphDatabase.driver(neo_uri, auth=(neo_user, neo_password)) as driver:
                 records = driver.execute_query(
-                    "MATCH (s:Skill)-[:HAS_QUESTION]-(q:Question) "
+                    "MATCH p=(s:Skill)-[:RELATED_TO*0..2]-(t:Topic)-[:HAS_QUESTION]-(q:Question) "
                     "WHERE toLower(s.name) CONTAINS toLower($query) "
-                    "RETURN q.id AS id, 1 AS hops ORDER BY hops ASC LIMIT 80",
+                    "RETURN q.id AS id, length(p) AS hops ORDER BY hops ASC LIMIT 80",
                     query=query, database_=os.getenv("NEO4J_DATABASE", "neo4j")
                 ).records
                 graph_ids = [str(r["id"]) for r in records if r.get("id")]
@@ -242,6 +242,16 @@ def index_question_bank(rows: Iterable[Any]) -> dict:
                         for skill in doc["skills"]:
                             session.run("MERGE (s:Skill {name:$skill}) MERGE (q:Question {id:$id}) MERGE (s)-[:HAS_QUESTION]->(q)",
                                 skill=skill, id=doc["id"])
+                            related = {
+                                "python": ["Coding", "DSA"], "javascript": ["Coding", "DSA"],
+                                "java": ["Coding", "OOP"], "ai_ml": ["Coding", "DSA"],
+                                "sql": ["Database"], "networking": ["Networking"],
+                                "dsa": ["DSA"], "oop": ["OOP"],
+                                "git": ["Coding"], "docker": ["Coding"],
+                            }.get(skill, [])
+                            for topic in related:
+                                session.run("MERGE (s:Skill {name:$skill}) MERGE (t:Topic {name:$topic}) MERGE (s)-[:RELATED_TO]->(t)",
+                                    skill=skill, topic=topic)
                     neo_result = "indexed"
                     graph_count = len(docs)
         except Exception as exc:
@@ -286,7 +296,7 @@ def build_assessment(rows: Iterable[Any], cv_skills: list[CVSkill], *, retrieval
     for topic, target in FUNDAMENTAL_TARGETS.items():
         spec = FUNDAMENTAL_CATEGORY_MAP[topic]
         pool = [q for q in bank if _topic_match(q, topic)]
-        keyword_ids, graph_ids = _external_retrieval(topic, next(iter(spec["category_ids"]))) if retrieval else ([], [])
+        keyword_ids, graph_ids = _external_retrieval(topic) if retrieval else ([], [])
         external = _rrf_order(keyword_ids, graph_ids)
         for difficulty, count in FUNDAMENTAL_DIFFICULTY_MATRIX[topic].items():
             chosen = _allocate(pool, count, difficulty, used, external)
