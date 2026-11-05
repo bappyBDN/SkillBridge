@@ -1300,6 +1300,9 @@ def _question_payload(raw, actor="Admin"):
     supplied_id = str(raw.get("category_id") or "").strip()
     category = category_hint or supplied_id
     category_id = category.upper() if category.upper() in QUESTION_CATEGORY_BY_ID else QUESTION_CATEGORY_BY_NAME.get(category.lower())
+    if category and not category_id:
+        existing_category = one("SELECT id FROM question_categories WHERE id=? OR lower(name)=lower(?)", (category, category))
+        category_id = existing_category["id"] if existing_category else None
     qtext = str(raw.get("question_text") or raw.get("question") or raw.get("prompt") or "").strip()
     requested_type = str(raw.get("question_type") or raw.get("type") or "").strip()
     difficulty = str(raw.get("difficulty_level") or raw.get("difficulty") or "Medium").strip().title()
