@@ -1219,7 +1219,7 @@ QUESTION_CATEGORY_BY_NAME = {x["name"].lower():x["id"] for x in QUESTION_CATEGOR
 
 
 def _ensure_question_category(value, actor="Admin"):
-    name = re.sub(r"\\s+", " ", str(value or "").strip())[:80] or "Uncategorized"
+    name = re.sub(r"\s+", " ", str(value or "").strip())[:80] or "Uncategorized"
     existing = one("SELECT * FROM question_categories WHERE lower(name)=lower(?)", (name,))
     if existing:
         return dict(existing)
@@ -1381,7 +1381,7 @@ def admin_questions(user=Depends(current_user)):
 @router.post("/api/admin/questions/categories")
 def admin_create_question_category(body: dict, user=Depends(current_user)):
     admin_only(user, "questions")
-    name = re.sub(r"\\s+", " ", str(body.get("name") or "").strip())[:80]
+    name = re.sub(r"\s+", " ", str(body.get("name") or "").strip())[:80]
     if len(name) < 2:
         raise HTTPException(422, "Category name must contain at least 2 characters.")
     if one("SELECT id FROM question_categories WHERE lower(name)=lower(?)", (name,)):
