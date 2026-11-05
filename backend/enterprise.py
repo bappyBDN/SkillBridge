@@ -1240,6 +1240,25 @@ def _seed_question_categories():
 _seed_question_categories()
 
 
+def _guess_question_category(question_text):
+    text = str(question_text or "").lower()
+    rules = [
+        ("Scenario-Based", ("scenario", "production issue", "your team", "your application", "suppose you", "what would you do", "how would you handle")),
+        ("RAG & AI", ("rag", "retrieval augmented", "embedding", "vector database", "llm", "large language model", "prompt engineering", "ai agent")),
+        ("System Design", ("design a system", "system architecture", "scalability", "high availability", "load balancer", "distributed system", "rate limiting")),
+        ("SQL", ("sql", "select ", "join ", "database query", "normalization", "foreign key", "indexing")),
+        ("Java", ("java", "jvm", "spring boot", "garbage collection")),
+        ("DSA", ("data structure", "algorithm", "big-o", "time complexity", "binary tree", "linked list", "graph traversal", "dynamic programming")),
+        ("Coding", ("write a program", "write code", "implement ", "function that", "debug the following", "complete the code", "write a function")),
+        ("IQ & Aptitude", ("sequence", "next number", "probability", "logical reasoning", "aptitude", "pattern is", "odd one out")),
+        ("CS Fundamentals", ("operating system", "process scheduling", "deadlock", "computer network", "tcp/ip", "oop", "compiler", "software engineering")),
+    ]
+    for category, keywords in rules:
+        if any(keyword in text for keyword in keywords):
+            return category
+    return ""
+
+
 def _infer_question_type(question_text, options=None, requested=""):
     options = options if isinstance(options,list) else []
     label = str(requested or "").strip().lower()
@@ -1293,7 +1312,7 @@ def _question_payload(raw, actor="Admin"):
     if not isinstance(options,list): options=[]
     options=[str(x).strip() for x in options if str(x).strip()]
     qtype = _infer_question_type(qtext, options, requested_type)
-    category_id = _ensure_question_category(category_id or category or "Uncategorized", actor)["id"]
+    category_id = _ensure_question_category(category_id or category or _guess_question_category(qtext) or "Uncategorized", actor)["id"]
     try: marks=int(raw.get("marks") or 1)
     except (TypeError,ValueError): marks=0
     try:
@@ -1338,7 +1357,7 @@ def admin_questions(user=Depends(current_user)):
     admin_only(user, "questions")
     _seed_question_bank()
     items=[_question_row(r) for r in allr("SELECT * FROM question_bank ORDER BY created_at DESC")]
-    category_rows=allr("SELECT * FROM question_categories ORDER BY name COLLATE NOCASE")
+    category_rows=allr("SELECT * FROM question_categories ORDER BY lower(name)")
     counts={}
     for q in items: counts[q["category_id"]]=counts.get(q["category_id"],0)+1
     categories=[]
