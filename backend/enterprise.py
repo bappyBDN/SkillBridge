@@ -829,7 +829,10 @@ def ensure_admin_console_schema():
             explanation TEXT NOT NULL DEFAULT '', reference_answer TEXT NOT NULL DEFAULT '',
             grading_rubric TEXT NOT NULL DEFAULT '', marks INTEGER NOT NULL DEFAULT 1,
             time_allocation INTEGER NOT NULL DEFAULT 60, status TEXT NOT NULL DEFAULT 'draft',
-            raw TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, created_at REAL NOT NULL)"""
+            raw TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, created_at REAL NOT NULL)""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_question_categories_name_ci ON question_categories(lower(name))",
+        "CREATE INDEX IF NOT EXISTS idx_question_bank_category_status ON question_bank(category_id,status)",
+        "CREATE INDEX IF NOT EXISTS idx_question_staging_category ON question_import_staging(category_id)"
     ]:
         run(statement)
     # Existing internally provisioned admin accounts retain their current authority.
@@ -1520,7 +1523,7 @@ def _staging_row(row):
 class QuestionScrapeRequest(BaseModel):
     url: str = Field(default="", max_length=2000)
     html: str = Field(default="", max_length=10_000_000)
-    category_id: str = Field(default="")
+    category_id: str = Field(default="", max_length=80)
     subcategory: str = Field(default="", max_length=100)
 
 
