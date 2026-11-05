@@ -1277,7 +1277,9 @@ def _seed_question_bank():
 
 def _question_payload(raw, actor="Admin"):
     raw = dict(raw or {})
-    category = str(raw.get("category_id") or raw.get("category") or raw.get("topic") or "").strip()
+    category_hint = str(raw.get("category") or raw.get("topic") or raw.get("skill") or "").strip()
+    supplied_id = str(raw.get("category_id") or "").strip()
+    category = category_hint or supplied_id
     category_id = category.upper() if category.upper() in QUESTION_CATEGORY_BY_ID else QUESTION_CATEGORY_BY_NAME.get(category.lower())
     qtext = str(raw.get("question_text") or raw.get("question") or raw.get("prompt") or "").strip()
     requested_type = str(raw.get("question_type") or raw.get("type") or "").strip()
@@ -1350,6 +1352,21 @@ def admin_questions(user=Depends(current_user)):
         "summary":{"total":len(items),"active":sum(q["status"]=="active" for q in items),
         "draft":sum(q["status"]=="draft" for q in items),"archived":sum(q["status"]=="archived" for q in items)},
         "governance":"Database-backed question bank with versioned edits, explicit status and audited imports."}
+
+@router.post("/api/admin/questions/categories")
+def admin_create_question_category(body: dict, user=Depends(current_user)):
+    admin_only(user, "questions")
+    name = re.sub(r"\\s+", " ", str(body.get("name") or "").strip())[:80]
+    if len(name) < 2:
+        raise HTTPException(422, "Category name must contain at least 2 characters.")
+    if one("SELECT id FROM question_categories WHERE lower(name)=lower(?)", (name,)):
+        raise HTTPException(409, "This category already exists.")
+    category = _ensure_question_category(name, user.get("name") or "Admin")
+    audit(user["id"], "question_category_created", category["id"] + ":" + name)
+    category["subcategories"] = []
+    category["count"] = 0
+    return category
+
 
 @router.post("/api/admin/questions")
 def admin_create_question(body: dict, user=Depends(current_user)):
