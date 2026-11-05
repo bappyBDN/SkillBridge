@@ -1534,8 +1534,8 @@ class StagingCommitRequest(BaseModel):
 @router.post("/api/admin/questions/scrape")
 def admin_scrape_questions(body: QuestionScrapeRequest, user=Depends(current_user)):
     admin_only(user, "questions")
-    if not body.category_id or body.category_id not in QUESTION_CATEGORY_BY_ID:
-        raise HTTPException(422, "Choose a valid default category for the scraped questions.")
+    if body.category_id:
+        _ensure_question_category(body.category_id, user.get("name") or "Admin")
     from question_scraper import scrape_url, extract_from_html
     if body.html.strip():
         # Admin provided saved HTML directly (useful for sites that block
