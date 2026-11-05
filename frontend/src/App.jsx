@@ -863,7 +863,7 @@ function AdminConsole({ onLogout }) {
   const [questionCategory,setQuestionCategory]=useState("all"),[questionQuery,setQuestionQuery]=useState(""),[questionStatus,setQuestionStatus]=useState("all");
   const [questionModal,setQuestionModal]=useState(false),[questionEditing,setQuestionEditing]=useState(null),[questionSaving,setQuestionSaving]=useState(false);
   const [questionDraft,setQuestionDraft]=useState({category_id:"CAT-01",subcategory:"",question_type:"MCQ",difficulty_level:"Medium",question_text:"",options:"",correct_answer:"",explanation:"",reference_answer:"",grading_rubric:"",marks:2,time_minutes:2,status:"draft"});
-  const [importFile,setImportFile]=useState(null),[importCategory,setImportCategory]=useState("CAT-01"),[importPreview,setImportPreview]=useState(null),[importBusy,setImportBusy]=useState(false);
+  const [importFile,setImportFile]=useState(null),[importCategory,setImportCategory]=useState(""),[importPreview,setImportPreview]=useState(null),[importBusy,setImportBusy]=useState(false);
   const [scrapeUrl,setScrapeUrl]=useState(""),[scrapeHtml,setScrapeHtml]=useState(""),[scrapeMode,setScrapeMode]=useState("url"),[scrapeCategory,setScrapeCategory]=useState(""),[scrapeNewCategory,setScrapeNewCategory]=useState(""),[scrapeSubcategory,setScrapeSubcategory]=useState(""),[scrapeBusy,setScrapeBusy]=useState(false);
   const [categoryDraft,setCategoryDraft]=useState(""),[categoryBusy,setCategoryBusy]=useState(false);
   const [stagingSelected,setStagingSelected]=useState({}),[stagingBusy,setStagingBusy]=useState(false);
@@ -1039,7 +1039,7 @@ function AdminConsole({ onLogout }) {
           const visibleQuestions=allQuestions.filter(q=>(questionCategory==="all"||q.category_id===questionCategory)&&(questionStatus==="all"||q.status===questionStatus)&&[q.question_text,q.subcategory,q.question_type,q.id].some(v=>String(v||"").toLowerCase().includes(questionQuery.toLowerCase())));
           const activeCategory=cats.find(c=>c.id===questionCategory);
           return <section className="ad-question-workspace">
-            <div className="ad-question-hero"><div><div className="ad-eyebrow">ASSESSMENT CONTENT · GOVERNANCE</div><h2>Build a stronger question bank.</h2><p>Organise, author and import assessment questions across nine skill domains. Every change is versioned and audited.</p><div className="ad-question-hero-tags"><span>✓ Database-backed</span><span>◈ Versioned edits</span><span>↗ Bulk import</span></div></div><div className="ad-question-hero-icon">Q<span>+</span></div></div>
+            <div className="ad-question-hero"><div><div className="ad-eyebrow">ASSESSMENT CONTENT · GOVERNANCE</div><h2>Build a stronger question bank.</h2><p>Organise questions across built-in and custom skill domains. New topics are created automatically when imported content introduces them.</p><div className="ad-question-hero-tags"><span>✓ Database-backed</span><span>◈ Versioned edits</span><span>↗ Bulk import</span></div></div><div className="ad-question-hero-icon">Q<span>+</span></div></div>
             <div className="ad-category-manager">
               <div><span className="ad-eyebrow">DYNAMIC TOPIC LIBRARY</span><h3>Manage question categories</h3><p>Use existing topics or create a new one. Unknown source topics are added automatically during preview and import.</p></div>
               <form onSubmit={createQuestionCategory}>
