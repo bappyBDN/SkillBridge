@@ -1459,6 +1459,8 @@ def admin_scrape_questions(body: QuestionScrapeRequest, user=Depends(current_use
         raw = dict(raw or {})
         raw.setdefault("category_id", body.category_id)
         raw.setdefault("subcategory", body.subcategory or "General")
+        # Scraped content always enters the review queue as a draft; publication is a separate admin decision.
+        raw["status"] = "draft"
         payload = _question_payload(raw, actor)
         staging_id = uuid.uuid4().hex[:12]
         run("""INSERT INTO question_import_staging(id,batch_id,source_url,category_id,subcategory,question_type,
