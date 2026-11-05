@@ -1269,7 +1269,9 @@ def _infer_question_type(question_text, options=None, requested=""):
         return "MCQ"
     text = str(question_text or "").lower()
     coding_terms = ("write a program","write code","implement ","function that","code to ",
-                    "debug the following","complete the code","write a function","sql query to")
+                    "debug the following","complete the code","write a function","sql query to",
+                    "predict the output","find the output","what is the output","trace this code",
+                    "def ","print(","#include","public static","console.log(")
     scenario_terms = ("scenario","you are given","you are working","in a production","suppose that",
                       "your team","your application","in this situation","what would you do","how would you handle")
     if any(term in text for term in coding_terms) or label in ("coding","code","programming"):
