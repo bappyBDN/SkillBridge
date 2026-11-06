@@ -98,3 +98,31 @@ def test_path_honest():
 
 def test_sign():
     assert sign_payload({"a": 1}, "k") == sign_payload({"a": 1}, "k") != sign_payload({"a": 2}, "k")
+
+def test_integrity_heartbeat_gap_events_are_capped():
+    events = [{"type": "heartbeat_gap", "server_ts": i} for i in range(5)]
+    result = trust_label(events, [], {"rule_version": "test-v1", "normalize_per_30_minutes": False})
+    assert result["points"] == 6
+    assert result["reasons"] == [{"key": "heartbeat_gap", "n": 3, "points": 6}]
+
+
+def test_integrity_wrong_share_surface_is_capped():
+    events = [{"type": "wrong_share_surface", "server_ts": i} for i in range(4)]
+    result = trust_label(events, [], {"rule_version": "test-v1", "normalize_per_30_minutes": False})
+    assert result["points"] == 3
+    assert result["reasons"] == [{"key": "wrong_share_surface", "n": 3, "points": 3}]
+
+
+def test_integrity_fast_answer_uses_question_percentile_when_available():
+    prior_times = {"q1": list(range(1, 31))}
+    answer = {"qid": "q1", "type": "mcq", "correct": True, "difficulty": 2, "seconds": 0.5}
+    result = trust_label(
+        [], [answer],
+        {"rule_version": "test-v1", "normalize_per_30_minutes": False},
+        question_times=prior_times,
+    )
+    assert result["points"] == 1
+    assert result["reasons"] == [{
+        "key": "fast", "n": 1, "points": 1, "threshold": "question_p05_or_3s_fallback"
+    }]
+
