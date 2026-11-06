@@ -646,3 +646,17 @@ summary { cursor: pointer; font-weight: 600; margin: .4rem 0; }
  .ad-category-chips{gap:6px}
  .ad-category-chips button{font-size:.58rem;padding:6px 9px}
 }
+
+/* Topic-first question governance workspace */
+.ad-topic-heading{margin-top:4px}
+.ad-topic-heading>div{display:grid;gap:4px}
+.ad-topic-heading .ad-eyebrow{color:#54836a}
+.ad-topic-panel-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.ad-topic-panel-actions .ad-q-add-btn{white-space:nowrap}
+.ad-topic-panel-actions .ad-q-clear{padding:8px 10px;border:1px solid #e3ebe5;border-radius:8px;background:#fff}
+.ad-topic-empty{display:flex;align-items:center;gap:15px;padding:23px 25px;border:1px dashed #cbdacf;border-radius:14px;background:#f8fbf8;color:#597163}
+.ad-topic-empty-icon{display:grid;place-items:center;flex:0 0 46px;width:46px;height:46px;border-radius:13px;background:#eaf3ec;color:#3f7957;font-size:1.35rem}
+.ad-topic-empty b{display:block;color:#315541;font-size:.75rem}
+.ad-topic-empty p{margin:4px 0 0;color:#84948a;font-size:.6rem;line-height:1.55}
+.ad-category-card:focus-visible,.ad-topic-panel-actions button:focus-visible{outline:3px solid #82b995;outline-offset:2px}
+@media(max-width:700px){.ad-topic-panel-actions{justify-content:flex-start}.ad-topic-empty{align-items:flex-start;padding:17px}.ad-topic-panel-actions .ad-count{width:100%}}
