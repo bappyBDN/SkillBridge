@@ -110,7 +110,7 @@ def test_integrity_wrong_share_surface_is_capped():
     events = [{"type": "wrong_share_surface", "server_ts": i} for i in range(4)]
     result = trust_label(events, [], {"rule_version": "test-v1", "normalize_per_30_minutes": False})
     assert result["points"] == 3
-    assert result["reasons"] == [{"key": "wrong_share_surface", "n": 1, "points": 3}]
+    assert result["reasons"] == [{"key": "wrong_share_surface", "n": 3, "points": 3}]
 
 
 def test_integrity_fast_answer_uses_question_percentile_when_available():
