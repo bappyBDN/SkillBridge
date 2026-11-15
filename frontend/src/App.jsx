@@ -5285,6 +5285,178 @@ function ProfileJourneyRouter({ st, refresh, onEditProfile, tick, setTick, done,
 }
 
 /* ---------- platform administration ---------- */
+/** Open an authenticated PDF in a new tab (the API requires the bearer token). */
+async function openAuthedPdf(url) {
+  try {
+    const blob = await api(url, { responseType: "blob" });
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  } catch (e) {
+    alert(e.message || "Could not open that file.");
+  }
+}
+
+function CandidateDetailModal({ userId, onClose }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    api(`/admin/candidates/${userId}`)
+      .then((result) => alive && setData(result))
+      .catch((e) => alive && setError(e.message || "Could not load this candidate."));
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
+
+  const when = (value) => (value ? new Date(value * 1000).toLocaleString() : "—");
+
+  return (
+    <div className="ad-modal-backdrop" onClick={onClose}>
+      <div className="ad-candidate-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div>
+            <div className="ad-eyebrow">CANDIDATE RECORD</div>
+            <h2>{data?.user?.name || "Loading…"}</h2>
+            <p>{data?.user?.email}</p>
+          </div>
+          <button type="button" onClick={onClose}>×</button>
+        </header>
+        {error && <div className="ad-error" role="alert">{error}</div>}
+        {data && (
+          <div className="ad-candidate-body">
+            <section>
+              <h3>CV on file</h3>
+              {data.cv?.has_pdf ? (
+                <div className="ad-cv-card">
+                  <div>
+                    <strong>{data.cv.filename}</strong>
+                    <small>
+                      {(data.cv.size_bytes / 1024).toFixed(1)} KB · uploaded {when(data.cv.uploaded)}
+                    </small>
+                  </div>
+                  <button className="btn sm" onClick={() => openAuthedPdf(data.cv.pdf_url)}>
+                    Open CV (PDF)
+                  </button>
+                </div>
+              ) : (
+                <p className="muted">No CV uploaded yet.</p>
+              )}
+              {data.cv?.documents?.length > 1 && (
+                <ul className="ad-doc-list">
+                  {data.cv.documents.slice(1).map((doc) => (
+                    <li key={doc.id}>
+                      {doc.filename} · {when(doc.created)}
+                      <button
+                        className="btn ghost sm"
+                        onClick={() =>
+                          openAuthedPdf(`/admin/candidates/${userId}/cv?document_id=${doc.id}`)
+                        }
+                      >
+                        Open
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section>
+              <h3>Profile</h3>
+              {data.profile ? (
+                <dl className="ad-dl">
+                  <dt>Headline</dt><dd>{data.profile.headline || "—"}</dd>
+                  <dt>Location</dt><dd>{data.profile.location || "—"}</dd>
+                  <dt>Phone</dt><dd>{data.profile.phone || "—"}</dd>
+                  <dt>Summary</dt><dd>{data.profile.summary || "—"}</dd>
+                  <dt>Skills</dt>
+                  <dd>
+                    {(data.profile.skills || []).map((s) => (typeof s === "string" ? s : s.name)).join(", ") || "—"}
+                  </dd>
+                </dl>
+              ) : (
+                <p className="muted">
+                  No structured profile yet. CV-extracted skills:{" "}
+                  {(data.journey?.extracted || []).map((s) => s.name).join(", ") || "—"}
+                </p>
+              )}
+            </section>
+
+            <section>
+              <h3>Assessments</h3>
+              {data.attempts.length ? (
+                <table className="ad-table">
+                  <thead>
+                    <tr><th>Kind</th><th>Score</th><th>Level</th><th>Trust</th><th>Finished</th></tr>
+                  </thead>
+                  <tbody>
+                    {data.attempts.map((a) => (
+                      <tr key={a.attempt_id}>
+                        <td>{a.kind}</td>
+                        <td>{a.overall ?? "—"}</td>
+                        <td>{a.level || "—"}</td>
+                        <td>{a.trust || "—"}</td>
+                        <td>{when(a.finished)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="muted">No assessment attempts yet.</p>
+              )}
+            </section>
+
+            <section>
+              <h3>Skill Passport</h3>
+              {data.passports.length ? (
+                data.passports.map((passport) => (
+                  <div className="ad-passport" key={passport.pid}>
+                    <strong>{passport.holder || data.user.name}</strong>
+                    <small>
+                      Issued {passport.issued} · expires {passport.expires}
+                      {passport.revoked ? " · revoked" : ""}
+                    </small>
+                    <div className="cr-tags">
+                      {(passport.skills || []).map((s) => (
+                        <span key={s.skill}>
+                          {s.name} · {s.score}%
+                        </span>
+                      ))}
+                    </div>
+                    <a href={passport.public_url} target="_blank" rel="noreferrer">
+                      Open public passport ↗
+                    </a>
+                  </div>
+                ))
+              ) : (
+                <p className="muted">No passport issued yet.</p>
+              )}
+            </section>
+
+            <section>
+              <h3>Applications</h3>
+              {data.applications.length ? (
+                <ul className="ad-doc-list">
+                  {data.applications.map((a) => (
+                    <li key={a.id}>
+                      {a.job_title} · {a.company_name} · {a.status}
+                      {a.results_shared ? " · results shared" : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">No applications yet.</p>
+              )}
+            </section>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function IdentityReviewQueue({ A, onFlash, onError }) {
   const I = A.identity;
   const [items, setItems] = useState([]);
@@ -5456,6 +5628,7 @@ function AdminConsole({ onLogout }) {
   });
   const [creatingAdmin, setCreatingAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
+  const [candidateView, setCandidateView] = useState(null);
   const [integrityDetail, setIntegrityDetail] = useState(null),
     [integrityLoading, setIntegrityLoading] = useState(false);
   const [honestyDraft, setHonestyDraft] = useState({ score: "", reason: "" });
@@ -6651,6 +6824,14 @@ function AdminConsole({ onLogout }) {
                     <td>{stamp(u.created)}</td>
                     <td>{pill(u.account_status || "active")}</td>
                     <td>
+                      {u.role === "candidate" && (
+                        <button
+                          className="ad-action-btn"
+                          onClick={() => setCandidateView(u.id)}
+                        >
+                          View candidate
+                        </button>
+                      )}
                       {u.role !== "admin" && adminRole !== "support_agent" && (
                         <button
                           className="ad-action-btn"
@@ -9018,6 +9199,12 @@ function AdminConsole({ onLogout }) {
           </footer>
         </div>
       </main>
+      {candidateView && (
+        <CandidateDetailModal
+          userId={candidateView}
+          onClose={() => setCandidateView(null)}
+        />
+      )}
       {questionModal && (
         <div
           className="ad-modal-backdrop"
@@ -12112,9 +12299,10 @@ function HiringWorkspace({ role, onLogout }) {
               <div className="cr-report-note">
                 <strong>Evidence visibility</strong>
                 <p>
-                  Candidate assessment data is shown only when the candidate has
-                  opted in for this application. Profile and CV fields are not
-                  exposed by this prototype.
+                  This candidate applied to your job, so their CV is available to
+                  this workspace only. Assessment scores and the Skill Passport are
+                  shown only when the candidate has shared results for this
+                  application.
                 </p>
               </div>
               <div className="cr-report-section">
@@ -12123,6 +12311,31 @@ function HiringWorkspace({ role, onLogout }) {
                   {detail.status.replaceAll("_", " ")}
                 </span>
                 <p>Applied {date(detail.created)}</p>
+              </div>
+              <div className="cr-report-section">
+                <h3>Candidate CV</h3>
+                {detail.candidate_cv?.available ? (
+                  <div className="cr-cv-row">
+                    <div>
+                      <strong>{detail.candidate_cv.filename}</strong>
+                      <small>
+                        Uploaded{" "}
+                        {detail.candidate_cv.uploaded
+                          ? date(detail.candidate_cv.uploaded)
+                          : "—"}{" "}
+                        · PDF
+                      </small>
+                    </div>
+                    <button
+                      className="cr-primary"
+                      onClick={() => openAuthedPdf(detail.candidate_cv.url)}
+                    >
+                      Open CV (PDF)
+                    </button>
+                  </div>
+                ) : (
+                  <p className="cr-muted-box">This candidate has not uploaded a CV.</p>
+                )}
               </div>
               <div className="cr-report-section">
                 <h3>Required job skills vs candidate evidence</h3>
@@ -12154,7 +12367,7 @@ function HiringWorkspace({ role, onLogout }) {
                 )}
                 <p className="cr-footnote">
                   {detail.results_shared
-                    ? "Claimed and verified skill evidence is shown because the candidate shared results for this application. Contact details and CV files remain private."
+                    ? "Claimed and verified skill evidence is shown because the candidate shared results for this application."
                     : "The candidate has not shared assessment evidence for this application."}
                 </p>
               </div>
@@ -12184,6 +12397,39 @@ function HiringWorkspace({ role, onLogout }) {
                   </p>
                 )}
               </div>
+              {detail.results_shared && detail.passport && (
+                <div className="cr-report-section">
+                  <h3>Skill Passport</h3>
+                  <div className="cr-passport-card">
+                    <strong>{detail.passport.holder || detail.candidate_name}</strong>
+                    <small>
+                      Issued {detail.passport.issued || "—"} · expires{" "}
+                      {detail.passport.expires || "—"}
+                    </small>
+                    <div className="cr-tags">
+                      {(detail.passport.skills || []).map((s) => (
+                        <span key={s.skill}>
+                          {s.name} · {s.score}%
+                        </span>
+                      ))}
+                    </div>
+                    {detail.passport.uplift && (
+                      <p className="cr-footnote">
+                        Uplift: {detail.passport.uplift.pre}% →{" "}
+                        {detail.passport.uplift.post}% (+{detail.passport.uplift.delta})
+                      </p>
+                    )}
+                    <a
+                      className="cr-passport-link"
+                      href={detail.passport.public_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open public passport ↗
+                    </a>
+                  </div>
+                </div>
+              )}
               {canManagePipeline && (
                 <div className="cr-report-section">
                   <h3>Move through pipeline</h3>

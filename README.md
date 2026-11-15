@@ -280,6 +280,26 @@ credential exists anywhere in the repository.
 This is an initial vertical slice, not a completed production platform. Alembic migrations, complete authorization/security tests, DeepSeek provider integration, pgvector RAG, payment webhooks, official score review, OCR fallback, hardened code execution and end-to-end production deployment remain future work.
 
 
+## CV storage and sharing
+
+- An uploaded CV is parsed for skills, and a **PDF version is stored in the
+  database** (`cv_files` table, `BYTEA`). PDF uploads are kept byte-for-byte;
+  DOCX/TXT/pasted CVs get a generated PDF rendering, so admin and recruiter views
+  always have a file to open and never depend on ephemeral container storage.
+- The original upload is still kept in the configured storage backend
+  (`local` or `s3`), and the existing per-user pruning/retention applies.
+- **Admin console**: *Users & accounts → View candidate* opens the candidate
+  record with the stored CV, structured profile, CV-extracted skills, every
+  assessment score, the Skill Passport and the application history.
+- **Company workspace**: a company can open the CV of a candidate **only when
+  that candidate applied to one of its own job posts**. The endpoint is scoped by
+  company, so another company receives `404`.
+- Assessment scores and the Skill Passport in the company view stay gated by the
+  candidate's per-application result-sharing switch. The consent screen now
+  states both rules.
+- Deleting an account removes `cv_files`, extractions and stored files
+  (covered by `backend/tests/test_cv_sharing.py`).
+
 ## Candidate workspace UI
 
 The candidate experience now has a dedicated responsive workspace with:

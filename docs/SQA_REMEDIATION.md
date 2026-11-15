@@ -46,6 +46,21 @@ items had already been corrected since the review; they are listed as
 
 ## Delivered after the first pass
 
+### CV storage and sharing
+
+- Uploaded CVs are now stored **as PDFs in the database** (`cv_files`), with the
+  original file kept in the storage backend. Pasted text and DOCX/TXT uploads get
+  a generated PDF rendering, so a viewable file always exists.
+- **Admin Console → Users & accounts → View candidate**: full candidate record
+  with the CV, structured profile, CV-extracted skills, scores, passport and
+  application history (`GET /api/admin/candidates/{id}`,
+  `GET /api/admin/candidates/{id}/cv`).
+- **Company workspace**: applicant drawer shows the CV of candidates who applied
+  to that company's own job, plus score and Skill Passport when shared
+  (`GET /api/company/applications/{id}/cv`, scoped by company).
+- Consent copy now discloses the employer CV visibility and the result-sharing
+  rule. Tests: `backend/tests/test_cv_sharing.py`.
+
 - **Admin identity-review queue** (`Admin Console → CV identity review`): lists
   mismatched CVs with the detected signal, account email match and name
   similarity, and records a reasoned cleared / needs-review / escalated
@@ -69,5 +84,5 @@ cd backend && python -m pytest -q tests --cov=. --cov-fail-under=60
 cd frontend && npm run lint && npm run build
 ```
 
-Latest local run: **122 passed, 1 skipped**, coverage **69%**; frontend lint
+Latest local run: **125 passed, 1 skipped**, coverage **71%**; frontend lint
 **0 errors**; production build succeeds.

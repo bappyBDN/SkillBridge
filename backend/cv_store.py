@@ -48,6 +48,13 @@ SCHEMA = [
         source_location TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'pending_review', created REAL NOT NULL, reviewed_at REAL)""",
     "CREATE INDEX IF NOT EXISTS idx_cv_extractions_user ON cv_extractions(user_id, document_id, status)",
+    # The viewable PDF is kept in the database so admin and recruiter review never
+    # depend on ephemeral container storage (SB feature request: store the CV).
+    """CREATE TABLE IF NOT EXISTS cv_files(
+        document_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
+        content_type TEXT NOT NULL DEFAULT 'application/pdf',
+        size_bytes INTEGER NOT NULL, data BYTEA NOT NULL, created REAL NOT NULL)""",
+    "CREATE INDEX IF NOT EXISTS idx_cv_files_user ON cv_files(user_id, created)",
 ]
 
 
@@ -70,8 +77,15 @@ def _ext(filename: str) -> str:
     return m.group(1).lower() if m else ""
 
 
-def save_document(user_id: int, filename: str, data: bytes) -> dict:
-    """Store the original file, then record it. If the DB insert fails the file is removed again."""
+def save_document(user_id: int, filename: str, data: bytes, *, text: str | None = None,
+                  pdf_bytes: bytes | None = None) -> dict:
+    """Store the original file and a viewable PDF.
+
+    The original goes to the configured storage backend; the PDF used for
+    admin/recruiter review is written into the ``cv_files`` database table so it
+    survives an ephemeral container filesystem. If the DB insert fails the stored
+    file is removed again.
+    """
     m = _m()
     storage = get_storage()
     doc_id = uuid.uuid4().hex
@@ -85,11 +99,70 @@ def save_document(user_id: int, filename: str, data: bytes) -> dict:
               "VALUES (?,?,?,?,?,?,?,?,?,?)",
               (doc_id, user_id, (filename or "cv")[:200], content_type, len(data),
                hashlib.sha256(data).hexdigest(), storage.name, key, "uploaded", time.time()))
+        if pdf_bytes is None:
+            if ext == ".pdf" and data.startswith(b"%PDF-"):
+                pdf_bytes = data
+            else:
+                import pdf as pdf_module
+                pdf_bytes = pdf_module.text_to_pdf(
+                    text if text is not None else (data.decode("utf8", "ignore") if ext in (".txt", ".md") else ""),
+                    title=(filename or "Curriculum Vitae")[:120],
+                )
+        save_pdf(user_id, doc_id, pdf_bytes)
     except Exception:
         storage.delete(key)
         raise
     _prune_old_documents(user_id)
     return get_document(user_id, doc_id)
+
+
+def save_pdf(user_id: int, document_id: str, data: bytes) -> None:
+    """Store (or replace) the viewable PDF for one document."""
+    if not data or not data.startswith(b"%PDF-"):
+        raise ValueError("Not a PDF document")
+    m = _m()
+    existing = m.one("SELECT document_id FROM cv_files WHERE document_id=?", (document_id,))
+    if existing:
+        m.run("UPDATE cv_files SET user_id=?,size_bytes=?,data=?,created=? WHERE document_id=?",
+              (user_id, len(data), data, time.time(), document_id))
+    else:
+        m.run("INSERT INTO cv_files(document_id,user_id,content_type,size_bytes,data,created) VALUES (?,?,?,?,?,?)",
+              (document_id, user_id, "application/pdf", len(data), data, time.time()))
+
+
+def stored_pdf(user_id: int, document_id: str) -> Optional[bytes]:
+    row = _m().one("SELECT data FROM cv_files WHERE document_id=? AND user_id=?", (document_id, user_id))
+    if not row:
+        return None
+    return bytes(row["data"])
+
+
+def latest_pdf(user_id: int) -> Optional[dict]:
+    """Metadata + bytes of the newest stored PDF for a candidate."""
+    row = _m().one(
+        "SELECT d.id,d.filename,d.content_type,d.size_bytes,d.created,f.data "
+        "FROM cv_documents d JOIN cv_files f ON f.document_id=d.id "
+        "WHERE d.user_id=? ORDER BY d.created DESC LIMIT 1",
+        (user_id,),
+    )
+    if not row:
+        return None
+    item = dict(row)
+    item["data"] = bytes(item["data"])
+    return item
+
+
+def latest_pdf_for_document(user_id: int, document_id: str) -> Optional[dict]:
+    row = _m().one(
+        "SELECT d.id,d.filename,d.size_bytes,d.created,f.data FROM cv_documents d "
+        "JOIN cv_files f ON f.document_id=d.id WHERE d.user_id=? AND d.id=?",
+        (user_id, document_id),
+    )
+    if not row:
+        return None
+    item = dict(row)
+    item["data"] = bytes(item["data"])
+    return item
 
 
 def get_document(user_id: int, doc_id: str) -> Optional[dict]:
@@ -126,6 +199,7 @@ def _delete_document_rows(user_id: int, doc: dict) -> None:
         get_storage().delete(doc["storage_key"])
     except StorageError:
         pass  # a missing/unreachable file must not block deleting the database record
+    m.run("DELETE FROM cv_files WHERE document_id=? AND user_id=?", (doc["id"], user_id))
     m.run("DELETE FROM cv_extractions WHERE document_id=? AND user_id=?", (doc["id"], user_id))
     m.run("DELETE FROM cv_documents WHERE id=? AND user_id=?", (doc["id"], user_id))
 
@@ -141,6 +215,7 @@ def delete_user_documents(user_id: int) -> int:
     rows = _m().allr("SELECT * FROM cv_documents WHERE user_id=?", (user_id,))
     for r in rows:
         _delete_document_rows(user_id, dict(r))
+    _m().run("DELETE FROM cv_files WHERE user_id=?", (user_id,))
     _m().run("DELETE FROM cv_extractions WHERE user_id=?", (user_id,))
     return len(rows)
 

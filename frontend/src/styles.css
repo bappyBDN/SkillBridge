@@ -1814,3 +1814,32 @@ body.exam-live .candidate-page > .journey-content{padding:0;border:0;background:
 .ad-identity-actions input{padding:8px 10px;border:1px solid #dde6e2;border-radius:8px;font:inherit;font-size:.72rem}
 .ad-identity-actions .row{display:flex;gap:6px;flex-wrap:wrap}
 .ad-loading{padding:26px;text-align:center;color:#7c8d87;font-size:.78rem}
+
+/* ---------- candidate record modal + shared CV / passport cards ---------- */
+.ad-candidate-modal{width:min(880px,94vw);max-height:90vh;overflow:auto;background:#fbfdfc;border-radius:18px;box-shadow:0 30px 80px rgba(10,40,35,.28);padding:22px 24px 28px}
+.ad-candidate-modal>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #e3ebe7;padding-bottom:14px;margin-bottom:16px}
+.ad-candidate-modal>header h2{margin:4px 0 2px;font-size:1.2rem;color:#123a34}
+.ad-candidate-modal>header p{margin:0;color:#6b7f78;font-size:.75rem}
+.ad-candidate-modal>header button{border:0;background:#eef3f1;color:#33564e;width:32px;height:32px;border-radius:9px;font-size:1rem;cursor:pointer}
+.ad-candidate-body{display:grid;gap:18px}
+.ad-candidate-body section h3{margin:0 0 8px;font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:#5c7a71}
+.ad-cv-card{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 16px;border:1px solid #dde8e3;border-radius:12px;background:#fff}
+.ad-cv-card strong{display:block;color:#173b35;font-size:.82rem}
+.ad-cv-card small{display:block;margin-top:3px;color:#7b8d86;font-size:.68rem}
+.ad-doc-list{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:8px}
+.ad-doc-list li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border:1px solid #e3ebe7;border-radius:9px;font-size:.72rem;color:#4a665e;background:#fff}
+.ad-dl{display:grid;grid-template-columns:130px 1fr;gap:8px 14px;margin:0;font-size:.75rem}
+.ad-dl dt{color:#778a83;font-weight:700}
+.ad-dl dd{margin:0;color:#22443d}
+.ad-passport{display:grid;gap:8px;padding:14px 16px;border:1px solid #dde8e3;border-radius:12px;background:#fff;margin-bottom:10px}
+.ad-passport strong{color:#173b35;font-size:.85rem}
+.ad-passport small{color:#7b8d86;font-size:.68rem}
+.ad-passport a{font-size:.7rem;font-weight:700;color:#1f6b52;text-decoration:none}
+.cr-cv-row{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:13px 15px;border:1px solid #e0eae5;border-radius:12px;background:#fff}
+.cr-cv-row strong{display:block;color:#173b35;font-size:.8rem}
+.cr-cv-row small{display:block;margin-top:3px;color:#7d8f88;font-size:.68rem}
+.cr-passport-card{display:grid;gap:8px;padding:14px 16px;border:1px solid #e0eae5;border-radius:12px;background:#fff}
+.cr-passport-card strong{color:#173b35;font-size:.85rem}
+.cr-passport-card small{color:#7d8f88;font-size:.68rem}
+.cr-passport-link{font-size:.7rem;font-weight:750;color:#1f6b52;text-decoration:none}
+@media(max-width:600px){.ad-dl{grid-template-columns:1fr}.ad-candidate-modal{padding:16px}}

@@ -918,6 +918,9 @@ USER_DATA_REGISTRY = (
     ("user_roles", "user_id", "user_roles"),
     ("assessment_blueprints", "user_id", "assessment_blueprints"),
     ("cv_skill_nodes", "user_id", "cv_skill_nodes"),
+    ("cv_documents", "user_id", "cv_documents"),
+    ("cv_files", "user_id", "cv_files"),
+    ("cv_extractions", "user_id", "cv_extractions"),
     ("auth_sessions", "user_id", "sessions"),
     ("email_verifications", "user_id", "email_verifications"),
     ("identity_reviews", "user_id", "identity_reviews"),
@@ -985,6 +988,12 @@ def _registry_tables():
 def user_data_rows(uid) -> dict:
     data = {}
     for table, column, label in _registry_tables():
+        if table == "cv_files":
+            # Never inline binary PDF bytes into the JSON export; the document
+            # metadata below already describes what is stored.
+            columns = "document_id,user_id,content_type,size_bytes,created"
+            data[label] = [dict(r) for r in allr(f"SELECT {columns} FROM {table} WHERE {column}=?", (uid,))]
+            continue
         data[label] = [dict(r) for r in allr(f"SELECT * FROM {table} WHERE {column}=?", (uid,))]
     return data
 
@@ -2804,6 +2813,7 @@ async def upload_cv_profile(
             u["id"],
             filename,
             file_bytes,
+            text=raw_text,
         )
 
         cv_store.add_extractions(
@@ -2898,15 +2908,28 @@ async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None
     raw = raw.strip()
     if len(raw) < 30: raise HTTPException(422, "CV text is too short")
     document = None
+    import cv_store
+    from storage import StorageError
     if file_bytes is not None:
-        # Keep the original file (local disk now, S3-compatible bucket later - see storage.py).
-        import cv_store
-        from storage import StorageError
+        # Keep the original file and store the viewable PDF in the database.
         try:
-            document = cv_store.save_document(u["id"], file.filename or "cv", file_bytes)
+            document = cv_store.save_document(u["id"], file.filename or "cv", file_bytes, text=raw)
         except StorageError as ex:
             log.error("CV storage failed: %s", ex)
             raise HTTPException(503, "Could not store the CV file, please try again")
+        except ValueError as ex:
+            log.error("CV document rejected: %s", ex)
+            raise HTTPException(415, "Could not read that CV file")
+    else:
+        # Pasted CV text: store it as a document too, with a generated PDF so the
+        # admin and recruiter panels always have something to open.
+        try:
+            document = cv_store.save_document(
+                u["id"], "pasted-cv.txt", raw.encode("utf-8"), text=raw
+            )
+        except (StorageError, ValueError) as ex:
+            log.warning("Could not persist the pasted CV: %s", ex)
+            document = None
     redacted, counts = E.redact(raw[:30000], [u["name"]])
     # Identity is read from the raw CV, before redaction, and never stored as
     # raw PII: only the derived signal and masked identifiers are kept (SB-004).
@@ -2925,6 +2948,23 @@ async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None
             "identity": identity,
             "document": {k: document[k] for k in ("id", "filename", "size_bytes", "status")} if document else None,
             "taxonomy": [{"id": k, "name": v["name"]} for k, v in TAXONOMY.items()]}
+
+
+@app.get("/api/cv/file")
+def download_my_cv(document_id: Optional[str] = None, u=Depends(current_user)):
+    """Return the stored PDF of the candidate's CV (their own data)."""
+    import cv_store
+    doc = cv_store.latest_pdf_for_document(u["id"], document_id) if document_id else cv_store.latest_pdf(u["id"])
+    if not doc:
+        raise HTTPException(404, "No CV PDF is stored for this account")
+    return Response(
+        content=doc["data"],
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="skillbridge-cv.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 IDENTITY_CONFIRMATION = (

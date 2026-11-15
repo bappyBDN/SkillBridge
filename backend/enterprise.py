@@ -1289,6 +1289,140 @@ def company_analytics(user=Depends(current_user)):
     return {"totals": totals, "stages": [dict(r) for r in stages], "jobs": [dict(r) for r in job_performance]}
 
 
+@router.get("/api/admin/candidates/{user_id}")
+def admin_candidate_detail(user_id: int, user=Depends(current_user)):
+    """Everything an administrator needs to review one candidate in one place."""
+    require_role(user, "admin")
+    target = one("SELECT id,name,email,created,email_verified,mfa_enabled FROM users WHERE id=?", (user_id,))
+    if not target:
+        raise HTTPException(404, "Candidate not found")
+    roles = [r["role"] for r in allr("SELECT role FROM user_roles WHERE user_id=?", (user_id,))]
+    profile_row = one("SELECT * FROM candidate_profiles WHERE user_id=?", (user_id,))
+    profile = dict(profile_row) if profile_row else None
+    if profile:
+        for key in ("skills", "experience", "projects", "education", "certifications",
+                    "achievements", "languages", "profile_references", "volunteer", "preferences"):
+            if key in profile and isinstance(profile[key], str):
+                try:
+                    profile[key] = json.loads(profile[key] or "[]")
+                except (TypeError, ValueError):
+                    profile[key] = [] if key != "preferences" else {}
+    journey = one("SELECT redacted,extracted,source,confirmed,identity FROM profiles WHERE user_id=?", (user_id,))
+    journey_view = {}
+    if journey:
+        journey_view = {"source": journey["source"], "redacted_preview": (journey["redacted"] or "")[:2000]}
+        for key in ("extracted", "confirmed", "identity"):
+            try:
+                journey_view[key] = json.loads(journey[key]) if journey[key] else None
+            except (TypeError, ValueError):
+                journey_view[key] = None
+
+    import cv_store
+    documents = cv_store.list_documents(user_id)
+    latest_pdf = cv_store.latest_pdf(user_id)
+
+    attempts = []
+    for row in allr("SELECT id,kind,status,started,finished,result FROM attempts WHERE user_id=? "
+                    "ORDER BY finished DESC, started DESC", (user_id,)):
+        result = {}
+        if row["result"]:
+            try:
+                result = json.loads(row["result"])
+            except (TypeError, ValueError):
+                result = {}
+        review = one("SELECT decision,reason FROM admin_attempt_reviews WHERE attempt_id=?", (row["id"],))
+        attempts.append({
+            "attempt_id": row["id"], "kind": row["kind"], "status": row["status"],
+            "started": row["started"], "finished": row["finished"],
+            "overall": result.get("overall"), "level": result.get("level"),
+            "trust": result.get("trust"), "topics": result.get("topics", {}),
+            "review": dict(review) if review else None,
+        })
+
+    passports = []
+    for row in allr("SELECT id,payload,created,revoked FROM passports WHERE user_id=? ORDER BY created DESC", (user_id,)):
+        payload = {}
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        passports.append({
+            "pid": row["id"], "created": row["created"], "revoked": bool(row["revoked"]),
+            "issued": payload.get("issued"), "expires": payload.get("expires"),
+            "holder": payload.get("holder"), "skills": payload.get("skills", []),
+            "uplift": payload.get("uplift"), "public_url": f"/#/p/{row['id']}",
+        })
+
+    applications = [dict(r) for r in allr(
+        "SELECT a.id,a.status,a.results_shared,a.created,j.title AS job_title,c.name AS company_name "
+        "FROM applications a JOIN jobs j ON j.id=a.job_id JOIN companies c ON c.id=j.company_id "
+        "WHERE a.candidate_id=? ORDER BY a.created DESC", (user_id,))]
+
+    audit(user["id"], "admin_candidate_viewed", user_id)
+    return {
+        "user": {**dict(target), "roles": roles},
+        "profile": profile,
+        "journey": journey_view,
+        "cv": {
+            "documents": documents,
+            "has_pdf": bool(latest_pdf),
+            "filename": latest_pdf["filename"] if latest_pdf else None,
+            "size_bytes": latest_pdf["size_bytes"] if latest_pdf else None,
+            "uploaded": latest_pdf["created"] if latest_pdf else None,
+            "pdf_url": f"/api/admin/candidates/{user_id}/cv" if latest_pdf else None,
+        },
+        "attempts": attempts,
+        "passports": passports,
+        "applications": [{**a, "results_shared": bool(a["results_shared"])} for a in applications],
+    }
+
+
+@router.get("/api/admin/candidates/{user_id}/cv")
+def admin_candidate_cv(user_id: int, document_id: Optional[str] = None, user=Depends(current_user)):
+    """Stream the stored PDF of a candidate's CV to an administrator."""
+    require_role(user, "admin")
+    import cv_store
+    doc = (cv_store.latest_pdf_for_document(user_id, document_id) if document_id
+           else cv_store.latest_pdf(user_id))
+    if not doc:
+        raise HTTPException(404, "No CV PDF is stored for this candidate")
+    audit(user["id"], "admin_cv_viewed", f"{user_id}:{doc['id']}")
+    return Response(
+        content=doc["data"],
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="cv-{user_id}-{doc["id"][:8]}.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.get("/api/company/applications/{application_id}/cv")
+def company_application_cv(application_id: str, user=Depends(current_user)):
+    """A company may read the CV of a candidate who applied to its own job."""
+    company = company_for_access(user)
+    require_company_permission(user, company, "owner", "recruiter", "hiring_manager")
+    if not company["verified"]:
+        raise HTTPException(403, "Company verification is required before accessing applicant records")
+    row = one("""SELECT a.candidate_id FROM applications a JOIN jobs j ON j.id=a.job_id
+                 WHERE a.id=? AND j.company_id=?""", (application_id, company["id"]))
+    if not row:
+        raise HTTPException(404, "Application not found")
+    import cv_store
+    doc = cv_store.latest_pdf(row["candidate_id"])
+    if not doc:
+        raise HTTPException(404, "This candidate has not uploaded a CV")
+    audit(user["id"], "company_cv_viewed", f"{application_id}:{doc['id']}")
+    return Response(
+        content=doc["data"],
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="application-{application_id[:8]}-cv.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @router.get("/api/company/applications/{application_id}")
 def company_application_detail(application_id: str, user=Depends(current_user)):
     company = company_for_access(user)
@@ -1303,6 +1437,17 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
         raise HTTPException(404, "Application not found")
     item = dict(row)
     item["results_shared"] = bool(item["results_shared"])
+    import cv_store
+    cv_doc = cv_store.latest_pdf(item["candidate_id"])
+    # The candidate applied to this company's job, so their CV is available to
+    # this workspace only (never to other companies).
+    item["candidate_cv"] = {
+        "available": bool(cv_doc),
+        "filename": cv_doc["filename"] if cv_doc else None,
+        "uploaded": cv_doc["created"] if cv_doc else None,
+        "url": f"/api/company/applications/{application_id}/cv" if cv_doc else None,
+    }
+    item["passport"] = None
     item["required_skills"] = json.loads(item.pop("job_skills") or "[]")
     item["assessment_history"] = []
     item["candidate_skills"] = []
@@ -1361,6 +1506,25 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
         for skill in item["candidate_skills"]:
             summary[skill["status"]] = summary.get(skill["status"], 0) + 1
         item["skill_evidence_summary"] = summary
+        passport_row = one(
+            "SELECT id,payload,created,revoked FROM passports WHERE user_id=? ORDER BY created DESC LIMIT 1",
+            (item["candidate_id"],),
+        )
+        if passport_row and not passport_row["revoked"]:
+            payload = {}
+            try:
+                payload = json.loads(passport_row["payload"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            item["passport"] = {
+                "pid": passport_row["id"],
+                "issued": payload.get("issued"),
+                "expires": payload.get("expires"),
+                "holder": payload.get("holder"),
+                "skills": payload.get("skills", []),
+                "uplift": payload.get("uplift"),
+                "public_url": f"/#/p/{passport_row['id']}",
+            }
     else:
         item["candidate_skills"] = [
             {"required": name, "skill_ids": [], "status": "not_shared", "score": None,
@@ -1375,8 +1539,9 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
     item["notes"] = [dict(n) for n in notes] if company_role_for(user, company) in ("owner", "recruiter", "hiring_manager") else []
     item["history"] = [dict(h) for h in history]
     item["profile_visibility"] = (
-        "Skill evidence is shown only because the candidate shared results for this application. "
-        "Contact details, CV files and free-text profile fields remain private."
+        "CV and profile details are shown because the candidate applied to this company's job. "
+        "Assessment scores and the Skill Passport are shown only because the candidate shared results "
+        "for this application."
     )
     return item
 

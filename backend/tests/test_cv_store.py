@@ -345,9 +345,15 @@ def test_upload_stores_file_and_row():
     assert cv_store.read_document_bytes(uid, doc["id"]) == CV
     row = cv_store.get_document(uid, doc["id"])
     assert row["storage_backend"] == "local" and "my cv" not in row["storage_key"]
-    # pasted text has no original file -> no document row
+    # The viewable PDF is stored in the database for admin/recruiter review.
+    pdf_bytes = cv_store.latest_pdf(uid)["data"]
+    assert pdf_bytes.startswith(b"%PDF-")
+    # Pasted text is stored as a document too, with a generated PDF.
     r2 = client.post("/api/cv", data={"text": CV.decode()}, headers=h)
-    assert r2.status_code == 200 and r2.json()["document"] is None
+    assert r2.status_code == 200
+    pasted = r2.json()["document"]
+    assert pasted and pasted["filename"] == "pasted-cv.txt"
+    assert cv_store.latest_pdf_for_document(uid, pasted["id"])["data"].startswith(b"%PDF-")
 
 
 def test_owner_isolation():
