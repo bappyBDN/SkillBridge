@@ -3,6 +3,8 @@ import { api, getToken, setToken } from "./api.js";
 import { LangCtx, LangSetCtx, useT, useSetLang, useLangValue } from "./i18n.js";
 import CandidateProfileWorkspace from "./CandidateProfileWorkspace.jsx";
 import Avatar, { useAvatar } from "./Avatar.jsx";
+import SecurityPanel from "./SecurityPanel.jsx";
+import { useConsoleT } from "./consoleI18n.js";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
@@ -5283,7 +5285,158 @@ function ProfileJourneyRouter({ st, refresh, onEditProfile, tick, setTick, done,
 }
 
 /* ---------- platform administration ---------- */
+function IdentityReviewQueue({ A, onFlash, onError }) {
+  const I = A.identity;
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [notes, setNotes] = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await api("/admin/identity-reviews");
+      setItems(result.items || []);
+    } catch (e) {
+      onError?.(e.message || "Could not load identity reviews.");
+    } finally {
+      setLoading(false);
+    }
+  }, [onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const decide = async (id, decision) => {
+    setBusyId(id);
+    try {
+      await api("/admin/identity-reviews/" + encodeURIComponent(id) + "/decision", {
+        method: "POST",
+        body: { decision, note: notes[id] || "" },
+      });
+      onFlash?.(I.decided);
+      await load();
+    } catch (e) {
+      onError?.(e.message || "Could not save that decision.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const signalLabel = (value) => I.signals[value] || value || "—";
+
+  return (
+    <section className="ad-panel">
+      <div className="ad-panel-head">
+        <div>
+          <h2>{I.title}</h2>
+          <p>{I.subtitle}</p>
+        </div>
+        <span className="ad-count">
+          {items.filter((x) => x.status === "open").length} {I.statuses.open}
+        </span>
+      </div>
+      {loading ? (
+        <div className="ad-loading">{A.loading || "Loading…"}</div>
+      ) : (
+        <div className="ad-table-wrap">
+          <table className="ad-table">
+            <thead>
+              <tr>
+                <th>{I.account}</th>
+                <th>{I.cvName}</th>
+                <th>{I.status}</th>
+                <th>{I.emailMatch}</th>
+                <th>{I.similarity}</th>
+                <th>{I.submitted}</th>
+                <th>{I.decision}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => {
+                const signal = item.signal || {};
+                const pending = item.status === "open";
+                return (
+                  <tr key={item.id}>
+                    <td>
+                      <b>{item.account_name}</b>
+                      <small>{item.account_email}</small>
+                    </td>
+                    <td>{signal.cv_name || "—"}</td>
+                    <td>
+                      <span className={"ad-pill " + (signal.status || "")}>
+                        {signalLabel(signal.status)}
+                      </span>
+                      <small>{I.statuses[item.status] || item.status}</small>
+                    </td>
+                    <td>{signal.email_match ? A.yes : A.no}</td>
+                    <td>
+                      {typeof signal.score === "number"
+                        ? Math.round(signal.score * 100) + "%"
+                        : "—"}
+                    </td>
+                    <td>
+                      {item.created
+                        ? new Date(item.created * 1000).toLocaleString()
+                        : "—"}
+                    </td>
+                    <td>
+                      {pending ? (
+                        <div className="ad-identity-actions">
+                          <input
+                            value={notes[item.id] || ""}
+                            onChange={(e) =>
+                              setNotes((current) => ({ ...current, [item.id]: e.target.value }))
+                            }
+                            placeholder={I.notePlaceholder}
+                          />
+                          <div className="row">
+                            <button
+                              type="button"
+                              className="btn sm"
+                              disabled={busyId === item.id}
+                              onClick={() => decide(item.id, "cleared")}
+                            >
+                              {I.clear}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={busyId === item.id}
+                              onClick={() => decide(item.id, "needs_review")}
+                            >
+                              {I.review}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={busyId === item.id}
+                              onClick={() => decide(item.id, "escalated")}
+                            >
+                              {I.escalate}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="muted">{item.note || I.statuses[item.status]}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!items.length && <div className="ad-empty">{I.empty}</div>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AdminConsole({ onLogout }) {
+  const C = useConsoleT();
+  const A = C.admin;
   const [page, setPage] = useState("overview");
   const [adminRole, setAdminRole] = useState("super_admin");
   const [data, setData] = useState({});
@@ -5302,6 +5455,7 @@ function AdminConsole({ onLogout }) {
     admin_role: "support_agent",
   });
   const [creatingAdmin, setCreatingAdmin] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
   const [integrityDetail, setIntegrityDetail] = useState(null),
     [integrityLoading, setIntegrityLoading] = useState(false);
   const [honestyDraft, setHonestyDraft] = useState({ score: "", reason: "" });
@@ -5351,21 +5505,23 @@ function AdminConsole({ onLogout }) {
   const [stagingSelected, setStagingSelected] = useState({}),
     [stagingBusy, setStagingBusy] = useState(false);
   const nav = [
-    ["overview", "Overview", "⌂"],
-    ["users", "Users & accounts", "♙"],
-    ["staff", "Admin staff & roles", "♜"],
-    ["companies", "Company verification", "▣"],
-    ["jobs", "Job moderation", "▤"],
-    ["assessments", "Assessment reviews", "◎"],
-    ["integrity", "Exam integrity", "◈"],
-    ["appeals", "Candidate appeals", "⚑"],
-    ["questions", "Question governance", "◇"],
-    ["learning", "Learning & retakes", "↗"],
-    ["ai", "AI operations", "✳"],
-    ["billing", "Billing", "৳"],
-    ["privacy", "Privacy & compliance", "◈"],
-    ["quality", "Fairness & quality", "▥"],
-    ["audit", "Audit trail", "≋"],
+    ["overview", A.nav.overview, "⌂"],
+    ["users", A.nav.users, "♙"],
+    ["staff", A.nav.staff, "♜"],
+    ["companies", A.nav.companies, "▣"],
+    ["jobs", A.nav.jobs, "▤"],
+    ["assessments", A.nav.assessments, "◎"],
+    ["integrity", A.nav.integrity, "◈"],
+    ["identity", A.nav.identity, "⚑"],
+    ["appeals", A.nav.appeals, "⚑"],
+    ["questions", A.nav.questions, "◇"],
+    ["learning", A.nav.learning, "↗"],
+    ["ai", A.nav.ai, "✳"],
+    ["billing", A.nav.billing, "৳"],
+    ["privacy", A.nav.privacy, "◈"],
+    ["quality", A.nav.quality, "▥"],
+    ["audit", A.nav.audit, "≋"],
+    ["security", A.nav.security, "◈"],
   ];
   const load = async () => {
     setBusy(true);
@@ -5373,6 +5529,11 @@ function AdminConsole({ onLogout }) {
     try {
       const me = await api("/admin/console/me");
       setAdminRole(me.admin_role || "super_admin");
+      if (!adminEmail) {
+        api("/enterprise/me")
+          .then((identity) => setAdminEmail(identity?.user?.email || ""))
+          .catch(() => {});
+      }
     } catch (x) {
       setError(x.message || "Admin identity unavailable");
       setBusy(false);
@@ -6145,6 +6306,7 @@ function AdminConsole({ onLogout }) {
       "jobs",
       "assessments",
       "integrity",
+      "identity",
       "appeals",
       "questions",
       "learning",
@@ -6153,11 +6315,13 @@ function AdminConsole({ onLogout }) {
       "privacy",
       "quality",
       "audit",
+      "security",
     ],
     trust_safety_reviewer: [
       "users",
       "assessments",
       "integrity",
+      "identity",
       "appeals",
       "quality",
     ],
@@ -6191,13 +6355,13 @@ function AdminConsole({ onLogout }) {
         <div className="ad-brand">
           <span className="ad-brand-mark">S</span>
           <span>
-            SkillBridge<small>PLATFORM CONTROL</small>
+            SkillBridge<small>{A.brand}</small>
           </span>
         </div>
         <div className="ad-admin-label">
-          <span className="ad-online-dot" /> ADMIN CONSOLE
+          <span className="ad-online-dot" /> {A.label}
         </div>
-        <nav className="ad-nav" aria-label="Admin console">
+        <nav className="ad-nav" aria-label={A.navAria}>
           {visibleNav.map(([id, label, icon]) => (
             <button
               key={id}
@@ -6230,14 +6394,14 @@ function AdminConsole({ onLogout }) {
         <div className="ad-sidebar-bottom">
           <div className="ad-security-card">
             <span>◈</span>
-            <strong>Privileged workspace</strong>
-            <p>Admin actions are permission-checked and recorded.</p>
+            <strong>{A.privilegedTitle}</strong>
+            <p>{A.privilegedBody}</p>
           </div>
           <div className="ad-admin-profile">
             <div>SA</div>
             <span>
               <b>{adminRole.replaceAll("_", " ")}</b>
-              <small>Internal staff access</small>
+              <small>{A.internalAccess}</small>
             </span>
             <i>●</i>
           </div>
@@ -6246,27 +6410,27 @@ function AdminConsole({ onLogout }) {
             type="button"
             onClick={onLogout}
           >
-            ↪ Sign out of admin
+            {A.signOutAdmin}
           </button>
         </div>
       </aside>
       <main className="ad-main">
         <header className="ad-topbar">
           <div>
-            <span>Platform</span>
+            <span>{A.platform}</span>
             <b>/</b>
-            {current?.[1] || "Overview"}
+            {current?.[1] || A.nav.overview}
           </div>
           <div className="ad-top-actions">
             <span className="ad-secure-label">
-              <i /> Secure admin session
+              <i /> {A.secureSession}
             </span>
-            <button onClick={load} disabled={busy} title="Refresh data">
+            <button onClick={load} disabled={busy} title={C.common.refresh}>
               ↻
             </button>
             <span className="ad-top-avatar">SA</span>
             <button className="ad-signout" onClick={onLogout} type="button">
-              ↪ Sign out
+              ↪ {C.common.signOut}
             </button>
           </div>
         </header>
@@ -6285,82 +6449,55 @@ function AdminConsole({ onLogout }) {
           )}
           <div className="ad-page-heading">
             <div>
-              <div className="ad-eyebrow">
-                SKILLBRIDGE GLOBAL · PLATFORM OPERATIONS
-              </div>
+              <div className="ad-eyebrow">{A.title}</div>
               <h1>
-                {page === "overview" ? "Platform overview" : current?.[1]}
+                {page === "overview" ? A.overviewTitle : current?.[1]}
               </h1>
               <p>
-                {page === "overview"
-                  ? "A clear view of platform activity, trust queues and operational health."
-                  : {
-                      users:
-                        "Manage account access with reason-coded status changes.",
-                      companies:
-                        "Verify organisations before they can publish jobs or access applicants.",
-                      jobs: "Review reported and pending job posts with documented decisions.",
-                      assessments:
-                        "Review completed assessment evidence without altering original answers or scores.",
-                      appeals:
-                        "Handle candidate appeals with an auditable, reasoned outcome.",
-                      questions:
-                        "Inspect the curated assessment bank and its current governance limitations.",
-                      ai: "Monitor configured AI provider status and fallback behaviour.",
-                      billing:
-                        "Review billing module availability and integration readiness.",
-                      learning:
-                        "Verify learning resources, monitor candidate progress and govern retake credits.",
-                      privacy:
-                        "Review consent coverage and the current data-rights capabilities.",
-                      quality:
-                        "Monitor review outcomes and quality signals without protected-trait inference.",
-                      audit:
-                        "Search the immutable-style application audit event history.",
-                    }[page]}
+                {page === "overview" ? A.overviewDesc : A.desc[page]}
               </p>
             </div>
             <button className="ad-refresh" onClick={load} disabled={busy}>
-              {busy ? "Refreshing…" : "↻ Refresh data"}
+              {busy ? C.common.refreshing : C.common.refreshData}
             </button>
           </div>
           {page === "overview" && (
             <section>
               <div className="ad-metrics">
                 {metric(
-                  "Total accounts",
+                  A.metrics.totalAccounts,
                   counts.users,
-                  "Registered users",
+                  A.metrics.registeredUsers,
                   "♙",
                 )}
                 {metric(
-                  "Candidates",
+                  A.metrics.candidates,
                   counts.candidates,
-                  "Individual accounts",
+                  A.metrics.individualAccounts,
                   "◎",
                 )}
                 {metric(
-                  "Companies",
+                  A.metrics.companies,
                   counts.companies,
-                  counts.verified_companies + " verified",
+                  counts.verified_companies + " " + A.metrics.verifiedCount,
                   "▣",
                 )}
                 {metric(
-                  "Published jobs",
+                  A.metrics.publishedJobs,
                   counts.published_jobs,
-                  counts.pending_jobs + " awaiting review",
+                  counts.pending_jobs + " " + A.metrics.awaitingReview,
                   "▤",
                 )}
                 {metric(
-                  "Applications",
+                  A.metrics.applications,
                   counts.applications,
-                  "Submitted applications",
+                  A.metrics.submittedApplications,
                   "↗",
                 )}
                 {metric(
-                  "Completed assessments",
+                  A.metrics.completed,
                   counts.completed_attempts,
-                  counts.open_appeals + " open appeals",
+                  counts.open_appeals + " " + A.metrics.openAppeals,
                   "✓",
                 )}
               </div>
@@ -6368,31 +6505,31 @@ function AdminConsole({ onLogout }) {
                 <div className="ad-panel">
                   <div className="ad-panel-head">
                     <div>
-                      <h2>Needs attention</h2>
-                      <p>Queues that may require an administrator</p>
+                      <h2>{A.needsAttention}</h2>
+                      <p>{A.needsAttentionSub}</p>
                     </div>
-                    <span className="ad-live-tag">LIVE DATA</span>
+                    <span className="ad-live-tag">{A.liveData}</span>
                   </div>
                   {[
                     [
-                      "Company verification",
+                      A.queues.companyVerification,
                       counts.pending_companies,
                       "companies",
                       "companies",
                     ],
-                    ["Job moderation", counts.pending_jobs, "posts", "jobs"],
+                    [A.queues.jobReview, counts.pending_jobs, "posts", "jobs"],
                     [
-                      "Assessment appeals",
+                      A.queues.appeals,
                       counts.open_appeals,
                       "appeals",
                       "appeals",
                     ],
                     [
-                      "Phase-two requests",
-                      rows("phaseTwo").filter(
-                        (x) => x.status === "pending_platform_review",
+                      A.queues.assessmentReview,
+                      (data.assessments?.items || []).filter(
+                        (x) => !x.review_decision,
                       ).length,
-                      "requests",
+                      "reviews",
                       "assessments",
                     ],
                   ].map(([label, n, unit, target]) => (
@@ -8866,6 +9003,12 @@ function AdminConsole({ onLogout }) {
               )}
             </section>
           )}
+          {page === "identity" && (
+            <IdentityReviewQueue A={{ ...A, loading: C.common.loading }} onFlash={flash} onError={setError} />
+          )}
+          {page === "security" && (
+            <SecurityPanel S={A.security} email={adminEmail} />
+          )}
           {busy && <div className="ad-loading">Syncing platform data…</div>}
           <footer className="ad-footer">
             <span>SkillBridge Global · Admin Console</span>
@@ -9906,7 +10049,10 @@ function AdminConsole({ onLogout }) {
 }
 
 function HiringWorkspace({ role, onLogout }) {
+  const C = useConsoleT();
+  const CO = C.company;
   const [page, setPage] = useState("overview");
+  const [companyEmail, setCompanyEmail] = useState("");
   const [workspace, setWorkspace] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [applications, setApplications] = useState([]);
@@ -10024,6 +10170,11 @@ function HiringWorkspace({ role, onLogout }) {
       setWorkspace(w);
       setCompanyName(w.company.name);
       setWebsite(w.company.website || "");
+      if (!companyEmail) {
+        api("/enterprise/me")
+          .then((identity) => setCompanyEmail(identity?.user?.email || ""))
+          .catch(() => {});
+      }
       const j = await api("/company/jobs");
       setJobs(j.items || []);
       const optional = [];
@@ -10315,30 +10466,31 @@ function HiringWorkspace({ role, onLogout }) {
     }
   };
   const nav = [
-    ["overview", "Overview", "⌂"],
-    ["jobs", "Jobs", "▤"],
-    ...(canManagePipeline ? [["applicants", "Applicants", "♙"]] : []),
-    ["assessments", "Assessments", "◎"],
-    ["analytics", "Analytics", "▥"],
-    ...(canManageTeam ? [["team", "Team", "♧"]] : []),
-    ["settings", "Company settings", "⚙"],
+    ["overview", CO.nav.overview, "⌂"],
+    ["jobs", CO.nav.jobs, "▤"],
+    ...(canManagePipeline ? [["applicants", CO.nav.applicants, "♙"]] : []),
+    ["assessments", CO.nav.assessments, "◎"],
+    ["analytics", CO.nav.analytics, "▥"],
+    ...(canManageTeam ? [["team", CO.nav.team, "♧"]] : []),
+    ["settings", CO.nav.settings, "⚙"],
+    ["security", CO.nav.security, "◈"],
   ];
   const stages = [
-    ["submitted", "Applied"],
-    ["preliminary_assessment", "Preliminary"],
-    ["in_review", "In review"],
-    ["phase_two_invited", "Phase two"],
-    ["further_review", "Further review"],
-    ["human_interview", "Interview"],
-    ["on_hold", "On hold"],
-    ["offer", "Offer"],
-    ["offer_declined", "Offer declined"],
-    ["offer_withdrawn", "Offer withdrawn"],
-    ["hired", "Hired"],
-    ["rejected", "Rejected"],
-    ["withdrawn", "Withdrawn"],
-    ["closed", "Closed"],
-  ];
+    ["submitted"],
+    ["preliminary_assessment"],
+    ["in_review"],
+    ["phase_two_invited"],
+    ["further_review"],
+    ["human_interview"],
+    ["on_hold"],
+    ["offer"],
+    ["offer_declined"],
+    ["offer_withdrawn"],
+    ["hired"],
+    ["rejected"],
+    ["withdrawn"],
+    ["closed"],
+  ].map(([id]) => [id, CO.stages[id] || id]);
   const stageTransitions = {
     submitted: ["preliminary_assessment", "in_review", "withdrawn"],
     preliminary_assessment: [
@@ -10387,16 +10539,12 @@ function HiringWorkspace({ role, onLogout }) {
           skillbridge<span>.</span>
         </div>
         <section className="cr-onboard-card">
-          <div className="cr-kicker">COMPANY WORKSPACE · SETUP</div>
-          <h1>Build your hiring workspace.</h1>
-          <p>
-            Create your organisation profile to start drafting roles and
-            inviting your team. Public jobs and real applicant access require
-            company verification.
-          </p>
+          <div className="cr-kicker">{CO.onboarding.kicker}</div>
+          <h1>{CO.onboarding.title}</h1>
+          <p>{CO.onboarding.body}</p>
           <form onSubmit={saveCompany}>
             <label>
-              Company / organisation name
+              {CO.onboarding.companyName}
               <input
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
@@ -10406,7 +10554,7 @@ function HiringWorkspace({ role, onLogout }) {
               />
             </label>
             <label>
-              Company website
+              {CO.onboarding.website}
               <input
                 value={website}
                 onChange={(e) => setWebsite(e.target.value)}
@@ -10414,7 +10562,7 @@ function HiringWorkspace({ role, onLogout }) {
               />
             </label>
             <button className="cr-primary" disabled={busy}>
-              Create company workspace <span>→</span>
+              {CO.onboarding.create} <span>→</span>
             </button>
           </form>
           <div className="cr-onboard-divider">
@@ -10457,7 +10605,7 @@ function HiringWorkspace({ role, onLogout }) {
           <span className="cr-brand-mark">s</span>
           <span>
             skillbridge<span className="cr-brand-dot">.</span>
-            <small>HIRING WORKSPACE</small>
+            <small>{CO.brand}</small>
           </span>
         </div>
         <div className="cr-org">
@@ -10468,14 +10616,14 @@ function HiringWorkspace({ role, onLogout }) {
             <strong>{workspace?.company?.name || "Your organisation"}</strong>
             <small>
               {workspace?.company?.role === "owner"
-                ? "Organisation owner"
+                ? CO.owner
                 : workspace?.company?.role?.replace("_", " ")}
             </small>
           </div>
           <span className="cr-chevron">⌄</span>
         </div>
-        <div className="cr-nav-label">WORKSPACE</div>
-        <nav className="cr-nav" aria-label="Company workspace">
+        <div className="cr-nav-label">{CO.workspace}</div>
+        <nav className="cr-nav" aria-label={CO.navAria}>
           {nav.map(([id, label, icon]) => (
             <button
               key={id}
@@ -10500,18 +10648,18 @@ function HiringWorkspace({ role, onLogout }) {
         <div className="cr-sidebar-bottom">
           <div className="cr-help-card">
             <span>✦</span>
-            <strong>Hiring with evidence</strong>
-            <p>Review verified skills, not opaque AI scores.</p>
+            <strong>{CO.helpTitle}</strong>
+            <p>{CO.helpBody}</p>
           </div>
           <div className="cr-user">
             <div className="cr-user-avatar">
               {initials(workspace?.company?.name)}
             </div>
             <div>
-              <strong>{workspace?.company?.role || "Team member"}</strong>
-              <small>Company account</small>
+              <strong>{workspace?.company?.role || CO.teamMember}</strong>
+              <small>{CO.companyAccount}</small>
             </div>
-            <button title="Refresh workspace" onClick={load}>
+            <button title={C.common.refresh} onClick={load}>
               ↻
             </button>
           </div>
@@ -10520,18 +10668,18 @@ function HiringWorkspace({ role, onLogout }) {
       <main className="cr-main">
         <header className="cr-topbar">
           <div className="cr-breadcrumb">
-            Workspace <span>/</span>{" "}
-            {nav.find((x) => x[0] === page)?.[1] || "Overview"}
+            {CO.breadcrumb} <span>/</span>{" "}
+            {nav.find((x) => x[0] === page)?.[1] || CO.nav.overview}
           </div>
           <div className="cr-top-actions">
             <span className="cr-secure">
-              <i /> Private company workspace
+              <i /> {CO.privateWorkspace}
             </span>
             <button
               className="cr-icon-btn"
               onClick={load}
-              title="Refresh"
-              aria-label="Refresh workspace"
+              title={C.common.refresh}
+              aria-label={C.common.refresh}
             >
               ↻
             </button>
@@ -10539,7 +10687,7 @@ function HiringWorkspace({ role, onLogout }) {
               {initials(workspace?.company?.name)}
             </div>
             <button type="button" className="cr-logout-btn" onClick={onLogout}>
-              <span aria-hidden="true">↪</span> Log out
+              <span aria-hidden="true">↪</span> {CO.logOut}
             </button>
           </div>
         </header>
@@ -10561,11 +10709,11 @@ function HiringWorkspace({ role, onLogout }) {
           {workspace?.verification?.status !== "verified" && (
             <div className="cr-verification-banner">
               <div>
-                <strong>Complete company verification</strong>
+                <strong>{CO.verification.title}</strong>
                 <span>
                   {workspace?.verification?.status === "pending_review"
-                    ? "Your organisation is awaiting review."
-                    : "Verify your organisation to publish jobs and access applicant workflows."}
+                    ? CO.verification.pending
+                    : CO.verification.required}
                 </span>
               </div>
               <button
@@ -10574,7 +10722,7 @@ function HiringWorkspace({ role, onLogout }) {
                   setVerificationForm(true);
                 }}
               >
-                Review status →
+                {CO.verification.review}
               </button>
             </div>
           )}
@@ -10582,9 +10730,9 @@ function HiringWorkspace({ role, onLogout }) {
             <section>
               <div className="cr-page-heading">
                 <div>
-                  <div className="cr-kicker">YOUR HIRING OVERVIEW</div>
-                  <h1>Good to see you back.</h1>
-                  <p>Here’s what’s happening across your hiring workspace.</p>
+                  <div className="cr-kicker">{CO.overviewKicker}</div>
+                  <h1>{CO.overviewTitle}</h1>
+                  <p>{CO.overviewSub}</p>
                 </div>
                 <button
                   className="cr-primary"
@@ -11925,6 +12073,9 @@ function HiringWorkspace({ role, onLogout }) {
                 </form>
               )}
             </section>
+          )}
+          {page === "security" && (
+            <SecurityPanel S={CO.security} email={companyEmail} />
           )}
           {busy && <div className="cr-loading">Refreshing workspace…</div>}
         </div>

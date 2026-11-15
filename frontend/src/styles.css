@@ -1785,3 +1785,32 @@ body.exam-live .candidate-page > .journey-content{padding:0;border:0;background:
 .sb-hint{display:block;margin-top:7px;font-size:.68rem;line-height:1.55;color:#7c8b85}
 .sb-notice{margin:4px 0 0;padding:10px 12px;border-radius:10px;background:#eaf5ee;color:#285f42;font-size:.72rem;line-height:1.55}
 .sb-auth-form label .err{display:block;margin-top:6px}
+
+/* ---------- account security panel + identity review (SB-003, SB-004) ---------- */
+.sec-panel{display:grid;gap:16px}
+.sec-panel>header h2{margin:0;font-size:1.15rem;color:#173b35}
+.sec-panel>header p{margin:6px 0 0;color:#6c7f78;font-size:.78rem;line-height:1.6}
+.sec-row{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.sec-row strong{display:block;font-size:.85rem;color:#173b35}
+.sec-row small{display:block;margin-top:4px;color:#7c8d87;font-size:.7rem;line-height:1.55}
+.sec-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#eef1ef;color:#5d6f68;font-size:.63rem;font-weight:750;letter-spacing:.04em;text-transform:uppercase}
+.sec-badge.on{background:#e4f4ea;color:#1f6b45}
+.sec-form{display:grid;gap:12px;margin-top:14px}
+.sec-form label{display:grid;gap:6px;font-size:.72rem;font-weight:700;color:#3c5a52}
+.sec-form input{padding:10px 12px;border:1px solid #d8e1dd;border-radius:9px;font:inherit;font-weight:500;color:#173b35;background:#fff}
+.sec-secret{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sec-secret code{flex:1;min-width:220px;padding:9px 12px;border-radius:9px;background:#f2f6f4;border:1px dashed #cbd9d3;font-size:.78rem;word-break:break-all}
+.sec-link{font-size:.72rem;font-weight:700;color:#1f6b52;text-decoration:none;border-bottom:1px solid rgba(31,107,82,.35);align-self:flex-start;padding-bottom:2px}
+.sec-codes{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.sec-codes code{padding:5px 9px;border-radius:7px;background:#f2f6f4;border:1px solid #dde7e2;font-size:.72rem}
+.sec-panel .card{padding:18px}
+.sec-panel .ad-table{margin-top:12px}
+.sec-panel .ad-table td .sec-badge{margin-left:8px}
+.ad-pill{display:inline-flex;padding:3px 8px;border-radius:999px;background:#eef1ef;color:#5d6f68;font-size:.6rem;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
+.ad-pill.match{background:#e4f4ea;color:#1f6b45}
+.ad-pill.weak{background:#fdf2df;color:#8a6116}
+.ad-pill.no_match{background:#fce9e8;color:#9b3a34}
+.ad-identity-actions{display:grid;gap:8px;min-width:240px}
+.ad-identity-actions input{padding:8px 10px;border:1px solid #dde6e2;border-radius:8px;font:inherit;font-size:.72rem}
+.ad-identity-actions .row{display:flex;gap:6px;flex-wrap:wrap}
+.ad-loading{padding:26px;text-align:center;color:#7c8d87;font-size:.78rem}

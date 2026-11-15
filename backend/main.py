@@ -839,6 +839,17 @@ def mfa_disable(b: Login, u=Depends(current_user)):
     return {"enabled": False}
 
 
+@app.get("/api/auth/mfa/status")
+def mfa_status(u=Depends(current_user)):
+    return {
+        "email": u["email"],
+        "enabled": bool(int(u["mfa_enabled"] or 0)),
+        "required": mfa_required_for(u),
+        "roles": sorted(_user_roles(u["id"])),
+        "recovery_codes_remaining": len(json.loads(u["mfa_recovery"] or "[]")) if u["mfa_recovery"] else 0,
+    }
+
+
 @app.post("/api/auth/logout")
 def logout(u=Depends(current_user)):
     revoke_session(u.get("_session_id"))

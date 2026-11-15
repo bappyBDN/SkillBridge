@@ -147,3 +147,57 @@ def test_mismatched_cv_requires_an_explicit_confirmation():
     review = main.one("SELECT * FROM identity_reviews WHERE user_id=(SELECT id FROM users WHERE email=?)",
                       ("identity@example.com",))
     assert review is not None
+
+
+def test_mfa_enrolment_activates_and_requires_the_code_at_login():
+    import security as SEC
+
+    _register("mfa@example.com")
+    headers = _headers(_token("mfa@example.com"))
+    status = client.get("/api/auth/mfa/status", headers=headers).json()
+    assert status["enabled"] is False
+    assert status["required"] is False
+
+    enroll = client.post("/api/auth/mfa/enroll", json={"email": "mfa@example.com", "password": STRONG})
+    assert enroll.status_code == 200
+    payload = enroll.json()
+    assert payload["secret"] and len(payload["recovery_codes"]) == 8
+
+    activate = client.post("/api/auth/mfa/activate", json={
+        "challenge": payload["challenge"],
+        "code": SEC.totp_code(payload["secret"]),
+    })
+    assert activate.status_code == 200
+    assert activate.json()["token"]
+
+    login = client.post("/api/auth/login", json={"email": "mfa@example.com", "password": STRONG})
+    assert login.json().get("mfa_required") is True
+    assert "token" not in login.json()
+
+    verified = client.post("/api/auth/mfa/verify", json={
+        "challenge": login.json()["challenge"],
+        "code": SEC.totp_code(payload["secret"]),
+    })
+    assert verified.status_code == 200 and verified.json()["token"]
+
+
+def test_admin_can_clear_an_identity_review():
+    _register("identity-admin@example.com")
+    admin_headers = _headers(_token("identity-admin@example.com"))
+    uid = main.one("SELECT id FROM users WHERE email=?", ("identity-admin@example.com",))["id"]
+    main.run("UPDATE user_roles SET role='admin' WHERE user_id=?", (uid,))
+    main.run("INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at) VALUES (?,?,?,?) "
+             "ON CONFLICT(user_id) DO UPDATE SET admin_role=excluded.admin_role",
+             (uid, "super_admin", uid, 0))
+
+    queue = client.get("/api/admin/identity-reviews", headers=admin_headers)
+    assert queue.status_code == 200
+    item = next((x for x in queue.json()["items"] if x["account_email"] == "identity@example.com"), None)
+    assert item, "the mismatched CV should be in the admin queue"
+
+    decision = client.post("/api/admin/identity-reviews/" + item["id"] + "/decision",
+                           json={"decision": "cleared", "note": "Called the candidate."},
+                           headers=admin_headers)
+    assert decision.status_code == 200
+    row = main.one("SELECT status, note, reviewed_by FROM identity_reviews WHERE id=?", (item["id"],))
+    assert row["status"] == "cleared" and row["reviewed_by"] == uid

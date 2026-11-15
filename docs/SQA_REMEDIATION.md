@@ -35,17 +35,32 @@ items had already been corrected since the review; they are listed as
 
 ## Still open (honest remainder)
 
-1. **SB-001 completion** — company workspace and admin console copy is still
-   English. The dictionary, language context and switcher are in place; this is
-   now a translation pass, not an architecture change.
+1. **SB-001 completion** — navigation, headings, primary actions, statuses and
+   the security/identity panels are translated. Long-form panel copy inside the
+   company and admin workspaces is still English; `frontend/src/consoleI18n.js`
+   is the file to extend.
 2. **Browser retest** — Chrome, Firefox, Safari and Android Chrome must be run
    against the fixed build before sign-off. No browser matrix was executed here.
-3. **MFA enrolment UI** — the API supports TOTP enrolment/activation, and the
-   sign-in flow handles the MFA challenge. A dedicated in-app enrolment screen
-   for admins is still to be built. The admin identity-review queue
-   (`/api/admin/identity-reviews`) is API-only for now.
-4. **Tenant-isolation matrix** — the suite exercises owner isolation and privacy
+3. **Tenant-isolation matrix** — the suite exercises owner isolation and privacy
    paths; an explicit two-company access matrix per endpoint is the next step.
+
+## Delivered after the first pass
+
+- **Admin identity-review queue** (`Admin Console → CV identity review`): lists
+  mismatched CVs with the detected signal, account email match and name
+  similarity, and records a reasoned cleared / needs-review / escalated
+  decision.
+- **Security & MFA screens** in both workspaces (`Security & MFA`):
+  - TOTP enrolment with secret, `otpauth://` link, one-time recovery codes and
+    activation by 6-digit code.
+  - Live session list with per-session revocation and a "this device" marker.
+  - MFA state and whether it is required for the signed-in role.
+- **API additions**: `GET /api/auth/mfa/status`, `GET /api/auth/sessions`,
+  `DELETE /api/auth/sessions/{id}`, `GET /api/admin/identity-reviews`,
+  `POST /api/admin/identity-reviews/{id}/decision`.
+- **Bengali coverage** for both console shells, navigation, page headings,
+  overview metrics, company onboarding/verification banner, recruitment stages
+  and the security/identity panels.
 
 ## Verification commands
 
@@ -54,5 +69,5 @@ cd backend && python -m pytest -q tests --cov=. --cov-fail-under=60
 cd frontend && npm run lint && npm run build
 ```
 
-Latest local run: **120 passed, 1 skipped**, coverage **69%**; frontend lint
+Latest local run: **122 passed, 1 skipped**, coverage **69%**; frontend lint
 **0 errors**; production build succeeds.

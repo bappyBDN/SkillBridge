@@ -60,6 +60,8 @@ python create_admin.py
 
 Enter your own email and a unique password of at least 14 characters when prompted. Do not put the password in source code or commit it. Then sign in from the Vercel site; the Admin Console is shown for the provisioned admin account.
 
+> 🔐 On production (`ENV=production`) admins and company owners must enable two-factor authentication: open **Security & MFA** in the console, add the secret to an authenticator app and confirm a 6-digit code. Otherwise privileged endpoints return `mfa_enrollment_required`. The same screen lists active sessions and can revoke any of them.
+
 > ✅ `SEED_DEMO` is `false` in `render.yaml` and both seeders refuse to run when `ENV=production`. Demo credentials are generated per deployment and are never committed (SB-006).
 
 ### 4. Production settings
