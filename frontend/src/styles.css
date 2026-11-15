@@ -2050,3 +2050,13 @@ body.exam-live .candidate-page > .journey-content{padding:0;border:0;background:
   .tf-page-head h1{font-size:1.7rem}
   .tf-card-art{display:none}
 }
+
+/* ---------- My Exams: in-progress banner ---------- */
+.tf-resume-banner{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  background:linear-gradient(120deg,#eef2ff,#f6f1ff);
+  border:1px solid #ddd6fb;border-radius:16px;padding:16px 20px;margin-bottom:18px;
+}
+.tf-resume-banner strong{display:block;font-size:.86rem;color:#221b45}
+.tf-resume-banner span{display:block;margin-top:4px;font-size:.72rem;color:#6d6a8a}
+.tf-resume-banner .tf-btn{margin:0}

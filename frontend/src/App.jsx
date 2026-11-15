@@ -4926,6 +4926,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   }, []);
   const t = useT();
   const done = (st?.attempts || []).filter((a) => a.status === "done");
+  const activeAttempt = (st?.attempts || []).find((a) => a.status === "active");
   const latest = done[done.length - 1];
 
   const W = t("ws");
@@ -4938,6 +4939,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
       icon: "▤",
       group: "WORKSPACE",
     },
+    { id: "exams", label: W.exams, icon: "◎", group: "GROWTH" },
     { id: "journey", label: W.journey, icon: "⌁", group: "GROWTH" },
     { id: "learning", label: W.learning, icon: "↗", group: "GROWTH" },
     { id: "passport", label: W.passport, icon: "◇", group: "GROWTH" },
@@ -5231,6 +5233,28 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                 </div>
               </div>
               <CandidateApplications />
+            </>
+          )}
+          {section === "exams" && (
+            <>
+              {activeAttempt && (
+                <div className="tf-resume-banner">
+                  <div>
+                    <strong>You have an exam in progress</strong>
+                    <span>
+                      {activeAttempt.kind === "post" ? "Re-test" : "Initial assessment"} ·
+                      started{" "}
+                      {activeAttempt.started
+                        ? new Date(activeAttempt.started * 1000).toLocaleString()
+                        : "earlier"}
+                    </span>
+                  </div>
+                  <button className="tf-btn blue" onClick={() => go("journey")}>
+                    Resume exam <span aria-hidden="true">→</span>
+                  </button>
+                </div>
+              )}
+              <AssessmentRecords attempts={st.attempts} onRefresh={refresh} />
             </>
           )}
           {section === "journey" && (
