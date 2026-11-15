@@ -9958,6 +9958,16 @@ function HiringWorkspace({ role, onLogout }) {
   const [verificationForm, setVerificationForm] = useState(false);
   const isOwner = workspace?.company?.role === "owner";
   const canManageJobs = workspace?.permissions?.manage_jobs;
+  const jobEligibility = workspace?.job_eligibility || {
+    registered: false,
+    verified: false,
+    verification_status: "not_submitted",
+    can_create_draft: false,
+    can_publish: false,
+    reason: "Create and save your company profile before creating jobs.",
+  };
+  const canCreateJob = Boolean(canManageJobs && jobEligibility.can_create_draft);
+  const canPublishJob = Boolean(canManageJobs && jobEligibility.can_publish);
   const canManagePipeline = workspace?.permissions?.manage_pipeline;
   const canManageTeam = workspace?.permissions?.manage_team;
   const money = (n) =>
@@ -10121,7 +10131,7 @@ function HiringWorkspace({ role, onLogout }) {
         .filter(Boolean),
     };
     try {
-      if (jobEditId)
+      if (jobEditId && jobEditId !== "new")
         await api("/company/jobs/" + jobEditId, {
           method: "PATCH",
           body: payload,
@@ -10567,9 +10577,11 @@ function HiringWorkspace({ role, onLogout }) {
                 <button
                   className="cr-primary"
                   onClick={() => {
-                    setJobEditId(null);
+                    setJobEditId(canCreateJob ? "new" : null);
                     setPage("jobs");
                   }}
+                  disabled={!canCreateJob}
+                  title={jobEligibility.reason || "Create a job"}
                 >
                   ＋ Create a job
                 </button>
@@ -10766,15 +10778,34 @@ function HiringWorkspace({ role, onLogout }) {
                     Create, review and manage every opportunity from one place.
                   </p>
                 </div>
-                {!jobEditId && canManageJobs && (
+                {!jobEditId && (
                   <button
                     className="cr-primary"
-                    onClick={() => setJobEditId("new")}
+                    onClick={() => {
+                      if (!canCreateJob) {
+                        setPage("settings");
+                        return;
+                      }
+                      setJobEditId("new");
+                    }}
+                    disabled={!canCreateJob}
+                    title={jobEligibility.reason || "Create a job"}
                   >
                     ＋ New job
                   </button>
                 )}
               </div>
+              {!jobEligibility.can_create_draft && (
+                <div className="cr-verification-banner">
+                  <div>
+                    <strong>Company eligibility required</strong>
+                    <span>{jobEligibility.reason}</span>
+                  </div>
+                  <button onClick={() => setPage("settings")}>
+                    Review status →
+                  </button>
+                </div>
+              )}
               {jobEditId !== null && (
                 <form className="cr-panel cr-form-panel" onSubmit={submitJob}>
                   <div className="cr-panel-head">
@@ -10958,10 +10989,17 @@ function HiringWorkspace({ role, onLogout }) {
                   </div>
                   <div className="cr-form-footer">
                     <span>
-                      Jobs are saved as drafts. Verified organisations can
-                      submit them for review.
+                      {jobEligibility.can_publish
+                        ? "Jobs are saved as drafts and can be submitted for platform review."
+                        : jobEligibility.reason ||
+                          "Jobs are saved as drafts. Verified organisations can submit them for review."}
                     </span>
-                    <button className="cr-primary" disabled={busy}>
+                    <button
+                      className="cr-primary"
+                      disabled={
+                        busy || (jobEditId === "new" && !canCreateJob)
+                      }
+                    >
                       Save job draft
                     </button>
                   </div>
@@ -11010,7 +11048,12 @@ function HiringWorkspace({ role, onLogout }) {
                         <button
                           className="cr-primary cr-small"
                           onClick={() => publishJob(j.id)}
-                          disabled={!workspace?.company?.verified}
+                          disabled={!canPublishJob}
+                          title={
+                            canPublishJob
+                              ? "Submit this job for platform review"
+                              : jobEligibility.reason
+                          }
                         >
                           Submit for review
                         </button>

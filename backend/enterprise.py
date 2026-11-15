@@ -817,9 +817,12 @@ def create_company_profile(body:CompanyProfile,user=Depends(current_user)):
 
 @router.post("/api/jobs")
 def create_job(body:JobCreate,user=Depends(current_user)):
-    require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter"); jid=uuid.uuid4().hex
+    require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter")
+    if not (company.get("name") or "").strip():
+        raise HTTPException(409, "Create and save your company profile before creating jobs")
     if body.publish and not company["verified"]:
         raise HTTPException(403, "Company verification is required before publishing jobs")
+    jid=uuid.uuid4().hex
     skills=list(dict.fromkeys(s.strip() for s in body.skills if s.strip()))
     run("INSERT INTO jobs(id,company_id,title,description,location,employment_type,skills,status,is_mock,created) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (jid,company["id"],body.title.strip(),body.description.strip(),body.location.strip(),body.employment_type.strip(),json.dumps(skills),"published" if body.publish else "draft",0,time.time()))
@@ -978,6 +981,47 @@ def require_company_permission(user, company, *roles):
     return role
 
 
+# Job posting is gated on the company profile existing (registered) and on
+# platform verification. Drafts are allowed for registered companies that are
+# still awaiting review, but nothing can be published until verification passes.
+def company_job_eligibility(company):
+    verification = one(
+        "SELECT status,decision_reason FROM company_verification WHERE company_id=?",
+        (company["id"],),
+    )
+    verification_status = verification["status"] if verification else "not_submitted"
+    rejection_reason = verification["decision_reason"] if verification else ""
+    registered = bool((company.get("name") or "").strip())
+    verified = registered and bool(company.get("verified")) and verification_status == "verified"
+    if not registered:
+        reason = "Create and save your company profile before creating jobs."
+    elif verification_status == "rejected":
+        reason = rejection_reason or "Company verification was rejected. Update and resubmit verification."
+    elif verification_status == "pending_review":
+        reason = "Your company is awaiting verification. You can save drafts, but publishing is locked."
+    elif not verified:
+        reason = "Verify your company before publishing jobs."
+    else:
+        reason = ""
+    return {
+        "registered": registered,
+        "verification_status": verification_status,
+        "verified": verified,
+        "can_create_draft": registered and verification_status != "rejected",
+        "can_publish": verified,
+        "reason": reason,
+    }
+
+
+def require_job_creation_eligibility(company):
+    eligibility = company_job_eligibility(company)
+    if not eligibility["registered"]:
+        raise HTTPException(409, "Create and save your company profile before creating jobs")
+    if eligibility["verification_status"] == "rejected":
+        raise HTTPException(403, eligibility["reason"])
+    return eligibility
+
+
 def company_job(company_id, job_id):
     row = one("SELECT * FROM jobs WHERE id=? AND company_id=?", (job_id, company_id))
     if not row:
@@ -1068,6 +1112,7 @@ def company_workspace(user=Depends(current_user)):
         "jobs": {r["status"]: r["n"] for r in jobs},
         "applications": {r["status"]: r["n"] for r in apps},
         "recent_applications": [dict(r) for r in recent],
+        "job_eligibility": company_job_eligibility(company),
         "permissions": {"manage_company": role == "owner", "manage_team": role == "owner",
                         "manage_jobs": role in ("owner", "recruiter"), "manage_pipeline": role in ("owner", "recruiter", "hiring_manager"),
                         "view_reports": role in ("owner", "recruiter", "hiring_manager", "viewer")}
@@ -1103,6 +1148,7 @@ def submit_company_verification(body: CompanyVerificationInput, user=Depends(cur
 def create_company_job(body: CompanyJobInput, user=Depends(current_user)):
     company = company_for_access(user)
     require_company_permission(user, company, "owner", "recruiter")
+    eligibility = require_job_creation_eligibility(company)
     if body.salary_min is not None and body.salary_max is not None and body.salary_max < body.salary_min:
         raise HTTPException(422, "Salary maximum must be greater than salary minimum")
     jid, now = uuid.uuid4().hex, time.time()
@@ -1117,7 +1163,7 @@ def create_company_job(body: CompanyJobInput, user=Depends(current_user)):
     run("INSERT INTO job_revisions(id,job_id,revision,snapshot_json,actor_id,created) VALUES (?,?,?,?,?,?)",
         (uuid.uuid4().hex, jid, 1, json.dumps(snapshot), user["id"], now))
     audit(user["id"], "company_job_created", jid)
-    return {"id": jid, "status": "draft", "revision": 1}
+    return {"id": jid, "status": "draft", "revision": 1, "eligibility": eligibility}
 
 
 @router.patch("/api/company/jobs/{job_id}")
@@ -1150,8 +1196,9 @@ def publish_company_job(job_id: str, user=Depends(current_user)):
     company = company_for_access(user)
     require_company_permission(user, company, "owner", "recruiter")
     job = company_job(company["id"], job_id)
-    if not company["verified"]:
-        raise HTTPException(403, "Company verification is required before a job can be published")
+    eligibility = company_job_eligibility(company)
+    if not eligibility["can_publish"]:
+        raise HTTPException(403, eligibility["reason"] or "Company verification is required before a job can be published")
     if job["status"] not in ("draft", "needs_changes", "paused"):
         raise HTTPException(409, "This job cannot be submitted from its current state")
     direct = os.getenv("ALLOW_DIRECT_JOB_PUBLISH", "false").lower() == "true"
