@@ -1769,3 +1769,19 @@ body.exam-live .candidate-page > .page-title,
 body.exam-live .candidate-page > .steps{display:none!important}
 body.exam-live .candidate-page > .journey-content{padding:0;border:0;background:transparent;box-shadow:none;border-radius:0;margin:0}
 .exam2-syncing{font-size:.6rem;font-weight:800;color:#94a3b8;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 7px;margin-left:4px}
+
+/* ---------- auth hardening + landing actions (SB-001, SB-002, SB-003) ---------- */
+.sb-hero-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:30px 0 6px}
+.sb-hero-cta{display:inline-flex;align-items:center;gap:9px;padding:13px 22px;border-radius:999px;background:#133f3a;color:#f5fbf7;font-size:.8rem;font-weight:750;text-decoration:none;transition:transform .18s ease,background .18s ease}
+.sb-hero-cta:hover{transform:translateY(-1px);background:#0c2f2b}
+.sb-hero-secondary{color:#3c5a52;font-size:.76rem;font-weight:700;text-decoration:none;border-bottom:1px solid rgba(60,90,82,.35);padding-bottom:2px}
+.sb-hero-secondary:hover{color:#133f3a;border-color:#133f3a}
+.sb-strength{display:flex;gap:5px;margin-top:9px}
+.sb-strength span{height:4px;flex:1;border-radius:99px;background:#e3e8e5;transition:background .2s ease}
+.sb-strength.s1 span:nth-child(1){background:#d9534f}
+.sb-strength.s2 span:nth-child(-n+2){background:#e0a13a}
+.sb-strength.s3 span:nth-child(-n+3){background:#4c9a6a}
+.sb-strength.s4 span{background:#2f7d55}
+.sb-hint{display:block;margin-top:7px;font-size:.68rem;line-height:1.55;color:#7c8b85}
+.sb-notice{margin:4px 0 0;padding:10px 12px;border-radius:10px;background:#eaf5ee;color:#285f42;font-size:.72rem;line-height:1.55}
+.sb-auth-form label .err{display:block;margin-top:6px}

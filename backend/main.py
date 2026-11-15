@@ -17,6 +17,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 import engine as E
+import identity as ID
+import security as SEC
 from content import TAXONOMY, JOB, QBYID
 
 log = logging.getLogger("skillbridge")
@@ -31,6 +33,14 @@ MAX_EVIDENCE_BYTES = 180 * 1024
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-5-5")
 CONSENT_VERSION = "r0-2"
+ENVIRONMENT = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or "development").strip().lower()
+IS_PRODUCTION = ENVIRONMENT in {"production", "prod", "live"}
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(7 * 86400)))
+MFA_REQUIRED_ROLES = {
+    role.strip()
+    for role in os.getenv("MFA_REQUIRED_ROLES", "admin,company_owner").split(",")
+    if role.strip()
+}
 
 
 def _secret() -> str:
@@ -78,6 +88,10 @@ CREATE TABLE IF NOT EXISTS answer_evaluations(
   PRIMARY KEY(attempt_id, question_id));
 CREATE TABLE IF NOT EXISTS cv_skill_nodes(user_id INTEGER NOT NULL, skill_id TEXT NOT NULL, label TEXT NOT NULL, evidence TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.8, PRIMARY KEY(user_id, skill_id));
 CREATE TABLE IF NOT EXISTS skill_question_edges(skill_id TEXT NOT NULL, question_id TEXT NOT NULL, PRIMARY KEY(skill_id, question_id));
+CREATE TABLE IF NOT EXISTS auth_sessions(id TEXT PRIMARY KEY, user_id INT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL, expires REAL NOT NULL, ip TEXT, ua TEXT, revoked INT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS email_verifications(token TEXT PRIMARY KEY, user_id INT NOT NULL, email TEXT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL, used REAL);
+CREATE TABLE IF NOT EXISTS auth_throttle(key TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, first_failure REAL, last_failure REAL, locked_until REAL);
+CREATE TABLE IF NOT EXISTS identity_reviews(id TEXT PRIMARY KEY, user_id INT NOT NULL, status TEXT NOT NULL DEFAULT 'open', signal TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, reviewed_by INT, reviewed_at REAL, note TEXT NOT NULL DEFAULT '');
 """
 
 
@@ -209,6 +223,31 @@ def init_db():
             if column not in evidence_columns:
                 c.execute(f"ALTER TABLE exam_evidence ADD COLUMN {column} {definition}")
 
+        # Auth hardening columns (SB-003).
+        if DATABASE_URL:
+            user_columns = {row["column_name"] for row in c.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='users'").fetchall()}
+        else:
+            user_columns = {row["name"] for row in c.execute("PRAGMA table_info(users)").fetchall()}
+        for column, definition in {
+            "email_verified": "REAL", "mfa_secret": "TEXT",
+            "mfa_enabled": "INTEGER NOT NULL DEFAULT 0",
+            "mfa_recovery": "TEXT", "updated": "REAL",
+        }.items():
+            if column not in user_columns:
+                c.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+
+        # CV identity signal (SB-004).
+        if DATABASE_URL:
+            profile_columns = {row["column_name"] for row in c.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='profiles'").fetchall()}
+        else:
+            profile_columns = {row["name"] for row in c.execute("PRAGMA table_info(profiles)").fetchall()}
+        if "identity" not in profile_columns:
+            c.execute("ALTER TABLE profiles ADD COLUMN identity TEXT")
+
         # PostgreSQL REAL cannot preserve sub-minute Unix timestamp precision at
         # current epoch magnitudes. Promote existing proctoring timestamp columns
         # to DOUBLE PRECISION; SQLite already stores these values as floating point.
@@ -333,12 +372,121 @@ def audit(actor, action, target=""):
 
 
 # ------------------------------------------------------------------ auth
-def hash_pw(pw, salt): return hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000).hex()
+# PBKDF2-SHA256 with the iteration count embedded in the hash (SB-003).
+# Legacy rows (bare hex + separate salt column) still verify and are upgraded
+# to the new format on the next successful sign-in.
+def hash_pw(pw, salt=None):
+    return SEC.hash_password(pw)
 
 
-def make_token(uid):
-    body = base64.urlsafe_b64encode(json.dumps({"uid": uid, "exp": time.time() + 7 * 86400}).encode()).decode()
+def verify_pw(u, password):
+    stored = u["pw_hash"] if hasattr(u, "__getitem__") else ""
+    legacy_salt = u["salt"] if hasattr(u, "__getitem__") else None
+    matches, needs_rehash = SEC.verify_password(stored, password, legacy_salt)
+    return matches, needs_rehash
+
+
+def rehash_password(uid, password):
+    run("UPDATE users SET pw_hash=? WHERE id=?", (SEC.hash_password(password), uid))
+
+
+def _client_ip(request: Optional[Request]) -> str:
+    if request is None:
+        return ""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return forwarded or (request.client.host if request.client else "")
+
+
+def create_session(uid, request: Optional[Request] = None) -> str:
+    sid = secrets.token_urlsafe(24)
+    now = time.time()
+    run(
+        "INSERT INTO auth_sessions(id,user_id,created,last_seen,expires,ip,ua,revoked) VALUES (?,?,?,?,?,?,?,0)",
+        (sid, uid, now, now, now + SESSION_TTL_SECONDS,
+         _client_ip(request), (request.headers.get("user-agent") if request else "") or ""),
+    )
+    return sid
+
+
+def make_token(uid, sid: Optional[str] = None, *, mfa: bool = False):
+    sid = sid or create_session(uid)
+    payload = {"uid": uid, "sid": sid, "mfa": bool(mfa), "exp": time.time() + SESSION_TTL_SECONDS}
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     return body + "." + hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+
+
+def revoke_session(sid: str):
+    if sid:
+        run("UPDATE auth_sessions SET revoked=1 WHERE id=?", (sid,))
+
+
+def revoke_all_sessions(uid, *, keep: Optional[str] = None):
+    if keep:
+        run("UPDATE auth_sessions SET revoked=1 WHERE user_id=? AND id<>?", (uid, keep))
+    else:
+        run("UPDATE auth_sessions SET revoked=1 WHERE user_id=?", (uid,))
+
+
+def _user_roles(uid) -> set[str]:
+    roles = {r["role"] for r in allr("SELECT role FROM user_roles WHERE user_id=?", (uid,)) if r["role"]}
+    return roles
+
+
+def _throttle_state(key: str):
+    return one("SELECT * FROM auth_throttle WHERE key=?", (key,))
+
+
+def throttle_check(key: str) -> int:
+    """Raise 429 when the key is locked; return the current failure count."""
+    row = _throttle_state(key)
+    if not row:
+        return 0
+    locked_until = row["locked_until"] or 0
+    if locked_until > time.time():
+        retry = max(1, int(locked_until - time.time()))
+        raise HTTPException(429, f"Too many attempts. Try again in {retry} seconds.")
+    return int(row["failures"] or 0)
+
+
+def throttle_fail(key: str):
+    now = time.time()
+    row = _throttle_state(key)
+    failures = (int(row["failures"] or 0) if row else 0) + 1
+    wait = SEC.backoff_seconds(failures)
+    locked_until = now + wait if wait else None
+    if row:
+        run("UPDATE auth_throttle SET failures=?, last_failure=?, locked_until=? WHERE key=?",
+            (failures, now, locked_until, key))
+    else:
+        run("INSERT INTO auth_throttle(key,failures,first_failure,last_failure,locked_until) VALUES (?,?,?,?,?)",
+            (key, failures, now, now, locked_until))
+
+
+def throttle_reset(key: str):
+    run("DELETE FROM auth_throttle WHERE key=?", (key,))
+
+
+def _is_verified(u) -> bool:
+    try:
+        return bool(u["email_verified"])
+    except (KeyError, IndexError, TypeError):
+        return False
+
+
+def require_verified_email(u):
+    if not _is_verified(u):
+        raise HTTPException(403, "email_not_verified")
+
+
+def _roles_requiring_mfa(u) -> set[str]:
+    return _user_roles(u["id"]) & MFA_REQUIRED_ROLES
+
+
+def mfa_required_for(u) -> bool:
+    """MFA is mandatory for privileged roles in production (SB-003 / AUTH-04)."""
+    if not MFA_REQUIRED_ROLES or not IS_PRODUCTION:
+        return False
+    return bool(_roles_requiring_mfa(u))
 
 
 def current_user(authorization: Optional[str] = Header(None)):
@@ -352,6 +500,14 @@ def current_user(authorization: Optional[str] = Header(None)):
         raise HTTPException(401, "Invalid or expired session")
     u = one("SELECT * FROM users WHERE id=?", (data["uid"],))
     if not u: raise HTTPException(401, "Unknown user")
+    # Revocable sessions (AUTH-05): a signed-out token stops working immediately.
+    sid = data.get("sid")
+    if sid:
+        session = one("SELECT * FROM auth_sessions WHERE id=? AND user_id=?", (sid, data["uid"]))
+        if not session or session["revoked"] or (session["expires"] or 0) < time.time():
+            raise HTTPException(401, "Session revoked or expired")
+        if time.time() - (session["last_seen"] or 0) > 300:
+            run("UPDATE auth_sessions SET last_seen=? WHERE id=?", (time.time(), sid))
     # Suspended accounts lose access on their next authenticated request.
     try:
         status = one("SELECT status FROM admin_user_status WHERE user_id=?", (data["uid"],))
@@ -359,7 +515,13 @@ def current_user(authorization: Optional[str] = Header(None)):
             raise HTTPException(403, "account_suspended")
     except sqlite3.OperationalError:
         pass  # Admin schema may not have been initialised during an early migration.
-    return dict(u)
+    if IS_PRODUCTION and not data.get("mfa") and mfa_required_for(u):
+        if int(u["mfa_enabled"] or 0):
+            raise HTTPException(403, "mfa_required")
+    payload = dict(u)
+    payload["_session_id"] = sid
+    payload["_mfa_verified"] = bool(data.get("mfa"))
+    return payload
 
 
 def need_consent(u):
@@ -426,28 +588,445 @@ class Login(BaseModel):
     password: str
 
 
+class MfaCode(BaseModel):
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaChallenge(BaseModel):
+    challenge: str
+    code: str = Field(min_length=6, max_length=32)
+
+
+class EmailToken(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+# -- password reset / email verification mail ---------------------------------
+def _smtp_configured() -> bool:
+    return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM"))
+
+
+def _send_email(to: str, subject: str, body: str) -> bool:
+    """Send transactional mail. Returns False when no transport is configured."""
+    if not _smtp_configured():
+        log.warning("SMTP is not configured; transactional mail to %s was not sent", to)
+        return False
+    import smtplib
+    from email.message import EmailMessage
+    message = EmailMessage()
+    message["From"] = os.environ["SMTP_FROM"]
+    message["To"] = to
+    message["Subject"] = subject
+    message.set_content(body)
+    try:
+        port = int(os.getenv("SMTP_PORT", "587"))
+        with smtplib.SMTP(os.environ["SMTP_HOST"], port, timeout=15) as smtp:
+            if os.getenv("SMTP_STARTTLS", "true").lower() != "false":
+                smtp.starttls()
+            if os.getenv("SMTP_USER"):
+                smtp.login(os.environ["SMTP_USER"], os.getenv("SMTP_PASSWORD", ""))
+            smtp.send_message(message)
+        return True
+    except Exception:
+        log.exception("Could not send mail to %s", to)
+        return False
+
+
+def _issue_verification(uid, email: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    run("DELETE FROM email_verifications WHERE user_id=? AND used IS NULL", (uid,))
+    run("INSERT INTO email_verifications(token,user_id,email,created,expires,used) VALUES (?,?,?,?,?,NULL)",
+        (token, uid, email, now, now + 48 * 3600))
+    base = os.getenv("APP_BASE_URL", "").rstrip("/")
+    link = f"{base}/#verify-email?token={token}" if base else f"verify-email?token={token}"
+    _send_email(
+        email,
+        "Confirm your SkillBridge email",
+        "Welcome to SkillBridge.\n\n"
+        f"Confirm your email address within 48 hours:\n{link}\n\n"
+        "If you did not create this account you can ignore this message.",
+    )
+    return token
+
+
+def _registration_result(uid, email: str, role: str) -> dict:
+    """Verify the address when possible, otherwise mark it verified and say so."""
+    if _smtp_configured():
+        token = _issue_verification(uid, email)
+        result = {
+            "ok": True,
+            "email_verification": "sent",
+            "message": "Check your inbox to confirm your email address before uploading a CV or applying.",
+        }
+        if not IS_PRODUCTION:
+            result["verification_token"] = token
+        return result
+    # No mail transport: local development, CI and judged demos keep working.
+    run("UPDATE users SET email_verified=? WHERE id=?", (time.time(), uid))
+    result = {
+        "ok": True,
+        "email_verification": "auto",
+        "message": "Email verification is not configured on this deployment, so the address was verified automatically.",
+    }
+    if not IS_PRODUCTION:
+        result["token"] = make_token(uid)
+    return result
+
+
 @app.post("/api/auth/register")
-def register(b: Reg):
+def register(b: Reg, request: Request):
     email = b.email.strip().lower()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email): raise HTTPException(422, "Invalid email")
-    if one("SELECT 1 FROM users WHERE email=?", (email,)): raise HTTPException(409, "Email already registered")
-    salt = secrets.token_hex(16)
     if b.role not in ("candidate", "company"):
         raise HTTPException(422, "Role must be candidate or company")
-    uid = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)", (email, b.name.strip(), salt, hash_pw(b.password, salt), time.time()))
+    ip_key = f"register:ip:{_client_ip(request)}"
+    throttle_check(ip_key)
+    problems = SEC.password_errors(b.password, email=email, name=b.name)
+    if problems:
+        raise HTTPException(422, " ".join(problems))
+    existing = one("SELECT id, email_verified FROM users WHERE email=?", (email,))
+    if existing:
+        # Never disclose whether an address already has an account (SB-003).
+        throttle_fail(ip_key)
+        audit(None, "register_duplicate_email")
+        return {
+            "ok": True,
+            "email_verification": "sent" if _smtp_configured() else "auto",
+            "message": "If that address can be used, we have emailed next steps. You can also sign in.",
+        }
+    if not IS_PRODUCTION:
+        throttle_reset(ip_key)
+    uid = run(
+        "INSERT INTO users(email,name,salt,pw_hash,created,email_verified) VALUES (?,?,?,?,?,NULL)",
+        (email, b.name.strip(), secrets.token_hex(16), SEC.hash_password(b.password), time.time()),
+    )
     run("INSERT INTO user_roles(user_id,role) VALUES (?,?)", (uid, b.role))
-    audit(uid, "register")
-    return {"token": make_token(uid)}
+    audit(uid, "register", b.role)
+    return _registration_result(uid, email, b.role)
+
+
+def _mfa_challenge(uid) -> str:
+    payload = {"uid": uid, "purpose": "mfa", "exp": time.time() + 300}
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    return body + "." + hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+
+
+def _read_challenge(token: str) -> dict:
+    try:
+        body, sig = token.split(".")
+        if not hmac.compare_digest(sig, hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()):
+            raise ValueError
+        data = json.loads(base64.urlsafe_b64decode(body))
+        if data.get("purpose") != "mfa" or data["exp"] < time.time():
+            raise ValueError
+        return data
+    except Exception:
+        raise HTTPException(401, "This verification step expired. Sign in again.")
+
+
+def _mfa_recovery_codes(uid) -> list[str]:
+    codes = [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(8)]
+    hashed = [hashlib.sha256(c.encode()).hexdigest() for c in codes]
+    run("UPDATE users SET mfa_recovery=? WHERE id=?", (json.dumps(hashed), uid))
+    return codes
+
+
+def _check_mfa_code(u, code: str) -> bool:
+    code = code.strip()
+    if u["mfa_secret"] and SEC.verify_totp(u["mfa_secret"], code):
+        return True
+    try:
+        stored = json.loads(u["mfa_recovery"] or "[]")
+    except (TypeError, ValueError):
+        stored = []
+    digest = hashlib.sha256(code.lower().encode()).hexdigest()
+    if digest in stored:
+        stored.remove(digest)
+        run("UPDATE users SET mfa_recovery=? WHERE id=?", (json.dumps(stored), u["id"]))
+        return True
+    return False
 
 
 @app.post("/api/auth/login")
-def login(b: Login):
-    u = one("SELECT * FROM users WHERE email=?", (b.email.strip().lower(),))
-    if not u or not hmac.compare_digest(u["pw_hash"], hash_pw(b.password, u["salt"])): raise HTTPException(401, "Wrong email or password")
-    return {"token": make_token(u["id"])}
+def login(b: Login, request: Request):
+    email = b.email.strip().lower()
+    ip = _client_ip(request)
+    keys = [f"login:ip:{ip}", f"login:email:{email}"]
+    for key in keys:
+        throttle_check(key)
+    u = one("SELECT * FROM users WHERE email=?", (email,))
+    ok = False
+    needs_rehash = False
+    if u:
+        ok, needs_rehash = verify_pw(dict(u), b.password)
+    if not u or not ok:
+        for key in keys:
+            throttle_fail(key)
+        audit(u["id"] if u else None, "login_failed", email)
+        raise HTTPException(401, "Wrong email or password")
+    for key in keys:
+        throttle_reset(key)
+    if needs_rehash:
+        rehash_password(u["id"], b.password)
+    audit(u["id"], "login")
+    if int(u["mfa_enabled"] or 0):
+        return {"mfa_required": True, "challenge": _mfa_challenge(u["id"])}
+    token = make_token(u["id"])
+    return {"token": token, "email_verified": _is_verified(u)}
+
+
+@app.post("/api/auth/mfa/verify")
+def mfa_verify(b: MfaChallenge, request: Request):
+    data = _read_challenge(b.challenge)
+    key = f"mfa:ip:{_client_ip(request)}"
+    throttle_check(key)
+    u = one("SELECT * FROM users WHERE id=?", (data["uid"],))
+    if not u or not _check_mfa_code(dict(u), b.code):
+        throttle_fail(key)
+        raise HTTPException(401, "That code is not valid. Try the next one from your authenticator.")
+    throttle_reset(key)
+    audit(u["id"], "login_mfa")
+    return {"token": make_token(u["id"], mfa=True), "email_verified": _is_verified(u)}
+
+
+@app.post("/api/auth/mfa/enroll")
+def mfa_enroll(b: Login, request: Request):
+    """Start MFA enrolment. Requires the password, so it is safe before sign-in."""
+    email = b.email.strip().lower()
+    key = f"mfa-enroll:ip:{_client_ip(request)}"
+    throttle_check(key)
+    u = one("SELECT * FROM users WHERE email=?", (email,))
+    ok = False
+    if u:
+        ok, _ = verify_pw(dict(u), b.password)
+    if not u or not ok:
+        throttle_fail(key)
+        raise HTTPException(401, "Wrong email or password")
+    secret = SEC.new_totp_secret()
+    run("UPDATE users SET mfa_secret=?, mfa_enabled=0 WHERE id=?", (secret, u["id"]))
+    return {
+        "secret": secret,
+        "otpauth_url": SEC.otpauth_url(secret, email),
+        "recovery_codes": _mfa_recovery_codes(u["id"]),
+        "challenge": _mfa_challenge(u["id"]),
+        "message": "Add the secret to your authenticator app, then confirm with a 6-digit code.",
+    }
+
+
+@app.post("/api/auth/mfa/activate")
+def mfa_activate(b: MfaChallenge, request: Request):
+    data = _read_challenge(b.challenge)
+    u = one("SELECT * FROM users WHERE id=?", (data["uid"],))
+    if not u or not _check_mfa_code(dict(u), b.code):
+        raise HTTPException(401, "That code is not valid.")
+    run("UPDATE users SET mfa_enabled=1 WHERE id=?", (u["id"],))
+    audit(u["id"], "mfa_enabled")
+    revoke_all_sessions(u["id"])
+    return {"token": make_token(u["id"], mfa=True), "enabled": True}
+
+
+@app.post("/api/auth/mfa/disable")
+def mfa_disable(b: Login, u=Depends(current_user)):
+    """Turn MFA off with the account password. Blocked for roles that require it."""
+    if mfa_required_for(u):
+        raise HTTPException(403, "mfa_required_for_role")
+    ok, _ = verify_pw(u, b.password)
+    if not ok:
+        raise HTTPException(401, "Wrong password")
+    run("UPDATE users SET mfa_enabled=0, mfa_secret=NULL, mfa_recovery=NULL WHERE id=?", (u["id"],))
+    audit(u["id"], "mfa_disabled")
+    return {"enabled": False}
+
+
+@app.post("/api/auth/logout")
+def logout(u=Depends(current_user)):
+    revoke_session(u.get("_session_id"))
+    audit(u["id"], "logout")
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout-all")
+def logout_all(u=Depends(current_user)):
+    revoke_all_sessions(u["id"])
+    audit(u["id"], "logout_all")
+    return {"ok": True}
+
+
+@app.get("/api/auth/sessions")
+def list_sessions(u=Depends(current_user)):
+    rows = allr("SELECT id,created,last_seen,expires,revoked,ip,ua FROM auth_sessions "
+                "WHERE user_id=? ORDER BY last_seen DESC", (u["id"],))
+    return {"sessions": [{**dict(r), "current": r["id"] == u.get("_session_id")} for r in rows]}
+
+
+@app.delete("/api/auth/sessions/{sid}")
+def end_session(sid: str, u=Depends(current_user)):
+    row = one("SELECT * FROM auth_sessions WHERE id=? AND user_id=?", (sid, u["id"]))
+    if not row:
+        raise HTTPException(404, "Session not found")
+    revoke_session(sid)
+    audit(u["id"], "session_revoked", sid)
+    return {"ok": True}
+
+
+@app.post("/api/auth/verify-email")
+def verify_email(b: "EmailToken"):
+    row = one("SELECT * FROM email_verifications WHERE token=?", (b.token.strip(),))
+    if not row or row["used"] or row["expires"] < time.time():
+        raise HTTPException(400, "This verification link is invalid or has expired.")
+    run("UPDATE email_verifications SET used=? WHERE token=?", (time.time(), row["token"]))
+    run("UPDATE users SET email_verified=? WHERE id=?", (time.time(), row["user_id"]))
+    audit(row["user_id"], "email_verified")
+    return {"ok": True, "verified": True}
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification(u=Depends(current_user)):
+    if _is_verified(u):
+        return {"ok": True, "verified": True}
+    token = _issue_verification(u["id"], u["email"])
+    audit(u["id"], "verification_resent")
+    return {"ok": True, "email_verification": "sent" if _smtp_configured() else "auto",
+            **({} if IS_PRODUCTION else {"verification_token": token})}
 
 
 # ------------------------------------------------------------------ state / consent / data rights
+
+# One registry of user-linked tables (SB-008). ``delete_me`` and ``export_data``
+# both walk it, so a new table cannot silently survive an account deletion.
+# (table, column, label)
+USER_DATA_REGISTRY = (
+    ("consents", "user_id", "consents"),
+    ("profiles", "user_id", "profiles"),
+    ("attempts", "user_id", "attempts"),
+    ("passports", "user_id", "passports"),
+    ("candidate_profiles", "user_id", "candidate_profiles"),
+    ("candidate_profile_drafts", "user_id", "candidate_profile_drafts"),
+    ("candidate_avatars", "user_id", "candidate_avatars"),
+    ("user_roles", "user_id", "user_roles"),
+    ("assessment_blueprints", "user_id", "assessment_blueprints"),
+    ("cv_skill_nodes", "user_id", "cv_skill_nodes"),
+    ("auth_sessions", "user_id", "sessions"),
+    ("email_verifications", "user_id", "email_verifications"),
+    ("identity_reviews", "user_id", "identity_reviews"),
+    ("admin_user_status", "user_id", "admin_status"),
+    ("admin_staff_roles", "user_id", "admin_roles"),
+    ("learning_progress", "user_id", "learning_progress"),
+    ("learning_feedback", "user_id", "learning_feedback"),
+    ("billing_credit_ledger", "user_id", "billing_credits"),
+    ("company_members", "user_id", "company_membership"),
+    ("applications", "candidate_id", "applications"),
+    ("application_history", "candidate_id", "application_history"),
+    ("application_notes", "author_user_id", "application_notes"),
+    ("phase_two_invites", "candidate_id", "phase_two_invites"),
+)
+# Rows that hang off an attempt rather than the user.
+ATTEMPT_DATA_REGISTRY = (
+    "events",
+    "answer_evaluations",
+    "attempt_questions",
+    "assessment_answer_events",
+    "exam_evidence",
+    "admin_attempt_reviews",
+    "admin_appeal_decisions",
+    "attempt_honesty_reviews",
+)
+
+_known_tables = None
+_known_columns: dict[str, set[str]] = {}
+
+
+def known_tables() -> set[str]:
+    global _known_tables
+    if _known_tables is None:
+        if DATABASE_URL:
+            rows = allr("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()")
+            _known_tables = {r["table_name"] for r in rows}
+        else:
+            rows = allr("SELECT name FROM sqlite_master WHERE type='table'")
+            _known_tables = {r["name"] for r in rows}
+    return _known_tables
+
+
+def known_columns(table: str) -> set[str]:
+    if table not in _known_columns:
+        try:
+            if DATABASE_URL:
+                rows = allr("SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema=current_schema() AND table_name=?", (table,))
+                _known_columns[table] = {r["column_name"] for r in rows}
+            else:
+                rows = allr(f"PRAGMA table_info({table})")
+                _known_columns[table] = {r["name"] for r in rows}
+        except sqlite3.OperationalError:
+            _known_columns[table] = set()
+    return _known_columns[table]
+
+
+def _registry_tables():
+    tables = known_tables()
+    for table, column, label in USER_DATA_REGISTRY:
+        if table in tables and column in known_columns(table):
+            yield table, column, label
+
+
+def user_data_rows(uid) -> dict:
+    data = {}
+    for table, column, label in _registry_tables():
+        data[label] = [dict(r) for r in allr(f"SELECT * FROM {table} WHERE {column}=?", (uid,))]
+    return data
+
+
+def purge_user_data(uid) -> list[str]:
+    """Delete every row linked to ``uid`` and report which tables were touched."""
+    tables = known_tables()
+    touched: list[str] = []
+    attempt_ids = []
+    if "attempts" in tables:
+        attempt_ids = [r["id"] for r in allr("SELECT id FROM attempts WHERE user_id=?", (uid,))]
+    for aid in attempt_ids:
+        for table in ATTEMPT_DATA_REGISTRY:
+            if table not in tables:
+                continue
+            try:
+                run(f"DELETE FROM {table} WHERE attempt_id=?", (aid,))
+                touched.append(table)
+            except sqlite3.OperationalError:
+                continue
+    # Companies owned by the user are removed together with their postings.
+    if "companies" in tables:
+        owned = [r["id"] for r in allr("SELECT id FROM companies WHERE owner_user_id=?", (uid,))]
+        for cid in owned:
+            if "jobs" in tables:
+                job_ids = [r["id"] for r in allr("SELECT id FROM jobs WHERE company_id=?", (cid,))]
+                for jid in job_ids:
+                    if "applications" in tables:
+                        app_ids = [r["id"] for r in allr("SELECT id FROM applications WHERE job_id=?", (jid,))]
+                        for app_id in app_ids:
+                            for table in ("application_notes", "application_history"):
+                                if table in tables:
+                                    run(f"DELETE FROM {table} WHERE application_id=?", (app_id,))
+                        run("DELETE FROM applications WHERE job_id=?", (jid,))
+                    if "job_details" in tables:
+                        run("DELETE FROM job_details WHERE job_id=?", (jid,))
+                    if "job_revisions" in tables:
+                        run("DELETE FROM job_revisions WHERE job_id=?", (jid,))
+                run("DELETE FROM jobs WHERE company_id=?", (cid,))
+            for table in ("company_verification", "company_members", "company_assessments"):
+                if table in tables:
+                    run(f"DELETE FROM {table} WHERE company_id=?", (cid,))
+            run("DELETE FROM companies WHERE id=?", (cid,))
+            touched.append("companies")
+    for table, column, _label in _registry_tables():
+        run(f"DELETE FROM {table} WHERE {column}=?", (uid,))
+        touched.append(table)
+    if "audit" in tables:
+        # Keep the audit trail, but drop the link to the deleted identity.
+        run("UPDATE audit SET actor=NULL WHERE actor=?", (uid,))
+    return sorted(set(touched))
+
+
 def latest_done(uid, kind=None):
     q = "SELECT * FROM attempts WHERE user_id=? AND status='done'" + (" AND kind=?" if kind else "") + " ORDER BY finished DESC LIMIT 1"
     return one(q, (uid, kind) if kind else (uid,))
@@ -703,10 +1282,11 @@ def consent(b: ConsentBody, u=Depends(current_user)):
 @app.get("/api/me/export")
 def export_data(u=Depends(current_user)):
     d = {"user": {"name": u["name"], "email": u["email"]}}
-    for t in ("consents", "profiles", "attempts", "passports"):
-        d[t] = [dict(r) for r in allr(f"SELECT * FROM {t} WHERE user_id=?", (u["id"],))]
-    cp = one("SELECT * FROM candidate_profiles WHERE user_id=?", (u["id"],))
-    d["candidate_profile"] = dict(cp) if cp else None
+    # Every table in the deletion registry is also included in the export, so
+    # export and deletion stay in step (SB-008 / AUTH-08).
+    d.update(user_data_rows(u["id"]))
+    d.setdefault("consents", [])
+    d["candidate_profile"] = (d.get("candidate_profiles") or [None])[0]
     avatar = one("SELECT * FROM candidate_avatars WHERE user_id=?", (u["id"],))
     d["candidate_avatar"] = None
     if avatar:
@@ -723,7 +1303,6 @@ def export_data(u=Depends(current_user)):
     import cv_store
     d["cv_documents"] = cv_store.list_documents(u["id"])
     d["cv_extractions"] = cv_store.list_extractions(u["id"])
-    d["applications"] = [dict(r) for r in allr("SELECT * FROM applications WHERE candidate_id=?", (u["id"],))]
     d["answer_evaluations"] = [evaluation_view(r) for r in allr(
         "SELECT * FROM answer_evaluations WHERE attempt_id IN "
         "(SELECT id FROM attempts WHERE user_id=?)", (u["id"],))]
@@ -741,27 +1320,13 @@ def delete_me(u=Depends(current_user)):
         except StorageError as ex:
             log.error("Avatar storage deletion failed: %s", ex)
             raise HTTPException(503, "Could not remove the profile photo, please try again")
-        run("DELETE FROM candidate_avatars WHERE user_id=?", (u["id"],))
-    ids = [r["id"] for r in allr("SELECT id FROM attempts WHERE user_id=?", (u["id"],))]
-    for i in ids:
-        for table in ("events", "answer_evaluations", "attempt_questions", "assessment_answer_events"):
-            run(f"DELETE FROM {table} WHERE attempt_id=?", (i,))
     import cv_store
     cv_store.delete_user_documents(u["id"])   # removes the stored CV files and extraction drafts too
-    for t in (
-    "consents",
-    "profiles",
-    "attempts",
-    "passports",
-    "candidate_profiles",
-    "candidate_profile_drafts",
-    "user_roles",
-    ):
-        run(f"DELETE FROM {t} WHERE user_id=?", (u["id"],))
-    run("DELETE FROM applications WHERE candidate_id=?", (u["id"],))
+    touched = purge_user_data(u["id"])
     run("DELETE FROM users WHERE id=?", (u["id"],))
-    audit(u["id"], "delete_account")
-    return {"deleted": True}
+    # Pseudonymised audit entry: the account is gone, the action is still traceable.
+    audit(None, "delete_account", "pseudonym:" + hashlib.sha256(str(u["id"]).encode()).hexdigest()[:16])
+    return {"deleted": True, "tables": touched}
 
 
 # ------------------------------------------------------------------ CV intelligence
@@ -2084,6 +2649,7 @@ async def upload_cv_profile(
     u=Depends(current_user),
 ):
     need_consent(u)
+    require_verified_email(u)
 
     role = one(
         "SELECT role FROM user_roles WHERE user_id=?",
@@ -2313,6 +2879,7 @@ async def upload_cv_profile(
 @app.post("/api/cv")
 async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None), u=Depends(current_user)):
     need_consent(u)
+    require_verified_email(u)
     raw, file_bytes = text, None
     if file is not None:
         file_bytes = await file.read()
@@ -2330,24 +2897,73 @@ async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None
             log.error("CV storage failed: %s", ex)
             raise HTTPException(503, "Could not store the CV file, please try again")
     redacted, counts = E.redact(raw[:30000], [u["name"]])
+    # Identity is read from the raw CV, before redaction, and never stored as
+    # raw PII: only the derived signal and masked identifiers are kept (SB-004).
+    identity = ID.compare(u, ID.extract_identity(raw[:30000]))
+    identity["checked_at"] = time.time()
+    identity["confirmed"] = identity["status"] == "match"
     skills, source = (llm_extract(redacted) if ANTHROPIC_API_KEY else None), "llm"
     if not skills: skills, source = E.rule_extract(redacted), "rules"
-    run("INSERT INTO profiles(user_id,redacted,redaction,extracted,source,confirmed) VALUES (?,?,?,?,?,NULL) "
-        "ON CONFLICT(user_id) DO UPDATE SET redacted=excluded.redacted,redaction=excluded.redaction,extracted=excluded.extracted,source=excluded.source,confirmed=NULL",
-        (u["id"], redacted, json.dumps(counts), json.dumps(skills), source))
+    run("INSERT INTO profiles(user_id,redacted,redaction,extracted,source,confirmed,identity) VALUES (?,?,?,?,?,NULL,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET redacted=excluded.redacted,redaction=excluded.redaction,extracted=excluded.extracted,source=excluded.source,confirmed=NULL,identity=excluded.identity",
+        (u["id"], redacted, json.dumps(counts), json.dumps(skills), source, json.dumps(identity)))
     audit(u["id"], "cv_parsed", source)
+    if identity["status"] in ("weak", "no_match"):
+        _queue_identity_review(u["id"], identity)
     return {"redacted_preview": redacted[:1500], "redaction": counts, "skills": skills, "source": source,
+            "identity": identity,
             "document": {k: document[k] for k in ("id", "filename", "size_bytes", "status")} if document else None,
             "taxonomy": [{"id": k, "name": v["name"]} for k, v in TAXONOMY.items()]}
 
 
+IDENTITY_CONFIRMATION = (
+    "This CV looks like it may belong to someone else. Confirm that this CV is yours "
+    "to continue. The mismatch is recorded as a signal for human review and never "
+    "rejects an application automatically."
+)
+
+
+def _queue_identity_review(uid, identity):
+    existing = one(
+        "SELECT id FROM identity_reviews WHERE user_id=? AND status='open'", (uid,)
+    )
+    if existing:
+        run("UPDATE identity_reviews SET signal=?, created=? WHERE id=?",
+            (json.dumps(identity), time.time(), existing["id"]))
+        return existing["id"]
+    rid = uuid.uuid4().hex
+    run("INSERT INTO identity_reviews(id,user_id,status,signal,created,note) VALUES (?,?,?,?,?,?)",
+        (rid, uid, "open", json.dumps(identity), time.time(), ""))
+    audit(uid, "cv_identity_review_queued", rid)
+    return rid
+
+
 class Confirm(BaseModel):
     skills: List[str]
+    cv_identity_confirmed: bool = False
 
 
 @app.put("/api/skills")
 def confirm_skills(b: Confirm, u=Depends(current_user)):
     need_consent(u)
+    profile_row = one("SELECT identity FROM profiles WHERE user_id=?", (u["id"],))
+    if profile_row and profile_row["identity"]:
+        try:
+            signal = json.loads(profile_row["identity"])
+        except (TypeError, ValueError):
+            signal = {}
+        if (
+            signal.get("status") in ("weak", "no_match")
+            and not signal.get("confirmed")
+            and not b.cv_identity_confirmed
+        ):
+            raise HTTPException(409, IDENTITY_CONFIRMATION)
+        if b.cv_identity_confirmed and not signal.get("confirmed"):
+            signal["confirmed"] = True
+            signal["confirmed_at"] = time.time()
+            run("UPDATE profiles SET identity=? WHERE user_id=?", (json.dumps(signal), u["id"]))
+            audit(u["id"], "cv_identity_confirmed", signal.get("status", ""))
+            _queue_identity_review(u["id"], signal)
     ids = [s for s in dict.fromkeys(b.skills) if s in TAXONOMY]
     candidate_profile = one(
         "SELECT * FROM candidate_profiles WHERE user_id=?", (u["id"],)
@@ -2899,6 +3515,37 @@ def unlimited_exam_user(uid):
     return bool(user and (user["email"] or "").strip().lower() in UNLIMITED_EXAM_EMAILS)
 
 
+def attempt_seconds(att_or_state) -> int:
+    """Time budget for one attempt (SB-007).
+
+    Every attempt stores the budget it was generated with in
+    ``state.duration_seconds``. Standard adaptive attempts omit it and use the
+    engine default. Reading it here keeps resume, answer, navigate, submit and
+    quit on the same clock.
+    """
+    if isinstance(att_or_state, dict) and "state" in att_or_state:
+        raw = att_or_state["state"]
+        try:
+            state = json.loads(raw) if isinstance(raw, (str, bytes)) else (raw or {})
+        except (TypeError, ValueError):
+            state = {}
+    else:
+        state = att_or_state or {}
+    try:
+        seconds = int(state.get("duration_seconds") or E.TEST_SECONDS)
+    except (TypeError, ValueError):
+        seconds = E.TEST_SECONDS
+    return max(60, seconds)
+
+
+def attempt_deadline(att) -> float:
+    return float(att["started"] or 0) + attempt_seconds(att) + E.GRACE
+
+
+def attempt_expired(att) -> bool:
+    return time.time() > attempt_deadline(att)
+
+
 def view(att, include_session=False):
     st = json.loads(att["state"])
     unlimited_time = unlimited_exam_user(att["user_id"])
@@ -2907,7 +3554,7 @@ def view(att, include_session=False):
     if st.get("graphrag"):
         import graphrag as G
         questions = st["selected_questions"]
-        duration = int(st["duration_seconds"])
+        duration = attempt_seconds(st)
         remaining = 0 if unlimited_time else max(0, int(att["started"] + duration - time.time()))
         index = int(st.get("question_index", 0))
         current = questions[index] if questions else None
@@ -2950,7 +3597,7 @@ def view(att, include_session=False):
             "manual_review_count": sum(1 for q in questions if not (
                 str(q.get("question_type", "")).lower() in ("mcq", "multiple choice") or
                 ("sql" in str(q.get("question_type", "")).lower() and bool(str(q.get("reference_answer", "")).strip()))))}
-    remaining = 0 if unlimited_time else max(0, int(att["started"] + E.TEST_SECONDS - time.time()))
+    remaining = 0 if unlimited_time else max(0, int(attempt_deadline(att) - E.GRACE - time.time()))
     out = {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"], "remaining": remaining, "unlimited_time": unlimited_time, "answered": len(st["answers"]), "total": len(E.SLOTS), **session}
     if att["status"] == "active" and st["current"]:
         out["question"] = E.public_question(QBYID[st["current"]], st)
@@ -3261,7 +3908,7 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
     unlimited_time = (u.get("email") or "").strip().lower() in UNLIMITED_EXAM_EMAILS
     act = one("SELECT * FROM attempts WHERE user_id=? AND status='active'", (u["id"],))
     if act:
-        if not unlimited_time and time.time() > act["started"] + E.TEST_SECONDS + E.GRACE:
+        if not unlimited_time and attempt_expired(dict(act)):
             finalize(dict(act), json.loads(act["state"]))
         else:
             # A fresh page/session takes ownership; the previous tab is rejected from this point.
@@ -3364,7 +4011,7 @@ def answer(aid: str, b: Ans, u=Depends(current_user)):
     if att["status"] != "active": raise HTTPException(409, "Attempt already finished")
     require_screen_share(aid)
     st = json.loads(att["state"])
-    if not unlimited_exam_user(u["id"]) and time.time() > att["started"] + E.TEST_SECONDS + E.GRACE:      # server owns the timer
+    if not unlimited_exam_user(u["id"]) and attempt_expired(att):      # server owns the timer
         finalize(att, st); return view(get_att(aid, u["id"]))
     if st.get("graphrag"):
         question = next((q for q in st["selected_questions"] if q["id"] == b.question_id), None)
@@ -3409,7 +4056,7 @@ def navigate_question(aid: str, b: NavigateQuestion, u=Depends(current_user)):
     if att["status"] != "active" or not st.get("graphrag"):
         raise HTTPException(409, "Question navigation is unavailable")
     require_screen_share(aid)
-    if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
+    if attempt_expired(att):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
     if b.index >= len(st["selected_questions"]):
@@ -3449,7 +4096,7 @@ def goto_question(aid: str, b: GotoQuestion, u=Depends(current_user)):
     if not st.get("graphrag"):
         raise HTTPException(409, "Question navigation is unavailable")
     require_screen_share(aid)
-    if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
+    if attempt_expired(att):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
     if b.index >= len(st["selected_questions"]):
@@ -3489,7 +4136,7 @@ def submit_graphrag_attempt(aid: str, u=Depends(current_user)):
     if att["status"] != "active" or not st.get("graphrag"):
         raise HTTPException(409, "This is not an active GraphRAG assessment")
     require_screen_share(aid)
-    if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
+    if attempt_expired(att):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
     # Skipped questions are allowed: the confirmation happens in the UI. Nothing

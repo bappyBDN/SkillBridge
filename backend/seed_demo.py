@@ -10,16 +10,36 @@ This is demo data only. It uses the same engine (engine.py) and database schema
 (main.py) as the real app, so everything it writes is valid and consistent.
 """
 import json
+import os
 import secrets
+import sys
 import time
 import uuid
 
 import engine as E
-from main import CONSENT_VERSION, SECRET, hash_pw, init_db, one, run
+from main import CONSENT_VERSION, IS_PRODUCTION, SECRET, hash_pw, init_db, one, run
 
 DEMO_EMAIL = "demo@skillbridge.test"
 DEMO_NAME = "Demo Candidate"
-DEMO_PASSWORD = "demo12345"
+PASSWORD_ENV = "SEED_DEMO_PASSWORD"
+
+
+def _guard():
+    """SB-006: never seed a production database and never ship a shared password."""
+    if IS_PRODUCTION:
+        raise SystemExit(
+            "Refusing to seed the demo account: ENV=production. "
+            "Create administrators with create_admin.py instead."
+        )
+    if os.getenv("SEED_DEMO", "false").strip().lower() != "true":
+        raise SystemExit("Refusing to seed the demo account. Set SEED_DEMO=true to opt in.")
+
+
+def _demo_password() -> tuple[str, bool]:
+    supplied = os.getenv(PASSWORD_ENV, "").strip()
+    if supplied:
+        return supplied, False
+    return secrets.token_urlsafe(18), True
 
 # The same synthetic CV the UI offers via the "Use sample CV" button.
 CV_TEXT = """Sadia Rahman
@@ -87,14 +107,16 @@ def _store_attempt(uid, kind, seed, st, started, finished):
 
 
 def seed():
+    _guard()
     init_db()
     if one("SELECT id FROM users WHERE email=?", (DEMO_EMAIL,)):
         print("[seed] demo user already exists; nothing to do")
         return
 
+    password, generated = _demo_password()
     salt = secrets.token_hex(16)
-    uid = run("INSERT INTO users(email,name,salt,pw_hash,created) VALUES (?,?,?,?,?)",
-              (DEMO_EMAIL, DEMO_NAME, salt, hash_pw(DEMO_PASSWORD, salt), time.time()))
+    uid = run("INSERT INTO users(email,name,salt,pw_hash,created,email_verified) VALUES (?,?,?,?,?,?)",
+              (DEMO_EMAIL, DEMO_NAME, salt, hash_pw(password), time.time(), time.time()))
     run("INSERT INTO consents(user_id,version,lang,ts) VALUES (?,?,?,?)",
         (uid, CONSENT_VERSION, "en", time.time()))
     run("INSERT INTO profiles(user_id,redacted,redaction,extracted,source,confirmed) "
@@ -127,9 +149,16 @@ def seed():
     run("INSERT INTO passports(id,user_id,payload,signature,created) VALUES (?,?,?,?,?)",
         (pid, uid, json.dumps(payload), E.sign_payload(payload, SECRET), time.time()))
 
-    print(f"[seed] created demo user  {DEMO_EMAIL} / {DEMO_PASSWORD}  (uid={uid}, passport={pid})")
+    print(f"[seed] created demo user  {DEMO_EMAIL}  (uid={uid}, passport={pid})")
+    if generated:
+        print(f"[seed] generated demo password (shown once): {password}")
+        print("[seed] set SEED_DEMO_PASSWORD to reuse a fixed demo password.")
     print(f"[seed] pre overall={pre_res['overall']}%  post overall={post_res['overall']}%")
 
 
 if __name__ == "__main__":
-    seed()
+    try:
+        seed()
+    except SystemExit as ex:
+        print(f"[seed] {ex}", file=sys.stderr)
+        raise

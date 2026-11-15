@@ -4,6 +4,8 @@ import os, sys, tempfile, json
 _TMP = tempfile.mkdtemp(prefix="sb_hybrid_")
 os.environ.setdefault("DB_PATH", os.path.join(_TMP, "test.db"))
 os.environ["SEED_DEMO"] = "false"
+# Hashing cost is exercised by test_security.py; keep the API suite fast.
+os.environ.setdefault("PBKDF2_ITERATIONS", "1000")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastapi.testclient import TestClient
@@ -14,9 +16,9 @@ client = TestClient(main.app)
 
 def _candidate(email):
     r = client.post("/api/auth/register", json={"email": email, "name": "Hybrid Candidate",
-                                                "password": "password123"})
+                                                "password": "Str0ng-Passw0rd-2026"})
     token = r.json().get("token") or client.post(
-        "/api/auth/login", json={"email": email, "password": "password123"}).json()["token"]
+        "/api/auth/login", json={"email": email, "password": "Str0ng-Passw0rd-2026"}).json()["token"]
     headers = {"Authorization": "Bearer " + token}
     assert client.post("/api/consent", json={"lang": "en"}, headers=headers).status_code == 200
     uid = main.one("SELECT id FROM users WHERE email=?", (email,))["id"]
@@ -25,9 +27,9 @@ def _candidate(email):
 
 def _admin(email):
     r = client.post("/api/auth/register", json={"email": email, "name": "Hybrid Admin",
-                                                "password": "password123", "role": "candidate"})
+                                                "password": "Str0ng-Passw0rd-2026", "role": "candidate"})
     token = r.json().get("token") or client.post(
-        "/api/auth/login", json={"email": email, "password": "password123"}).json()["token"]
+        "/api/auth/login", json={"email": email, "password": "Str0ng-Passw0rd-2026"}).json()["token"]
     headers = {"Authorization": "Bearer " + token}
     uid = main.one("SELECT id FROM users WHERE email=?", (email,))["id"]
     main.run("UPDATE user_roles SET role='admin' WHERE user_id=?", (uid,))

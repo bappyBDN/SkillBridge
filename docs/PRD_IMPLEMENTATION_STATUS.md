@@ -28,7 +28,15 @@
 - No inference of honesty, ability, personality or intent from facial expression, voice tone, blinking or demographic traits.
 - Candidate result sharing is opt-in and revocable.
 - Seeded identities, companies and jobs are synthetic and labelled as demo content.
-- Demo credentials are unsuitable for production. Disable SEED_DEMO on public deployments.
+- Demo credentials are unsuitable for production. Seeding is opt-in, refuses to run with `ENV=production`, and never ships a hardcoded password.
+
+## SQA review remediation (13 Nov 2026)
+Defect-by-defect status for SB-001 … SB-011 is tracked in
+[`SQA_REMEDIATION.md`](./SQA_REMEDIATION.md). Summary: SB-002, SB-003, SB-004,
+SB-006, SB-007, SB-008 and SB-011 are fixed; SB-005 and SB-009 were already
+correct and are now regression-guarded; SB-010 is mitigated with corrected
+advisory wording; SB-001's mechanism is fixed with translation of the landing
+and candidate surfaces remaining in progress.
 
 
 ## Company / Recruiter workspace — PRD v2.0 implementation branch

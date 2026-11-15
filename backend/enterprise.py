@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from main import (current_user, one, allr, run, audit, QBYID, db, DATABASE_URL,
                   COOLDOWN_HOURS, MAX_ATTEMPTS_90D, profile_skill_entries,
                   attempt_evaluations, upsert_answer_evaluation,
-                  recompute_attempt_scores, evaluation_view)
+                  recompute_attempt_scores, evaluation_view, require_verified_email,
+                  IS_PRODUCTION, MFA_REQUIRED_ROLES)
 import engine as E
 from content import RESOURCES, JOB, TAXONOMY
 from urllib.parse import urlparse
@@ -34,6 +35,9 @@ def role_of(user):
 def require_role(user, *roles):
     if role_of(user) not in roles:
         raise HTTPException(403, "This action is not allowed for your account role")
+    # AUTH-04: privileged roles must use MFA on a production deployment.
+    if IS_PRODUCTION and role_of(user) in MFA_REQUIRED_ROLES and not user.get("_mfa_verified"):
+        raise HTTPException(403, "mfa_enrollment_required")
 
 def company_for(user):
     company = one("SELECT * FROM companies WHERE owner_user_id=?", (user["id"],))
@@ -845,6 +849,7 @@ def company_jobs(user=Depends(current_user)):
 @router.post("/api/jobs/{job_id}/apply")
 def apply_to_job(job_id:str,user=Depends(current_user)):
     require_role(user,"candidate")
+    require_verified_email(user)
     if not one("SELECT id FROM jobs WHERE id=? AND status='published'",(job_id,)): raise HTTPException(404,"Published job not found")
     existing=one("SELECT id FROM applications WHERE job_id=? AND candidate_id=?",(job_id,user["id"]))
     if existing: return {"application_id":existing["id"],"status":"already_applied"}
@@ -905,6 +910,46 @@ def admin_users(user=Depends(current_user)):
     require_role(user,"admin")
     rows=allr("SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created FROM users u LEFT JOIN user_roles r ON r.user_id=u.id ORDER BY u.created DESC LIMIT 500")
     return {"items":[dict(r) for r in rows]}
+
+@router.get("/api/admin/identity-reviews")
+def admin_identity_reviews(user=Depends(current_user)):
+    """Human review queue for CVs that did not clearly match the account (SB-004)."""
+    require_role(user, "admin")
+    rows = allr(
+        "SELECT r.id, r.user_id, r.status, r.signal, r.created, r.reviewed_at, r.note, "
+        "u.name AS account_name, u.email AS account_email "
+        "FROM identity_reviews r JOIN users u ON u.id=r.user_id "
+        "ORDER BY CASE WHEN r.status='open' THEN 0 ELSE 1 END, r.created DESC LIMIT 200"
+    )
+    items = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["signal"] = json.loads(item["signal"] or "{}")
+        except (TypeError, ValueError):
+            item["signal"] = {}
+        items.append(item)
+    return {"items": items}
+
+
+class IdentityReviewDecision(BaseModel):
+    decision: str
+    note: str = ""
+
+
+@router.post("/api/admin/identity-reviews/{review_id}/decision")
+def admin_identity_decision(review_id: str, body: IdentityReviewDecision, user=Depends(current_user)):
+    require_role(user, "admin")
+    if body.decision not in ("cleared", "needs_review", "escalated"):
+        raise HTTPException(422, "Decision must be cleared, needs_review or escalated")
+    review = one("SELECT * FROM identity_reviews WHERE id=?", (review_id,))
+    if not review:
+        raise HTTPException(404, "Identity review not found")
+    run("UPDATE identity_reviews SET status=?, reviewed_by=?, reviewed_at=?, note=? WHERE id=?",
+        (body.decision, user["id"], time.time(), body.note[:1000], review_id))
+    audit(user["id"], "identity_review_" + body.decision, review_id)
+    return {"id": review_id, "status": body.decision}
+
 
 @router.get("/api/admin/company-assessments")
 def admin_company_assessments(user=Depends(current_user)):
@@ -1193,6 +1238,7 @@ def update_company_job(job_id: str, body: CompanyJobInput, user=Depends(current_
 
 @router.post("/api/company/jobs/{job_id}/publish")
 def publish_company_job(job_id: str, user=Depends(current_user)):
+    require_verified_email(user)
     company = company_for_access(user)
     require_company_permission(user, company, "owner", "recruiter")
     job = company_job(company["id"], job_id)

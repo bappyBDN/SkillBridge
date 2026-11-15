@@ -25,9 +25,11 @@ services:
         value: "336"
       - key: MAX_ATTEMPTS_90D
         value: "3"
-      # Never seed demo accounts into the public production database.
+      # Never seed demo accounts into the public production database (SB-006).
       - key: SEED_DEMO
         value: "false"
+      - key: ENV
+        value: production
       # CV extraction provider (LLM) with automatic failover.
       - key: AI_PROVIDER
         value: groq

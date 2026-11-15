@@ -8,12 +8,17 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: python -m compileall -q backend
-      - run: pip install pytest pydantic==2.10.4 httpx==0.28.1
-      - run: cd backend && python -m pytest -q tests
+      - run: pip install pytest pytest-cov pydantic==2.10.4 httpx==0.28.1
+      # Engine, GraphRAG, security, API and tenant-isolation tests (SB-011).
+      # The coverage gate keeps new endpoints from shipping untested.
+      - run: cd backend && python -m pytest -q tests --cov=. --cov-report=term-missing --cov-fail-under=60
   web-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: cd frontend && npm install --no-audit --no-fund && npm run build
+        with: { node-version: "20" }
+      - run: cd frontend && npm install --no-audit --no-fund --legacy-peer-deps
+      # no-undef is the rule that would have caught SB-005 (restartShare ReferenceError).
+      - run: cd frontend && npm run lint
+      - run: cd frontend && npm run build

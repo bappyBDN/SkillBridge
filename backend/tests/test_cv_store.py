@@ -5,6 +5,8 @@ _TMP = tempfile.mkdtemp(prefix="sb_test_")
 os.environ["DB_PATH"] = os.path.join(_TMP, "test.db")
 os.environ["STORAGE_LOCAL_DIR"] = os.path.join(_TMP, "cv_files")
 os.environ["SEED_DEMO"] = "false"
+# Hashing cost is exercised by test_security.py; keep the API suite fast.
+os.environ.setdefault("PBKDF2_ITERATIONS", "1000")
 os.environ.pop("DATABASE_URL", None)
 os.environ.pop("STORAGE_BACKEND", None)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,8 +26,8 @@ CV = b"Rafi Ahmed\nB.Sc. in Computer Science and Engineering\nSkills: Python, SQ
 
 
 def _user(email):
-    r = client.post("/api/auth/register", json={"email": email, "name": "Rafi Ahmed", "password": "password123"})
-    token = r.json().get("token") or client.post("/api/auth/login", json={"email": email, "password": "password123"}).json()["token"]
+    r = client.post("/api/auth/register", json={"email": email, "name": "Rafi Ahmed", "password": "Str0ng-Passw0rd-2026"})
+    token = r.json().get("token") or client.post("/api/auth/login", json={"email": email, "password": "Str0ng-Passw0rd-2026"}).json()["token"]
     h = {"Authorization": f"Bearer {token}"}
     assert client.post("/api/consent", json={"lang": "en"}, headers=h).status_code == 200
     uid = main.one("SELECT id FROM users WHERE email=?", (email,))["id"]
@@ -748,7 +750,7 @@ def test_company_and_admin_views_share_the_candidate_skill_alignment():
 
     company_reg = client.post(
         "/api/auth/register",
-        json={"email": "company-align@example.com", "name": "Acme", "password": "password123", "role": "company"},
+        json={"email": "company-align@example.com", "name": "Acme", "password": "Str0ng-Passw0rd-2026", "role": "company"},
     )
     assert company_reg.status_code == 200, company_reg.text
     company_headers = {"Authorization": "Bearer " + company_reg.json()["token"]}
@@ -772,7 +774,7 @@ def test_company_and_admin_views_share_the_candidate_skill_alignment():
 
     admin_reg = client.post(
         "/api/auth/register",
-        json={"email": "alignment-admin@example.com", "name": "Admin", "password": "password123", "role": "candidate"},
+        json={"email": "alignment-admin@example.com", "name": "Admin", "password": "Str0ng-Passw0rd-2026", "role": "candidate"},
     )
     admin_headers = {"Authorization": "Bearer " + admin_reg.json()["token"]}
     admin_uid = main.one("SELECT id FROM users WHERE email=?", ("alignment-admin@example.com",))["id"]
@@ -820,7 +822,7 @@ def test_admin_approval_updates_learning_path_and_creates_passport():
 
     admin_reg = client.post(
         "/api/auth/register",
-        json={"email": "approval-flow-admin@example.com", "name": "Approver", "password": "password123", "role": "candidate"},
+        json={"email": "approval-flow-admin@example.com", "name": "Approver", "password": "Str0ng-Passw0rd-2026", "role": "candidate"},
     )
     admin_headers = {"Authorization": "Bearer " + admin_reg.json()["token"]}
     admin_uid = main.one("SELECT id FROM users WHERE email=?", ("approval-flow-admin@example.com",))["id"]
@@ -935,7 +937,7 @@ def test_honesty_score_default_review_and_decision():
     admin_reg = client.post(
         "/api/auth/register",
         json={"email": "honesty-admin@example.com", "name": "Honesty Reviewer",
-              "password": "password123", "role": "candidate"},
+              "password": "Str0ng-Passw0rd-2026", "role": "candidate"},
     )
     admin_headers = {"Authorization": "Bearer " + admin_reg.json()["token"]}
     admin_uid = main.one("SELECT id FROM users WHERE email=?", ("honesty-admin@example.com",))["id"]

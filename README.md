@@ -60,13 +60,15 @@ python create_admin.py
 
 Enter your own email and a unique password of at least 14 characters when prompted. Do not put the password in source code or commit it. Then sign in from the Vercel site; the Admin Console is shown for the provisioned admin account.
 
-> ⚠️ The Blueprint currently sets `SEED_DEMO=true`, so the synthetic demo accounts (including `admin@test.com` / `12345678`) are seeded on the Render service startup via `start.sh`. **Set `SEED_DEMO=false` before any public launch** — these are known, hardcoded local-demo credentials and must never exist on a publicly reachable deployment.
+> ✅ `SEED_DEMO` is `false` in `render.yaml` and both seeders refuse to run when `ENV=production`. Demo credentials are generated per deployment and are never committed (SB-006).
 
 ### 4. Production settings
 
 - Keep `SECRET_KEY` generated and stable; do not rotate it casually because it signs active login tokens and Skill Passports.
 - Keep `DATABASE_URL` connected to the managed PostgreSQL database. Do not use SQLite on an ephemeral web-service filesystem for production.
-- The Blueprint sets `RETEST_COOLDOWN_HOURS=336`. `SEED_DEMO` is enabled for local/demo testing; disable it before a public launch.
+- The Blueprint sets `RETEST_COOLDOWN_HOURS=336` and `SEED_DEMO=false`. Seeding is opt-in and refuses to run with `ENV=production`.
+- Set `ENV=production` on any public deployment. It enables the MFA requirement for admin and company-owner accounts and blocks seeding.
+- Configure `SMTP_HOST`, `SMTP_FROM` (plus optional `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`) to send email-verification messages. Without SMTP the deployment verifies addresses automatically and says so, so demos keep working.
 - Add any additional frontend domains to `CORS_ORIGINS` and redeploy the API.
 - Add `ANTHROPIC_API_KEY` in Render only if you want the optional LLM extraction path.
 - For CV-to-profile extraction, set `AI_PROVIDER` and the matching provider API key/model (`OPENAI_*`, `GEMINI_*`, `GROK_*`, or `DEEPSEEK_*`) in the backend environment. `AI_PROVIDER_FALLBACKS` may list additional configured providers. Never put these keys in frontend/Vite environment variables. If no provider is configured, CV profile extraction reports an error and candidates can still create a profile manually.
@@ -254,15 +256,23 @@ This branch adds a PostgreSQL 16 service, persistent storage, a health check, a 
 - Admin-only overview, user list and company-specific assessment request list.
 
 ### Synthetic demo data
-When SEED_DEMO=true, synthetic demo accounts are seeded (password demo12345):
+Seeding is opt-in and disabled in production. Both seeders refuse to run when
+`ENV=production`, and neither one ships a hardcoded password (SB-006).
+
+```bash
+SEED_DEMO=true SEED_DEMO_PASSWORD='<unique-strong-password>' python seed_demo.py
+SEED_DEMO=true SEED_DEMO_PASSWORD='<unique-strong-password>' python seed_enterprise.py
+```
+
+When `SEED_DEMO_PASSWORD` is omitted a random password is generated and printed
+once by the seeder. Accounts created with `SEED_DEMO=true`:
+
 - Candidate: demo@skillbridge.test
 - Recruiter: recruiter@skillbridge.test
 - Admin: admin@skillbridge.test
 
-A second admin account for reaching the Admin Console is also seeded:
-- Admin: admin@test.com / password 12345678 (local demo only)
-
-Demo jobs are explicitly marked MOCK and are not real vacancies. These credentials are local-demo-only; do not enable public demo accounts in production.
+Create real administrators with `python create_admin.py`; no fixed admin
+credential exists anywhere in the repository.
 
 ### Known remaining PRD work
 This is an initial vertical slice, not a completed production platform. Alembic migrations, complete authorization/security tests, DeepSeek provider integration, pgvector RAG, payment webhooks, official score review, OCR fallback, hardened code execution and end-to-end production deployment remain future work.

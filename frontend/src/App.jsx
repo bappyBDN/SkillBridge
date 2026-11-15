@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback, useRef, Component } from "react";
 import { api, getToken, setToken } from "./api.js";
-import { LangCtx, useT } from "./i18n.js";
+import { LangCtx, LangSetCtx, useT, useSetLang, useLangValue } from "./i18n.js";
 import CandidateProfileWorkspace from "./CandidateProfileWorkspace.jsx";
 import Avatar, { useAvatar } from "./Avatar.jsx";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
@@ -105,8 +105,20 @@ function BridgeRail() {
   );
 }
 
+function passwordScore(pw) {
+  if (!pw) return 0;
+  let score = 0;
+  if (pw.length >= 12) score += 1;
+  if (pw.length >= 16) score += 1;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score += 1;
+  if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) score += 1;
+  if (/^(1234|abcd|qwer|asdf)/i.test(pw)) score = Math.max(0, score - 2);
+  return Math.min(score, 4);
+}
+
 function Landing({ onAuthed }) {
   const t = useT();
+  const L = t("landing");
   const [mode, setMode] = useState(
     location.hash === "#signin" ? "login" : "register",
   );
@@ -114,12 +126,18 @@ function Landing({ onAuthed }) {
     name: "",
     email: "",
     password: "",
+    confirm: "",
     role: "candidate",
   });
   const [err, setErr] = useState(null);
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [mfaChallenge, setMfaChallenge] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const isRegister = mode === "register";
+  const score = passwordScore(f.password);
+  const confirmMismatch = isRegister && f.confirm && f.confirm !== f.password;
   useEffect(() => {
     const syncMode = () => {
       if (location.hash === "#signin") setMode("login");
@@ -130,20 +148,54 @@ function Landing({ onAuthed }) {
   }, []);
   const changeMode = (next) => {
     setErr(null);
+    setNotice("");
+    setMfaChallenge("");
     setMode(next);
     history.replaceState(null, "", next === "login" ? "#signin" : "#signup");
   };
   const submit = async (e) => {
     e.preventDefault();
     setErr(null);
+    setNotice("");
+    if (isRegister) {
+      if (f.password !== f.confirm) {
+        setErr(new Error(L.passwordMismatch));
+        return;
+      }
+      if (score < 2) {
+        setErr(new Error(L.passwordWeak));
+        return;
+      }
+    }
     setBusy(true);
     try {
+      if (mfaChallenge) {
+        const r = await api("/auth/mfa/verify", {
+          method: "POST",
+          body: { challenge: mfaChallenge, code: mfaCode },
+        });
+        setToken(r.token);
+        onAuthed();
+        return;
+      }
       const r = await api(isRegister ? "/auth/register" : "/auth/login", {
         method: "POST",
-        body: isRegister ? f : { email: f.email, password: f.password },
+        body: isRegister
+          ? { name: f.name, email: f.email, password: f.password, role: f.role }
+          : { email: f.email, password: f.password },
       });
-      setToken(r.token);
-      onAuthed();
+      if (r.mfa_required) {
+        setMfaChallenge(r.challenge);
+        return;
+      }
+      if (r.token) {
+        setToken(r.token);
+        onAuthed();
+        return;
+      }
+      // Registration was accepted without an immediate session (email verification).
+      setNotice(r.message || L.verifySent);
+      changeMode("login");
     } catch (x) {
       setErr(x);
     } finally {
@@ -151,66 +203,44 @@ function Landing({ onAuthed }) {
     }
   };
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const focusSignup = (role) => {
+    setF((v) => ({ ...v, role }));
+    changeMode("register");
+    document.getElementById("signup")?.scrollIntoView({ behavior: "smooth" });
+  };
   return (
     <main className="sb-marketing">
       <section className="sb-hero" id="top">
         <div className="sb-hero-copy">
           <div className="sb-eyebrow">
             <span className="sb-eyebrow-dot" />{" "}
-            {isRegister
-              ? "YOUR NEXT CHAPTER STARTS HERE"
-              : "WELCOME BACK TO SKILLBRIDGE"}
+            {isRegister ? L.eyebrowRegister : L.eyebrowLogin}
           </div>
           <h1>
             {isRegister ? (
               <>
-                Build skills.
+                {L.heroRegisterA}
                 <br />
-                <em>Prove your potential.</em>
+                <em>{L.heroRegisterB}</em>
               </>
             ) : (
               <>
-                Good to see
+                {L.heroLoginA}
                 <br />
-                <em>you again.</em>
+                <em>{L.heroLoginB}</em>
               </>
             )}
           </h1>
           <p className="sb-hero-lead">
-            {isRegister
-              ? "A clearer path from what you know to what you can do. Build your skill profile, take practical assessments and share verified evidence of your abilities."
-              : "Sign in to continue your skill journey, review your progress and pick up right where you left off."}
+            {isRegister ? L.leadRegister : L.leadLogin}
           </p>
-          <div className="sb-hero-points">
-            <div>
-              <span className="sb-point-icon">01</span>
-              <span>
-                <b>Show what you can do</b>
-                <small>Turn skills into structured evidence.</small>
-              </span>
-            </div>
-            <div>
-              <span className="sb-point-icon">02</span>
-              <span>
-                <b>Know what to improve</b>
-                <small>See where your strengths can grow.</small>
-              </span>
-            </div>
-            <div>
-              <span className="sb-point-icon">03</span>
-              <span>
-                <b>Move forward with confidence</b>
-                <small>Share a skills passport when you're ready.</small>
-              </span>
-            </div>
-          </div>
-          <div className="sb-hero-foot">
-            <span className="sb-avatar-stack">
-              <i>C</i>
-              <i>R</i>
-              <i>S</i>
-            </span>
-            <span>One platform for candidates and hiring teams</span>
+          <div className="sb-hero-actions">
+            <a className="sb-hero-cta" href="#signup" onClick={() => changeMode("register")}>
+              {L.candidateCta} <span>→</span>
+            </a>
+            <a className="sb-hero-secondary" href="#how-it-works">
+              {L.howItWorks}
+            </a>
           </div>
         </div>
         <div className="sb-auth-wrap" id="signup">
@@ -219,29 +249,17 @@ function Landing({ onAuthed }) {
             <div className="sb-auth-card-top">
               <span className="sb-auth-mark">S</span>
               <span className="sb-auth-secure">
-                <span /> Secure account access
+                <span /> {L.authSecure}
               </span>
             </div>
             <div className="sb-auth-heading">
               <div className="sb-kicker">
-                {isRegister
-                  ? "GET STARTED — IT'S FREE TO JOIN"
-                  : "YOUR SKILLBRIDGE ACCOUNT"}
+                {isRegister ? L.authKickerRegister : L.authKickerLogin}
               </div>
-              <h2>
-                {isRegister ? "Create your account" : "Sign in to SkillBridge"}
-              </h2>
-              <p>
-                {isRegister
-                  ? "A few details to get your journey moving."
-                  : "Enter your details to access your workspace."}
-              </p>
+              <h2>{isRegister ? L.authTitleRegister : L.authTitleLogin}</h2>
+              <p>{isRegister ? L.authSubRegister : L.authSubLogin}</p>
             </div>
-            <div
-              className="sb-auth-tabs"
-              role="tablist"
-              aria-label="Account access"
-            >
+            <div className="sb-auth-tabs" role="tablist" aria-label="Account access">
               <button
                 type="button"
                 role="tab"
@@ -249,7 +267,7 @@ function Landing({ onAuthed }) {
                 className={isRegister ? "active" : ""}
                 onClick={() => changeMode("register")}
               >
-                Create account
+                {L.tabCreate}
               </button>
               <button
                 type="button"
@@ -258,24 +276,13 @@ function Landing({ onAuthed }) {
                 className={!isRegister ? "active" : ""}
                 onClick={() => changeMode("login")}
               >
-                Sign in
+                {L.tabSignin}
               </button>
             </div>
             <form className="sb-auth-form" onSubmit={submit}>
               {isRegister && (
                 <>
-                  <label>
-                    Full name
-                    <input
-                      value={f.name}
-                      onChange={set("name")}
-                      required
-                      minLength={2}
-                      autoComplete="name"
-                      placeholder="e.g. Samira Ahmed"
-                    />
-                  </label>
-                  <div className="sb-field-label">I’m joining as</div>
+                  <div className="sb-field-label">{L.joiningAs}</div>
                   <div className="sb-role-choices">
                     <button
                       type="button"
@@ -284,8 +291,8 @@ function Landing({ onAuthed }) {
                     >
                       <span className="sb-role-icon">↗</span>
                       <span>
-                        <b>Candidate</b>
-                        <small>Build my skill profile</small>
+                        <b>{L.roleCandidate}</b>
+                        <small>{L.roleCandidateSub}</small>
                       </span>
                       <i>{f.role === "candidate" ? "✓" : ""}</i>
                     </button>
@@ -296,16 +303,27 @@ function Landing({ onAuthed }) {
                     >
                       <span className="sb-role-icon">⌂</span>
                       <span>
-                        <b>Company</b>
-                        <small>Hire with confidence</small>
+                        <b>{L.roleCompany}</b>
+                        <small>{L.roleCompanySub}</small>
                       </span>
                       <i>{f.role === "company" ? "✓" : ""}</i>
                     </button>
                   </div>
+                  <label>
+                    {L.labelName}
+                    <input
+                      value={f.name}
+                      onChange={set("name")}
+                      required
+                      minLength={2}
+                      autoComplete="name"
+                      placeholder="e.g. Samira Ahmed"
+                    />
+                  </label>
                 </>
               )}
               <label>
-                Email address
+                {L.labelEmail}
                 <input
                   type="email"
                   value={f.email}
@@ -315,138 +333,136 @@ function Landing({ onAuthed }) {
                   placeholder="you@example.com"
                 />
               </label>
-              <label>
-                Password
-                <div className="sb-password-field">
+              {!mfaChallenge && (
+                <label>
+                  {L.labelPassword}
+                  <div className="sb-password-field">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={f.password}
+                      onChange={set("password")}
+                      required
+                      minLength={isRegister ? 12 : 1}
+                      maxLength={128}
+                      autoComplete={isRegister ? "new-password" : "current-password"}
+                      placeholder={isRegister ? "At least 12 characters" : ""}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? L.hide : L.show}
+                    >
+                      {showPassword ? L.hide : L.show}
+                    </button>
+                  </div>
+                  {isRegister && (
+                    <>
+                      <div className={"sb-strength s" + score} aria-hidden="true">
+                        <span /><span /><span /><span />
+                      </div>
+                      <small className="sb-hint">
+                        {score >= 3 ? "✓ " : ""}
+                        {L.passwordHint}
+                      </small>
+                    </>
+                  )}
+                </label>
+              )}
+              {isRegister && !mfaChallenge && (
+                <label>
+                  {L.confirmPassword}
                   <input
                     type={showPassword ? "text" : "password"}
-                    value={f.password}
-                    onChange={set("password")}
+                    value={f.confirm}
+                    onChange={set("confirm")}
                     required
-                    minLength={8}
-                    autoComplete={
-                      isRegister ? "new-password" : "current-password"
-                    }
-                    placeholder="At least 8 characters"
+                    autoComplete="new-password"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={
-                      showPassword ? "Hide password" : "Show password"
-                    }
-                  >
-                    {showPassword ? "Hide" : "Show"}
-                  </button>
-                </div>
-              </label>
+                  {confirmMismatch && <small className="err">{L.passwordMismatch}</small>}
+                </label>
+              )}
+              {mfaChallenge && (
+                <label>
+                  Authenticator code
+                  <input
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    required
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123456"
+                  />
+                </label>
+              )}
+              {notice && <p className="sb-notice" role="status">{notice}</p>}
               <Err e={err} />
-              <button className="sb-submit" disabled={busy}>
+              <button className="sb-submit" disabled={busy || Boolean(confirmMismatch)}>
                 {busy
-                  ? "Please wait…"
-                  : isRegister
-                    ? "Create my account"
-                    : "Sign in securely"}
+                  ? L.submitting
+                  : mfaChallenge
+                    ? "Verify code"
+                    : isRegister
+                      ? L.submitRegister
+                      : L.submitLogin}
                 <span>→</span>
               </button>
             </form>
             <div className="sb-auth-switch">
-              {isRegister ? "Already have an account?" : "New to SkillBridge?"}{" "}
+              {isRegister ? L.switchHave : L.switchNew}{" "}
               <button
                 type="button"
                 onClick={() => changeMode(isRegister ? "login" : "register")}
               >
-                {isRegister ? "Sign in" : "Create an account"}
+                {isRegister ? L.tabSignin : L.tabCreate}
               </button>
             </div>
-            <div className="sb-auth-legal">
-              By continuing, you agree to use SkillBridge responsibly and
-              provide accurate information.
-            </div>
+            <div className="sb-auth-legal">{L.legal}</div>
           </div>
           <div className="sb-auth-note">
-            <span>✦</span> A more meaningful way to demonstrate what you know.
+            <span>✦</span> {L.authNote}
           </div>
         </div>
       </section>
       <section className="sb-proof-strip" aria-label="SkillBridge journey">
-        <div className="sb-proof-title">A journey built around evidence</div>
+        <div className="sb-proof-title">{L.proofTitle}</div>
         <div className="sb-journey">
-          <span>
-            <i>01</i> Profile
-          </span>
-          <b>—</b>
-          <span>
-            <i>02</i> Assess
-          </span>
-          <b>—</b>
-          <span>
-            <i>03</i> Improve
-          </span>
-          <b>—</b>
-          <span>
-            <i>04</i> Reassess
-          </span>
-          <b>—</b>
-          <span>
-            <i>05</i> Share
-          </span>
+          {L.journey.map((step, index) => (
+            <>
+              {index > 0 && <b key={"sep" + index}>—</b>}
+              <span key={step}>
+                <i>{String(index + 1).padStart(2, "0")}</i> {step}
+              </span>
+            </>
+          ))}
         </div>
       </section>
       <section className="sb-value-section" id="how-it-works">
         <div className="sb-section-intro">
-          <div className="sb-kicker">ONE BRIDGE. TWO SIDES.</div>
+          <div className="sb-kicker">{L.valueKicker}</div>
           <h2>
-            Make skills easier to see.
+            {L.valueTitleA}
             <br />
-            <em>And easier to trust.</em>
+            <em>{L.valueTitleB}</em>
           </h2>
-          <p>
-            SkillBridge brings candidate development and evidence-led hiring
-            into one connected experience.
-          </p>
+          <p>{L.valueLead}</p>
         </div>
         <div className="sb-value-grid">
           <article className="sb-value-card">
-            <div className="sb-value-number">01 / FOR CANDIDATES</div>
+            <div className="sb-value-number">{L.candidateTag}</div>
             <div className="sb-value-icon">↗</div>
-            <h3>Turn your potential into proof.</h3>
-            <p>
-              Build a structured profile, understand skill gaps, practise
-              through assessments and share your skills passport with control.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setF((v) => ({ ...v, role: "candidate" }));
-                changeMode("register");
-                document
-                  .getElementById("signup")
-                  ?.scrollIntoView({ behavior: "smooth" });
-              }}
-            >
-              Start as a candidate <span>→</span>
+            <h3>{L.candidateTitle}</h3>
+            <p>{L.candidateBody}</p>
+            <button type="button" onClick={() => focusSignup("candidate")}>
+              {L.candidateCta} <span>→</span>
             </button>
           </article>
           <article className="sb-value-card sb-value-card-dark">
-            <div className="sb-value-number">02 / FOR COMPANIES</div>
+            <div className="sb-value-number">{L.companyTag}</div>
             <div className="sb-value-icon">⌂</div>
-            <h3>Hire with a clearer picture.</h3>
-            <p>
-              Organise roles, review applicants, manage hiring stages and use
-              structured assessment evidence to support decisions.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setF((v) => ({ ...v, role: "company" }));
-                changeMode("register");
-                document
-                  .getElementById("signup")
-                  ?.scrollIntoView({ behavior: "smooth" });
-              }}
-            >
-              Build your hiring workspace <span>→</span>
+            <h3>{L.companyTitle}</h3>
+            <p>{L.companyBody}</p>
+            <button type="button" onClick={() => focusSignup("company")}>
+              {L.companyCta} <span>→</span>
             </button>
           </article>
         </div>
@@ -455,14 +471,15 @@ function Landing({ onAuthed }) {
         <div>
           <span className="sb-footer-mark">S</span>
           <b>SkillBridge</b>
-          <small>Skills. Evidence. Opportunity.</small>
+          <small>{L.footerTag}</small>
         </div>
-        <span>Connecting capability with opportunity.</span>
-        <a href="#top">Back to top ↑</a>
+        <span>{L.footerNote}</span>
+        <a href="#top">{L.backToTop}</a>
       </footer>
     </main>
   );
 }
+
 /* ---------- consent ---------- */
 function Consent({ lang, onDone }) {
   const t = useT();
@@ -3496,17 +3513,8 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       </div>
       <div className={"exam-optional" + (micReady ? " on" : "")}>
         <div>
-          <strong>Microphone monitoring <span className="optional-tag">REQUIRED</span></strong>
-          <span>Required for this assessment. Uses an on-device loudness level only; audio is never recorded, stored or uploaded.</span>
-        </div>
-        <button type="button" className="btn ghost sm" onClick={toggleMic} disabled={setupBusy}>
-          {micReady ? "Microphone on · turn off" : "Enable microphone"}
-        </button>
-      </div>
-      <div className={"exam-optional" + (micReady ? " on" : "")}>
-        <div>
-          <strong>Microphone monitoring <span className="optional-tag">REQUIRED</span></strong>
-          <span>Required for this assessment. Uses an on-device loudness level only; audio is never recorded, stored or uploaded.</span>
+          <strong>Microphone monitoring <span className="optional-tag">ADVISORY</span></strong>
+          <span>Optional. Uses an on-device loudness level only; audio is never recorded, stored or uploaded. Signals are advisory and never fail you automatically.</span>
         </div>
         <button type="button" className="btn ghost sm" onClick={toggleMic} disabled={setupBusy}>
           {micReady ? "Microphone on · turn off" : "Enable microphone"}
@@ -3514,10 +3522,10 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       </div>
       <Err e={err} />
       <div className="exam-setup-actions">
-        <button className="btn" onClick={start} disabled={setupBusy || mobileDevice || !browserSupported || !navigator.onLine || !shareReady || !fullscreenReady || !cameraReady || !micReady}>
+        <button className="btn" onClick={start} disabled={setupBusy || mobileDevice || !browserSupported || !navigator.onLine || !shareReady || !fullscreenReady || !cameraReady}>
           {setupBusy ? t("saving") : t("resume")}
         </button>
-        <small>Screen sharing, webcam, microphone and full-screen must be active before you can resume.</small>
+        <small>Screen sharing, webcam and full-screen must be active before you can resume. Integrity signals are advisory and reviewed by a person.</small>
       </div>
       <CameraPreview stream={cameraStream} />
     </section>
@@ -3573,8 +3581,8 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       </div>
       <div className={"exam-optional" + (micReady ? " on" : "")}>
         <div>
-          <strong>Microphone monitoring <span className="optional-tag">REQUIRED</span></strong>
-          <span>Required for this assessment. Uses an on-device loudness level only; audio is never recorded, stored or uploaded.</span>
+          <strong>Microphone monitoring <span className="optional-tag">ADVISORY</span></strong>
+          <span>Optional. Uses an on-device loudness level only; audio is never recorded, stored or uploaded. Signals are advisory and reviewed by a person.</span>
         </div>
         <button type="button" className="btn ghost sm" onClick={toggleMic} disabled={setupBusy}>
           {micReady ? "Microphone on · turn off" : "Enable microphone"}
@@ -4794,6 +4802,8 @@ function CandidateApplications() {
   );
 }
 function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
+  const lang = useLangValue();
+  const setLang = useSetLang();
   const [section, setSection] = useState("overview");
   const [journeyView, setJourneyView] = useState(() => {
     const completed = (st.attempts || []).filter(
@@ -4817,21 +4827,26 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   const done = (st?.attempts || []).filter((a) => a.status === "done");
   const latest = done[done.length - 1];
 
+  const W = t("ws");
   const nav = [
-    { id: "overview", label: "Overview", icon: "⌂", group: "WORKSPACE" },
-    { id: "profile", label: "My profile", icon: "◉", group: "WORKSPACE" },
-    { id: "jobs", label: "Find jobs", icon: "↗", group: "WORKSPACE" },
+    { id: "overview", label: W.overview, icon: "⌂", group: "WORKSPACE" },    { id: "profile", label: W.myProfile, icon: "◉", group: "WORKSPACE" },
+    { id: "jobs", label: W.findJobs, icon: "↗", group: "WORKSPACE" },
     {
       id: "applications",
-      label: "Applications",
+      label: W.applications,
       icon: "▤",
       group: "WORKSPACE",
     },
-    { id: "journey", label: "Skill journey", icon: "⌁", group: "GROWTH" },
-    { id: "learning", label: "Learning & retakes", icon: "↗", group: "GROWTH" },
-    { id: "passport", label: "Skill Passport", icon: "◇", group: "GROWTH" },
-    { id: "privacy", label: "Data & privacy", icon: "▣", group: "ACCOUNT" },
+    { id: "journey", label: W.journey, icon: "⌁", group: "GROWTH" },
+    { id: "learning", label: W.learning, icon: "↗", group: "GROWTH" },
+    { id: "passport", label: W.passport, icon: "◇", group: "GROWTH" },
+    { id: "privacy", label: W.privacy, icon: "▣", group: "ACCOUNT" },
   ];
+  const groupLabel = {
+    WORKSPACE: W.groupWorkspace,
+    GROWTH: W.groupGrowth,
+    ACCOUNT: W.groupAccount,
+  };
   const go = (id) => {
     setSection(id);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -4842,7 +4857,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
         <div className="sidebar-brand">
           <span className="brand-mark">S</span>
           <span>
-            SkillBridge<small>CAREER WORKSPACE</small>
+            SkillBridge<small>{W.careerWorkspace}</small>
           </span>
         </div>
         <div className="sidebar-profile">
@@ -4855,12 +4870,12 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
           />
           <div>
             <strong>{st.user?.name}</strong>
-            <small>Candidate account</small>
+            <small>{W.candidateAccount}</small>
           </div>
         </div>
         {["WORKSPACE", "GROWTH", "ACCOUNT"].map((group) => (
           <div className="sidebar-group" key={group}>
-            <p>{group}</p>
+            <p>{groupLabel[group]}</p>
             {nav
               .filter((n) => n.group === group)
               .map((n) => (
@@ -4879,11 +4894,11 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
         ))}
         <div className="sidebar-bottom">
           <div className="sidebar-tip">
-            <strong>Keep growing</strong>
-            <p>Verify skills, learn from gaps and build proof of progress.</p>
-            <button onClick={() => go("journey")}>Continue learning →</button>
+            <strong>{W.keepGrowing}</strong>
+            <p>{W.keepGrowingBody}</p>
+            <button onClick={() => go("journey")}>{W.continueLearning}</button>
           </div>
-          <p className="sidebar-version">SkillBridge · Candidate</p>
+          <p className="sidebar-version">SkillBridge · {W.candidateAccount}</p>
         </div>
       </aside>
       <main className="candidate-main">
@@ -4893,18 +4908,15 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <strong>SkillBridge</strong>
           </div>
           <div className="breadcrumb">
-            Candidate workspace <span>/</span>{" "}
+            {W.candidateWorkspace} <span>/</span>{" "}
             {nav.find((n) => n.id === section)?.label}
           </div>
           <div className="topbar-actions">
             <div className="language-switch">
               <select
                 aria-label="Language"
-                value={localStorage.getItem("sb_lang") || "en"}
-                onChange={(e) => {
-                  localStorage.setItem("sb_lang", e.target.value);
-                  location.reload();
-                }}
+                value={lang}
+                onChange={(e) => setLang(e.target.value)}
               >
                 <option value="en">English</option>
                 <option value="bn">বাংলা</option>
@@ -4922,7 +4934,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
               className="candidate-logout"
               onClick={onLogout}
             >
-              Sign out
+              {W.signOut}
             </button>
           </div>
         </header>
@@ -12158,6 +12170,9 @@ function Shell({ lang, setLang }) {
   }, [authed, refresh]);
 
   const logout = () => {
+    // Revoke the session server-side as well as clearing the local token
+    // (SB-003 / AUTH-05).
+    api("/auth/logout", { method: "POST" }).catch(() => {});
     setToken(null);
     setAuthed(false);
     setRole(null);
@@ -12262,14 +12277,66 @@ export default function App() {
   }, []);
   const m = hash.match(/^#\/p\/([\w-]+)/);
   return (
-    <LangCtx.Provider value={lang}>
-      {m ? (
-        <PublicPassport id={m[1]} />
-      ) : (
-        <Shell lang={lang} setLang={setLang} />
-      )}
-    </LangCtx.Provider>
+    <ErrorBoundary>
+      <LangCtx.Provider value={lang}>
+        <LangSetCtx.Provider value={setLang}>
+          {m ? (
+            <PublicPassport id={m[1]} />
+          ) : (
+            <Shell lang={lang} setLang={setLang} />
+          )}
+        </LangSetCtx.Provider>
+      </LangCtx.Provider>
+    </ErrorBoundary>
   );
+}
+
+/* ---------- error boundary (SB-005) ---------- */
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    // Keep the console useful for the team without shipping stack traces to users.
+    console.error("SkillBridge UI error", error, info?.componentStack);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <main className="wrap">
+        <section className="card" role="alert">
+          <h2>Something went wrong on this screen.</h2>
+          <p>
+            Your saved work is not lost. Reload the page to continue. If this
+            keeps happening during an assessment, use Quit assessment and tell
+            support what you were doing.
+          </p>
+          <div className="row">
+            <button className="btn" onClick={() => location.reload()}>
+              Reload the page
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => {
+                setToken(null);
+                location.hash = "";
+                location.reload();
+              }}
+            >
+              Sign out and start over
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 }
 
 function PubBanner() {

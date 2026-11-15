@@ -2,15 +2,24 @@
 # SkillBridge start script (Render / single container).
 set -e
 
-# Seed demo/test data once. Idempotent: no-op when the demo user already exists.
+ENVIRONMENT="${ENV:-${ENVIRONMENT:-development}}"
+
+# Seed demo accounts only for an explicitly enabled, non-production deployment
+# (SB-006). The seeders themselves also refuse to run in production and never
+# use a hardcoded password.
 if [ "${SEED_DEMO:-false}" = "true" ]; then
-  echo "[start] seeding demo data..."
-  python /app/seed_demo.py || echo "[start] core demo seed skipped"
-  python /app/seed_enterprise.py || echo "[start] enterprise demo seed skipped"
+  if [ "$ENVIRONMENT" = "production" ] || [ "$ENVIRONMENT" = "prod" ] || [ "$ENVIRONMENT" = "live" ]; then
+    echo "[start] SEED_DEMO is ignored because ENV=$ENVIRONMENT"
+  else
+    echo "[start] seeding demo data (non-production)..."
+    python /app/seed_demo.py || echo "[start] core demo seed skipped"
+    python /app/seed_enterprise.py || echo "[start] enterprise demo seed skipped"
+  fi
 fi
 
 # GraphRAG question bank + graph edges. Idempotent and cheap (single connection,
 # ON CONFLICT DO NOTHING), so it runs on every start to keep the bank populated.
+# It contains no accounts or credentials.
 echo "[start] seeding GraphRAG question bank (idempotent)..."
 python /app/seed_graphrag_questions.py || echo "[start] GraphRAG seed skipped"
 echo "[start] GraphRAG question seed completed."
