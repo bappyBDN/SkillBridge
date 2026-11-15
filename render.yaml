@@ -1,4 +1,4 @@
-# SkillBridge deployment: Vercel frontend + Render FastAPI backend + Neon PostgreSQL.
+# TalentForge deployment: Vercel frontend + Render FastAPI backend + Neon PostgreSQL.
 #
 # The backend connects to Neon (managed PostgreSQL). Set DATABASE_URL in the Render
 # dashboard (or via `render blueprint launch`) to your Neon connection string, e.g.:

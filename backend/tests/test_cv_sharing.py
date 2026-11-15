@@ -64,6 +64,27 @@ def _admin(email):
     return uid, headers
 
 
+def test_cv_pdf_reader_works_without_pymupdf():
+    """PDF CVs must parse even when the optional PyMuPDF/OCR stack is absent."""
+    raw, info = main.read_profile_cv("rafi.pdf", PDF.text_to_pdf(CV_TEXT))
+    assert "Rafi Ahmed" in raw
+    assert "SQL" in raw
+    assert info["parser"] in ("pymupdf", "pypdf")
+
+
+def test_profile_extract_accepts_a_pdf_upload():
+    _, headers = _user("cv-pdf-profile@example.com")
+    response = client.post(
+        "/api/cv/profile-extract",
+        files={"file": ("profile.pdf", PDF.text_to_pdf(CV_TEXT), "application/pdf")},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["profile"]["name"] == "Rafi Ahmed"
+    assert body["extraction"]["parser"] in ("pymupdf", "pypdf")
+
+
 def test_cv_pdf_is_stored_in_the_database_and_served_to_admin_and_company():
     candidate_id, candidate_headers = _user("cv-candidate@example.com")
     upload = client.post(

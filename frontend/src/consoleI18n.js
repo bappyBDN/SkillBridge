@@ -57,7 +57,7 @@ export const CONSOLE = {
       signOutAdmin: "↪ Sign out of admin",
       platform: "Platform",
       secureSession: "Secure admin session",
-      title: "SKILLBRIDGE GLOBAL · PLATFORM OPERATIONS",
+      title: "TALENTFORGE GLOBAL · PLATFORM OPERATIONS",
       overviewTitle: "Platform overview",
       overviewDesc:
         "A clear view of platform activity, trust queues and operational health.",

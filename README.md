@@ -1,8 +1,8 @@
-# SkillBridge Global: R0 prototype
+# TalentForge Global: R0 prototype
 
 AI-native skill verification loop for one role (**Junior Data Analyst**):
 **CV → skills → gap → adaptive SQL/MCQ test → learning path → re-test → Skill Passport**, with Bangla/English UI, consent screen, trust label and PII redaction.
-Built from the *SkillBridge Global BRD & PRD v1.0* (Release **R0**, PRD §11) and the *SkillBridge BD* report.
+Built from the *TalentForge Global BRD & PRD v1.0* (Release **R0**, PRD §11) and the *TalentForge BD* report.
 
 - **Frontend:** React 18 + Vite (served by nginx)
 - **Backend:** FastAPI + PostgreSQL 16 (Docker volume); SQLite remains available for lightweight local engine tests when DATABASE_URL is unset
@@ -41,7 +41,7 @@ The frontend and FastAPI backend are separate deployments. The Vercel project sh
 
 ### 2. Connect the Vercel frontend
 
-In Vercel → SkillBridge project → **Settings → Environment Variables**, add:
+In Vercel → TalentForge project → **Settings → Environment Variables**, add:
 
 - **Name:** `VITE_API_BASE_URL`
 - **Value:** `https://skillbridge.onrender.com`
@@ -186,7 +186,7 @@ The repository includes an explicit, repeatable seed script with **100 synthetic
 
 Run this only against a **development or staging database**. If your Render Free service does not provide Shell access, you can use the temporary startup option instead:
 
-1. In Render → your SkillBridge backend service → **Environment**, add or change `SEED_GRAPHRAG_QUESTIONS` to `true`.
+1. In Render → your TalentForge backend service → **Environment**, add or change `SEED_GRAPHRAG_QUESTIONS` to `true`.
 2. Save the change and let Render redeploy the backend. The startup script runs `python /app/seed_graphrag_questions.py` before starting the API and prints the seed summary in deployment logs.
 3. After the logs confirm that 45 questions were inserted/verified, change `SEED_GRAPHRAG_QUESTIONS` back to `false` and redeploy. The script is disabled by default and does not run on ordinary restarts after that.
 4. Rebuild search + graph index from Admin → Question Governance.
@@ -336,6 +336,6 @@ The candidate Verify flow requests browser screen sharing and full-screen mode b
 
 During an active attempt, the frontend blocks ordinary copy, cut, paste, clipboard keyboard shortcuts and the context menu, and records browser-reported clipboard, focus, visibility, full-screen and screen-sharing events. The backend stores event timestamps and calculates a versioned, explainable trust label separately from the technical score. The same integrity gate is applied to the standard adaptive assessment and the optional GraphRAG assessment routes. Administrators with the appropriate integrity-review permission can inspect attempt summaries, event timelines and available answer timing evidence.
 
-**Privacy and browser limits:** SkillBridge does not record, upload or store the screen stream or camera video. If the candidate opts into microphone monitoring, only an on-device loudness level is computed to flag possible speaking; audio is never recorded, stored or uploaded. A browser page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, extensions or a determined user from bypassing client-side controls. Event telemetry is client-reported; a malicious client can forge requests. Browser screen sharing is not proof of full-desktop visibility. Trust labels are review signals only: they do not change technical marks or automatically fail candidates. Candidates can appeal.
+**Privacy and browser limits:** TalentForge does not record, upload or store the screen stream or camera video. If the candidate opts into microphone monitoring, only an on-device loudness level is computed to flag possible speaking; audio is never recorded, stored or uploaded. A browser page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, extensions or a determined user from bypassing client-side controls. Event telemetry is client-reported; a malicious client can forge requests. Browser screen sharing is not proof of full-desktop visibility. Trust labels are review signals only: they do not change technical marks or automatically fail candidates. Candidates can appeal.
 
 **Not yet implemented:** per-attempt session binding and single-session invalidation, signed event sequencing, server-side rate limiting, heartbeat collection/gap detection, event buffering with reliable sendBeacon delivery, strict full-monitor surface validation, clipboard-origin tracking for code editors, and a complete pre-exam system-check page. These controls are not a secure remote-proctoring system and must not be treated as proof of misconduct.

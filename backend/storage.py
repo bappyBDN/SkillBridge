@@ -4,7 +4,7 @@ One small interface, two backends:
 
 * ``local``  - files on disk (default; used with SQLite for local development)
 * ``s3``     - any S3-compatible bucket (AWS S3, Cloudflare R2, Supabase Storage,
-               MinIO, DigitalOcean Spaces ...) for when SkillBridge is scaled
+               MinIO, DigitalOcean Spaces ...) for when TalentForge is scaled
 
 Switch backend with the STORAGE_BACKEND env var - no code changes needed.
 The rest of the app only calls ``get_storage()`` and never knows which backend is active.

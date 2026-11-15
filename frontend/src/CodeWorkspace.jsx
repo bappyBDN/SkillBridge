@@ -11,7 +11,7 @@ import { keymap } from "@codemirror/view";
  * Execution is deliberately client-side only:
  *   - Python runs in Pyodide (WebAssembly) inside a Web Worker.
  *   - JavaScript runs in a Web Worker.
- * No candidate code ever executes on the SkillBridge server. The editor content
+ * No candidate code ever executes on the TalentForge server. The editor content
  * is what gets submitted as the attempt answer; scoring stays rubric/human
  * reviewed, exactly as AGENTS.md requires.
  */

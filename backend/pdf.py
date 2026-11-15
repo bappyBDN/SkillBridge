@@ -1,6 +1,6 @@
 """Minimal dependency-free PDF writer.
 
-Only what SkillBridge needs: render plain text (a CV) into a valid PDF 1.4
+Only what TalentForge needs: render plain text (a CV) into a valid PDF 1.4
 document that any viewer can open. Standard Helvetica is used, so non-Latin
 scripts cannot be embedded; characters outside ASCII/Latin-1 are replaced with
 "?". That is acceptable for a stored preview because the original upload is kept
@@ -88,7 +88,7 @@ def text_to_pdf(text: str, *, title: str = "Curriculum Vitae") -> bytes:
     pages_id = add(f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode())
     assert pages_id == pages_id_placeholder
     catalog_id = add(f"<< /Type /Catalog /Pages {pages_id} 0 R >>".encode())
-    info_id = add(f"<< /Title ({_escape(_latin1(title))}) /Producer (SkillBridge) >>".encode())
+    info_id = add(f"<< /Title ({_escape(_latin1(title))}) /Producer (TalentForge) >>".encode())
 
     buffer = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = [0]

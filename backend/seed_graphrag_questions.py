@@ -21,7 +21,7 @@ try:
 except ImportError:
     pass
 
-ACTOR = "SkillBridge synthetic GraphRAG demo seed"
+ACTOR = "TalentForge synthetic GraphRAG demo seed"
 NOW = time.time()
 
 # Fundamentals: 10 per topic. Difficulty spread is 4 Easy / 3 Medium / 3 Hard.

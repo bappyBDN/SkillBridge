@@ -1,4 +1,4 @@
-"""Import the SkillBridge question-bank package into the configured database.
+"""Import the TalentForge question-bank package into the configured database.
 
 Reads ``skillbridge_questionbank_package/skillbridge_question_bank_import.json``
 (or a single ``import_batch_*.json``) and inserts every question into

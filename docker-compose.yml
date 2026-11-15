@@ -1,4 +1,4 @@
-# SkillBridge uses an external Neon PostgreSQL database (DATABASE_URL from .env).
+# TalentForge uses an external Neon PostgreSQL database (DATABASE_URL from .env).
 # A local Postgres container is kept as an optional fallback behind the "localdb"
 # profile: `docker compose --profile localdb up`. To use it, point DATABASE_URL in
 # .env at postgresql://skillbridge:skillbridge_dev_password@db:5432/skillbridge.

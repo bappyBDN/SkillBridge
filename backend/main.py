@@ -1,4 +1,4 @@
-"""SkillBridge Global R0 API (FastAPI).
+"""TalentForge Global R0 API (FastAPI).
 
 Scores come from stored answer keys + deterministic server logic. For descriptive
 answers an AI-assisted hybrid draft is advisory only: every mark stays pending
@@ -530,7 +530,7 @@ def need_consent(u):
 
 
 # ------------------------------------------------------------------ app
-app = FastAPI(title="SkillBridge Global R0 API", version="0.1.0")
+app = FastAPI(title="TalentForge Global R0 API", version="0.1.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:8080").split(","),
                    allow_methods=["*"], allow_headers=["*"])
@@ -642,8 +642,8 @@ def _issue_verification(uid, email: str) -> str:
     link = f"{base}/#verify-email?token={token}" if base else f"verify-email?token={token}"
     _send_email(
         email,
-        "Confirm your SkillBridge email",
-        "Welcome to SkillBridge.\n\n"
+        "Confirm your TalentForge email",
+        "Welcome to TalentForge.\n\n"
         f"Confirm your email address within 48 hours:\n{link}\n\n"
         "If you did not create this account you can ignore this message.",
     )
@@ -1421,7 +1421,101 @@ def _append_document_links(text: str, links: list[str]) -> str:
     return text.rstrip() + "\n\nLINKS FOUND IN DOCUMENT:\n" + "\n".join(links)
 
 
+class _PdfEngineUnavailable(Exception):
+    """Raised when the optional PyMuPDF engine is not installed."""
+
+
+def _pdf_text_pymupdf(data: bytes):
+    """Extract PDF text with PyMuPDF, OCR-ing pages that have no text layer."""
+    try:
+        import fitz
+    except ImportError as ex:  # PyMuPDF is optional in local development
+        raise _PdfEngineUnavailable(str(ex)) from ex
+
+    pdf = fitz.open(stream=data, filetype="pdf")
+    if pdf.needs_pass:
+        raise HTTPException(422, "Password-protected PDFs are not supported")
+    if pdf.page_count > 10:
+        raise HTTPException(413, "CV PDF must contain 10 pages or fewer")
+
+    page_texts: list[str] = []
+    ocr_pages: list[int] = []
+    links: list[str] = []
+    try:
+        for page_number, page in enumerate(pdf, start=1):
+            text = (page.get_text("text") or "").strip()
+            links.extend(_urls_in_text(text))
+
+            if len(text) < 40:
+                try:
+                    import pytesseract
+                    from PIL import Image
+
+                    pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                    image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+                    preferred = os.getenv("TESSERACT_LANG", "eng+ben")
+                    ocr_text = ""
+                    for lang in (preferred, "eng"):
+                        try:
+                            ocr_text = pytesseract.image_to_string(image, lang=lang).strip()
+                            if ocr_text:
+                                break
+                        except Exception as lang_ex:
+                            log.warning("OCR lang=%s failed on page %s: %s",
+                                        lang, page_number, type(lang_ex).__name__)
+                    if ocr_text:
+                        text = ocr_text
+                        ocr_pages.append(page_number)
+                except ImportError:
+                    pass  # OCR dependencies absent: keep whatever text exists
+                except Exception as ex:
+                    log.warning("OCR failed on page %s: %s", page_number, type(ex).__name__)
+
+            if text:
+                page_texts.append(f"[Page {page_number}]\n{text}")
+    finally:
+        pdf.close()
+    return page_texts, ocr_pages, links
+
+
+def _pdf_text_pypdf(data: bytes):
+    """Extract PDF text and link annotations with pypdf (no native dependencies)."""
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(data))
+    if getattr(reader, "is_encrypted", False):
+        raise HTTPException(422, "Password-protected PDFs are not supported")
+    if len(reader.pages) > 10:
+        raise HTTPException(413, "CV PDF must contain 10 pages or fewer")
+
+    page_texts: list[str] = []
+    links: list[str] = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception:
+            text = ""
+        if text:
+            page_texts.append(f"[Page {page_number}]\n{text}")
+            links.extend(_urls_in_text(text))
+        try:
+            for annotation in page.get("/Annots", []) or []:
+                annotation = annotation.get_object()
+                action = annotation.get("/A")
+                if not action:
+                    continue
+                target = action.get_object().get("/URI")
+                if target:
+                    normalized = _normalize_profile_url(str(target))
+                    if normalized:
+                        links.append(normalized)
+        except Exception:
+            continue
+    return page_texts, links
+
+
 def read_profile_cv(filename: str, data: bytes):
+
     """
     Read a PDF or DOCX CV.
     Embedded PDF text is preferred; OCR is only used for image-based pages.
@@ -1435,114 +1529,52 @@ def read_profile_cv(filename: str, data: bytes):
         if not data.startswith(b"%PDF-"):
             raise HTTPException(415, "Invalid PDF file")
 
+        page_texts: list[str] = []
+        ocr_pages: list[int] = []
+        links: list[str] = []
+        parser_name = ""
+
+        # Prefer PyMuPDF (fast, and the only path that can OCR a scanned page).
         try:
-            import fitz
-            import pytesseract
-            from PIL import Image
-
-            pdf = fitz.open(stream=data, filetype="pdf")
-
-            if pdf.needs_pass:
-                raise HTTPException(422, "Password-protected PDFs are not supported")
-
-            if pdf.page_count > 10:
-                raise HTTPException(413, "CV PDF must contain 10 pages or fewer")
-
-            page_texts = []
-            ocr_pages = []
-            links = []
-
-            for page_number, page in enumerate(pdf, start=1):
-                text = (page.get_text("text") or "").strip()
-                links.extend(_urls_in_text(text))
-
-                # Only OCR pages that have little or no embedded text.
-                if len(text) < 40:
-                    try:
-                        pixmap = page.get_pixmap(
-                            matrix=fitz.Matrix(2, 2),
-                            alpha=False,
-                        )
-
-                        image = Image.open(
-                            io.BytesIO(pixmap.tobytes("png"))
-                        )
-
-                        # Prefer eng+ben when available; fall back to eng so
-                        # missing language packs do not kill extraction.
-                        preferred = os.getenv("TESSERACT_LANG", "eng+ben")
-                        ocr_text = ""
-                        for lang in (preferred, "eng"):
-                            try:
-                                ocr_text = pytesseract.image_to_string(
-                                    image,
-                                    lang=lang,
-                                ).strip()
-                                if ocr_text:
-                                    break
-                            except Exception as lang_ex:
-                                log.warning(
-                                    "OCR lang=%s failed on page %s: %s",
-                                    lang,
-                                    page_number,
-                                    type(lang_ex).__name__,
-                                )
-                        text = ocr_text or text
-                        if ocr_text:
-                            ocr_pages.append(page_number)
-
-                    except Exception as ex:
-                        log.warning(
-                            "OCR failed on page %s: %s",
-                            page_number,
-                            type(ex).__name__,
-                        )
-
-                if text:
-                    page_texts.append(
-                        f"[Page {page_number}]\n{text}"
-                    )
-
-            pdf.close()
-
-            raw_text = "\n\n".join(page_texts)
-            try:
-                from pypdf import PdfReader
-
-                for pdf_page in PdfReader(io.BytesIO(data)).pages:
-                    for annotation in pdf_page.get("/Annots", []):
-                        annotation = annotation.get_object()
-                        action = annotation.get("/A")
-                        if action:
-                            target = action.get_object().get("/URI")
-                            if target:
-                                normalized = _normalize_profile_url(str(target))
-                                if normalized:
-                                    links.append(normalized)
-            except Exception as ex:
-                log.warning("PDF link extraction failed: %s", type(ex).__name__)
-
-            links = list(dict.fromkeys(links))
-            raw_text = _append_document_links(raw_text, links)
-
-            if len(raw_text.strip()) < 30:
-                raise HTTPException(
-                    422,
-                    "Could not read enough text from this PDF. Please try another CV or enter your profile manually.",
-                )
-
-            return raw_text, {
-                "parser": "pymupdf",
-                "ocr_used": bool(ocr_pages),
-                "ocr_pages": ocr_pages,
-                "links_found": links,
-            }
-
+            page_texts, ocr_pages, links = _pdf_text_pymupdf(data)
+            parser_name = "pymupdf"
+        except _PdfEngineUnavailable:
+            parser_name = ""
         except HTTPException:
             raise
         except Exception as ex:
-            log.warning("PDF parsing failed: %s", type(ex).__name__)
-            raise HTTPException(422, "Could not read this PDF file")
+            log.warning("PyMuPDF parsing failed: %s", type(ex).__name__)
+
+        # Pure-Python fallback (pypdf) so a PDF still works when PyMuPDF is not
+        # installed or fails on the file.
+        if not "".join(page_texts).strip():
+            try:
+                fallback_texts, fallback_links = _pdf_text_pypdf(data)
+                if fallback_texts:
+                    page_texts = fallback_texts
+                    parser_name = parser_name or "pypdf"
+                links.extend(fallback_links)
+            except HTTPException:
+                raise
+            except Exception as ex:
+                log.warning("pypdf parsing failed: %s", type(ex).__name__)
+
+        links = list(dict.fromkeys(links))
+        raw_text = _append_document_links("\n\n".join(page_texts), links)
+
+        if len(raw_text.strip()) < 30:
+            raise HTTPException(
+                422,
+                "We could not find selectable text in this PDF. It may be a scan or "
+                "an image-only export. Upload a DOCX/TXT file, or paste the CV text.",
+            )
+
+        return raw_text, {
+            "parser": parser_name or "pypdf",
+            "ocr_used": bool(ocr_pages),
+            "ocr_pages": ocr_pages,
+            "links_found": links,
+        }
 
     if name.endswith(".docx"):
         if not data.startswith(b"PK"):
@@ -4524,7 +4556,7 @@ def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approve
         "attempt_id": attempt_id,
         "verification": issued_by,
         "verified_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
-        "issuer": "SkillBridge Global R0 prototype",
+        "issuer": "TalentForge Global R0 prototype",
     }
     run("""INSERT INTO passports(id,user_id,payload,signature,created,source_attempt)
            VALUES (?,?,?,?,?,?)""",
@@ -4559,7 +4591,7 @@ def make_passport(b: PassBody, u=Depends(current_user)):
                "attempt_id": a["id"], "verification": "candidate_selected",
                "assessment": {"attempt_id": a["id"], "overall": r.get("overall"), "review_decision": "approved",
                               "reviewed_at": a["reviewed_at"], "kind": a["kind"]},
-               "uplift": up["overall"] if up["available"] else None, "issuer": "SkillBridge Global R0 prototype"}
+               "uplift": up["overall"] if up["available"] else None, "issuer": "TalentForge Global R0 prototype"}
     run("INSERT INTO passports(id,user_id,payload,signature,created,source_attempt) VALUES (?,?,?,?,?,?)",
         (pid, u["id"], json.dumps(payload), E.sign_payload(payload, SECRET), time.time(), a["id"]))
     audit(u["id"], "passport_create", pid)

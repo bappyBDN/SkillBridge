@@ -1,4 +1,4 @@
-"""Idempotent demo/test seeder for SkillBridge R0.
+"""Idempotent demo/test seeder for TalentForge R0.
 
 Creates a single demo account that has already walked the full loop (consent ->
 CV -> skills -> pre assessment -> post assessment -> Skill Passport), so a
@@ -145,7 +145,7 @@ def seed():
                "holder": DEMO_NAME, "skills": skills,
                "uplift": {"pre": pre_res["overall"], "post": post_res["overall"],
                           "delta": post_res["overall"] - pre_res["overall"]},
-               "issuer": "SkillBridge Global R0 prototype"}
+               "issuer": "TalentForge Global R0 prototype"}
     run("INSERT INTO passports(id,user_id,payload,signature,created) VALUES (?,?,?,?,?)",
         (pid, uid, json.dumps(payload), E.sign_payload(payload, SECRET), time.time()))
 

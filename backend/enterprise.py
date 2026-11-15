@@ -1,4 +1,4 @@
-"""Initial hiring workflow APIs for SkillBridge PRD."""
+"""Initial hiring workflow APIs for TalentForge PRD."""
 import json, time, uuid, os, re, secrets, csv, io, logging, base64
 from typing import Annotated, Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
@@ -3300,7 +3300,7 @@ def admin_decide_billing_refund(refund_id: str, body: BillingRefundDecision, use
 
 @router.post("/api/billing/checkout")
 def billing_checkout(user=Depends(current_user)):
-    raise HTTPException(503,"Online checkout is not enabled. SkillBridge must complete merchant onboarding and verified SSLCommerz integration before collecting payments.")
+    raise HTTPException(503,"Online checkout is not enabled. TalentForge must complete merchant onboarding and verified SSLCommerz integration before collecting payments.")
 
 
 @router.get("/api/admin/privacy")

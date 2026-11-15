@@ -162,7 +162,7 @@ def verify_totp(secret: str, code: str, *, at: float | None = None, window: int 
     return False
 
 
-def otpauth_url(secret: str, email: str, issuer: str = "SkillBridge") -> str:
+def otpauth_url(secret: str, email: str, issuer: str = "TalentForge") -> str:
     label = f"{issuer}:{email}"
     return (
         f"otpauth://totp/{label}?secret={secret}&issuer={issuer}"

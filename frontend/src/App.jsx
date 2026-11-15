@@ -82,7 +82,7 @@ function BridgeRail() {
       className="rail"
       viewBox="0 0 910 150"
       role="img"
-      aria-label="SkillBridge loop"
+      aria-label="TalentForge loop"
     >
       <line x1="30" y1="86" x2="880" y2="86" className="rail-deck" />
       {xs.slice(0, -1).map((x, i) => (
@@ -422,7 +422,7 @@ function Landing({ onAuthed }) {
           </div>
         </div>
       </section>
-      <section className="sb-proof-strip" aria-label="SkillBridge journey">
+      <section className="sb-proof-strip" aria-label="TalentForge journey">
         <div className="sb-proof-title">{L.proofTitle}</div>
         <div className="sb-journey">
           {L.journey.map((step, index) => (
@@ -469,7 +469,7 @@ function Landing({ onAuthed }) {
       <footer className="sb-footer">
         <div>
           <span className="sb-footer-mark">S</span>
-          <b>SkillBridge</b>
+          <b>TalentForge</b>
           <small>{L.footerTag}</small>
         </div>
         <span>{L.footerNote}</span>
@@ -4250,7 +4250,7 @@ function DataRights() {
     a.href = URL.createObjectURL(
       new Blob([JSON.stringify(d, null, 2)], { type: "application/json" }),
     );
-    a.download = "skillbridge-my-data.json";
+    a.download = "talentforge-my-data.json";
     a.click();
   };
   const del = async () => {
@@ -4418,6 +4418,7 @@ function CandidateAssessmentResults({ attempts }) {
 
 function CandidateProfileOnboarding({ onSaved, ownerKey }) {
   const [status, setStatus] = useState("loading");
+  const [helpOpen, setHelpOpen] = useState(false);
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -4543,70 +4544,171 @@ function CandidateProfileOnboarding({ onSaved, ownerKey }) {
   }
 
   return (
-    <section className="profile-onboarding">
-      <div className="portal-panel">
-        <span className="eyebrow">WELCOME TO SKILLBRIDGE</span>
-        <h1>Let's build your candidate profile</h1>
-        <p>
-          Your account is ready. Now create your professional profile. You can
-          enter your details manually or let us extract them from your CV.
-        </p>
-      </div>
+    <section className="tf-profile">
+      <header className="tf-page-head">
+        <span className="tf-chip">CANDIDATE DETAILS</span>
+        <h1>My Profile</h1>
+        <p>Create, review and manage your professional profile.</p>
+        <span className="tf-underline" aria-hidden="true" />
+      </header>
+
+      <section className="tf-welcome">
+        <div className="tf-welcome-copy">
+          <span className="tf-welcome-eyebrow">👋 Welcome to TalentForge!</span>
+          <h2>Let's build your candidate profile</h2>
+          <p>
+            Your account is ready. Now create your professional profile. You can
+            enter your details manually or let us extract them from your CV.
+          </p>
+        </div>
+        <ul className="tf-checks">
+          {[
+            "Stand out to employers",
+            "Get personalized recommendations",
+            "Track your progress",
+          ].map((item) => (
+            <li key={item}>
+              <span className="tf-check" aria-hidden="true">✓</span>
+              {item}
+            </li>
+          ))}
+        </ul>
+        <div className="tf-welcome-art" aria-hidden="true">
+          <svg viewBox="0 0 220 150" role="presentation">
+            <defs>
+              <linearGradient id="tfCard" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#ffffff" />
+                <stop offset="100%" stopColor="#ece7ff" />
+              </linearGradient>
+              <linearGradient id="tfShield" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#34c98a" />
+                <stop offset="100%" stopColor="#1f9c68" />
+              </linearGradient>
+            </defs>
+            <circle cx="150" cy="70" r="55" fill="#dcd4ff" opacity=".55" />
+            <circle cx="52" cy="30" r="14" fill="#cdbfff" opacity=".7" />
+            <rect x="52" y="34" width="108" height="82" rx="12" fill="url(#tfCard)"
+                  stroke="#cfc6ff" transform="rotate(-8 106 75)" />
+            <circle cx="90" cy="60" r="13" fill="#7c5cff" transform="rotate(-8 106 75)" />
+            <rect x="78" y="80" width="62" height="7" rx="3.5" fill="#a99bf5" transform="rotate(-8 106 75)" />
+            <rect x="84" y="93" width="46" height="6" rx="3" fill="#c6bdfa" transform="rotate(-8 106 75)" />
+            <path d="M158 84l20 9-10 4-4 10z" fill="#a99bf5" opacity=".7" />
+            <path d="M168 96l26 10-7 6-9-5-4 8-6-19z" fill="url(#tfShield)" />
+            <path d="M178 103h12M184 97v12" stroke="#fff" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+        </div>
+      </section>
 
       {error && (
-        <p className="err" role="alert">
+        <p className="err tf-error" role="alert">
           {error}
         </p>
       )}
 
-      <div className="job-grid">
-        <article className="job-card">
-          <div className="job-icon">✎</div>
-          <h2>Create manually</h2>
+      <div className="tf-cards">
+        <article className="tf-card tf-card-blue">
+          <div className="tf-card-icon blue">🖊</div>
+          <h3>Create manually</h3>
           <p>
             Enter your professional information, education, experience and
             projects yourself.
           </p>
-          <button className="btn" disabled={busy} onClick={startManual}>
-            {busy ? "Please wait..." : "Create profile manually"}
+          <button className="tf-btn blue" disabled={busy} onClick={startManual}>
+            {busy ? "Please wait…" : "Create profile manually"}
+            <span aria-hidden="true">→</span>
           </button>
+          <div className="tf-card-art" aria-hidden="true">
+            <svg viewBox="0 0 190 130" role="presentation">
+              <circle cx="150" cy="105" r="46" fill="#d6e6ff" opacity=".8" />
+              <rect x="30" y="34" width="92" height="62" rx="8" fill="#fff" stroke="#bcd4ff" />
+              <rect x="42" y="46" width="52" height="5" rx="2.5" fill="#9dc0ff" />
+              <rect x="42" y="57" width="66" height="4" rx="2" fill="#c9dcff" />
+              <rect x="42" y="66" width="44" height="4" rx="2" fill="#c9dcff" />
+              <circle cx="100" cy="82" r="10" fill="#7c5cff" />
+              <path d="M96 82h8M100 78v8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
+              <path d="M112 96h30l8 14h-46z" fill="#cfe1ff" />
+            </svg>
+          </div>
         </article>
 
-        <article className="job-card">
-          <div className="job-icon">↑</div>
-          <h2>Upload your CV</h2>
+        <article className="tf-card tf-card-green">
+          <div className="tf-card-icon green">⤒</div>
+          <h3>Upload your CV</h3>
           <p>
-            Upload your resume. SkillBridge will extract your information and
+            Upload your resume. TalentForge will extract your information and
             prepare an editable profile draft.
           </p>
-
-          <label>
-            Select CV (PDF, DOCX, TXT or MD)
-            <input
-              type="file"
-              accept=".pdf,.docx,.txt,.md"
-              onChange={(e) => {
-                setFile(e.target.files?.[0] || null);
-                setError("");
-              }}
-            />
-          </label>
-
-          {file && <p className="muted">Selected: {file.name}</p>}
-
-          <button className="btn" disabled={busy || !file} onClick={uploadCV}>
-            {busy ? "Extracting CV..." : "Upload and create draft"}
+          <div className="tf-file-row">
+            <label className="tf-file-label">
+              <span aria-hidden="true">📄</span>
+              <span>
+                <b>{file ? file.name : "Select CV (PDF, DOCX, TXT or MD)"}</b>
+                <small>{file ? "Ready to upload" : "Choose File"}</small>
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt,.md"
+                onChange={(e) => {
+                  setFile(e.target.files?.[0] || null);
+                  setError("");
+                }}
+              />
+            </label>
+          </div>
+          <button className="tf-btn green" disabled={busy || !file} onClick={uploadCV}>
+            {busy ? "Extracting CV…" : "Upload and create draft"}
+            <span aria-hidden="true">→</span>
           </button>
+          <div className="tf-card-art right" aria-hidden="true">
+            <svg viewBox="0 0 170 140" role="presentation">
+              <circle cx="112" cy="72" r="52" fill="#cdeedd" opacity=".75" />
+              <rect x="60" y="34" width="62" height="76" rx="9" fill="#fff" stroke="#b7e3cd"
+                    transform="rotate(8 91 72)" />
+              <text x="72" y="74" fontSize="22" fontWeight="800" fill="#2f9e6f"
+                    transform="rotate(8 91 72)">CV</text>
+              <rect x="70" y="86" width="42" height="5" rx="2.5" fill="#bfe6d3" transform="rotate(8 91 72)" />
+              <circle cx="128" cy="104" r="18" fill="#2f9e6f" />
+              <path d="M128 96v14M122 104l6 6 6-6" stroke="#fff" strokeWidth="3"
+                    strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            </svg>
+          </div>
         </article>
       </div>
 
-      <p className="muted">
-        Your profile will not be created or published until you review and
-        confirm the information.
+      <footer className="tf-trust">
+        {[
+          ["🛡", "Secure &amp; Private", "Your data is always safe"],
+          ["⚡", "Fast &amp; Easy", "Complete in minutes"],
+          ["★", "Professional Profile", "Stand out to recruiters"],
+        ].map(([icon, title, sub]) => (
+          <div className="tf-trust-item" key={title}>
+            <span className="tf-trust-icon" aria-hidden="true">{icon}</span>
+            <span>
+              <b>{title}</b>
+              <small>{sub}</small>
+            </span>
+          </div>
+        ))}
+        <button type="button" className="tf-help" onClick={() => setHelpOpen((v) => !v)}>
+          🎧 Need Help?
+        </button>
+      </footer>
+      {helpOpen && (
+        <p className="tf-help-note">
+          Having trouble uploading a PDF? Make sure it is a text-based PDF (not a
+          scan). You can also save it as DOCX or TXT, or paste the text on the
+          profile page after creating a draft.
+        </p>
+      )}
+
+      <p className="tf-footnote">
+        Your profile is not created or published until you review and confirm the
+        information.
       </p>
     </section>
   );
 }
+
 
 function CandidateJobs({ onApply }) {
   const [jobs, setJobs] = useState([]),
@@ -4854,9 +4956,9 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
     <div className="candidate-shell">
       <aside className="candidate-sidebar">
         <div className="sidebar-brand">
-          <span className="brand-mark">S</span>
-          <span>
-            SkillBridge<small>{W.careerWorkspace}</small>
+          <span className="brand-mark tf-logo-mark">TF</span>
+          <span className="tf-brand-text">
+            TalentForge<small>{W.tagline || "Bridge Your Skills"}</small>
           </span>
         </div>
         <div className="sidebar-profile">
@@ -4897,21 +4999,33 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <p>{W.keepGrowingBody}</p>
             <button onClick={() => go("journey")}>{W.continueLearning}</button>
           </div>
-          <p className="sidebar-version">SkillBridge · {W.candidateAccount}</p>
+          <p className="sidebar-version">TalentForge · {W.candidateAccount}</p>
         </div>
       </aside>
       <main className="candidate-main">
-        <header className="candidate-topbar">
-          <div className="mobile-brand">
-            <span className="brand-mark">S</span>
-            <strong>SkillBridge</strong>
-          </div>
-          <div className="breadcrumb">
-            {W.candidateWorkspace} <span>/</span>{" "}
-            {nav.find((n) => n.id === section)?.label}
+        <header className="candidate-topbar tf-topbar">
+          <div className="tf-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              placeholder={W.searchPlaceholder || "Search anything…"}
+              aria-label={W.searchPlaceholder || "Search anything"}
+              onChange={(e) => {
+                const value = e.target.value.trim().toLowerCase();
+                if (!value) return;
+                const match = nav.find((n) => n.label.toLowerCase().includes(value));
+                if (match) go(match.id);
+              }}
+            />
+            <kbd>Ctrl K</kbd>
           </div>
           <div className="topbar-actions">
-            <div className="language-switch">
+            <button type="button" className="tf-icon-btn" title={W.notifications || "Notifications"}>
+              <span aria-hidden="true">🔔</span>
+              {st.attempts?.length ? <i className="tf-dot" /> : null}
+            </button>
+            <div className="language-switch tf-lang">
+              <span aria-hidden="true">🌐</span>
               <select
                 aria-label="Language"
                 value={lang}
@@ -4921,13 +5035,19 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                 <option value="bn">বাংলা</option>
               </select>
             </div>
-            <Avatar
-              name={st.user?.name}
-              hasAvatar={st.has_avatar}
-              updated={st.avatar_updated}
-              ownerKey={st.user?.email}
-              className="topbar-avatar"
-            />
+            <div className="tf-user">
+              <Avatar
+                name={st.user?.name}
+                hasAvatar={st.has_avatar}
+                updated={st.avatar_updated}
+                ownerKey={st.user?.email}
+                className="topbar-avatar"
+              />
+              <span>
+                <b>{st.user?.name}</b>
+                <small>{W.candidateAccount}</small>
+              </span>
+            </div>
             <button
               type="button"
               className="candidate-logout"
@@ -5075,14 +5195,6 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
           )}
           {section === "profile" && (
             <>
-              <div className="page-title">
-                <div>
-                  <span className="eyebrow">CANDIDATE DETAILS</span>
-                  <h1>My profile</h1>
-                  <p>Create, review and manage your professional profile.</p>
-                </div>
-              </div>
-
               <CandidateProfileOnboarding
                 ownerKey={st.user?.email}
                 onSaved={async () => {
@@ -5229,7 +5341,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
           )}
         </div>
         <footer className="candidate-footer">
-          <span>SkillBridge Candidate Workspace</span>
+          <span>TalentForge Candidate Workspace</span>
           <span>Build skills. Show evidence. Keep growing.</span>
         </footer>
       </main>
@@ -6300,7 +6412,7 @@ function AdminConsole({ onLogout }) {
           `<article class="question"><h3>Question ${esc(q.number)} · ${esc(q.topic)} · ${esc(q.type)}</h3><p class="prompt">${esc(q.question)}</p>${q.options?.length ? `<ol>${q.options.map((o) => `<li>${esc(o)}</li>`).join("")}</ol>` : ""}<div class="answer"><b>Candidate response</b><pre>${esc(q.selected_option ?? q.candidate_answer ?? "Not captured in this attempt")}</pre></div><div class="meta">Automated result: ${q.automated_correct === true ? "Correct" : q.automated_correct === false ? "Incorrect" : "Not available"} · Difficulty: ${esc(q.difficulty)} · Response time: ${esc(q.time_seconds)} sec</div>${q.evaluation ? `<div class="meta"><b>AI-assisted draft (${esc(q.evaluation.status)}):</b> ${esc(q.evaluation.ai_marks)}/${esc(q.evaluation.max_marks)} partial marks · ${esc(q.evaluation.rationale)}</div>` : ""}</article>`,
       )
       .join("");
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Assessment evaluation report</title><style>body{font:14px/1.55 Arial,sans-serif;color:#18232b;margin:34px}h1{font-size:26px;margin:0}h2{margin-top:28px} .sub{color:#61717b}.summary{display:flex;gap:16px;margin:22px 0}.metric{padding:14px;border:1px solid #dce4e8;border-radius:10px;min-width:120px}.metric b{display:block;font-size:24px}.question{border:1px solid #dce4e8;border-radius:10px;padding:16px;margin:14px 0;break-inside:avoid}.prompt{font-weight:600}.answer{background:#f4f7f8;padding:12px;border-radius:8px}.answer pre{white-space:pre-wrap;font:13px/1.5 monospace;margin:8px 0}.meta{font-size:12px;color:#61717b;margin-top:10px}.notice{background:#fff8e8;border-left:4px solid #d59a35;padding:12px;margin:18px 0} @media print{body{margin:15mm}.question{break-inside:avoid}}</style></head><body><h1>SkillBridge · Assessment evaluation report</h1><p class="sub">Candidate: ${esc(report.candidate_name)} · ${esc(report.email)}<br>Attempt: ${esc(report.id)} · Type: ${esc(report.kind)} · Completed: ${esc(stamp(report.finished))}</p><div class="summary"><div class="metric"><b>${esc(report.result?.overall ?? "—")}/100</b>Overall score</div><div class="metric"><b>${esc(report.result?.level ?? "—")}</b>Estimated level</div><div class="metric"><b>${esc(report.result?.trust ?? "—")}</b>Integrity signal</div></div><div class="notice"><b>Evaluation method:</b> ${esc(report.evaluation_method || "Automated grading details unavailable.")} The score is a support signal, not a final hiring decision. Manual review is required.</div><h2>Topic breakdown</h2><ul>${Object.entries(
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Assessment evaluation report</title><style>body{font:14px/1.55 Arial,sans-serif;color:#18232b;margin:34px}h1{font-size:26px;margin:0}h2{margin-top:28px} .sub{color:#61717b}.summary{display:flex;gap:16px;margin:22px 0}.metric{padding:14px;border:1px solid #dce4e8;border-radius:10px;min-width:120px}.metric b{display:block;font-size:24px}.question{border:1px solid #dce4e8;border-radius:10px;padding:16px;margin:14px 0;break-inside:avoid}.prompt{font-weight:600}.answer{background:#f4f7f8;padding:12px;border-radius:8px}.answer pre{white-space:pre-wrap;font:13px/1.5 monospace;margin:8px 0}.meta{font-size:12px;color:#61717b;margin-top:10px}.notice{background:#fff8e8;border-left:4px solid #d59a35;padding:12px;margin:18px 0} @media print{body{margin:15mm}.question{break-inside:avoid}}</style></head><body><h1>TalentForge · Assessment evaluation report</h1><p class="sub">Candidate: ${esc(report.candidate_name)} · ${esc(report.email)}<br>Attempt: ${esc(report.id)} · Type: ${esc(report.kind)} · Completed: ${esc(stamp(report.finished))}</p><div class="summary"><div class="metric"><b>${esc(report.result?.overall ?? "—")}/100</b>Overall score</div><div class="metric"><b>${esc(report.result?.level ?? "—")}</b>Estimated level</div><div class="metric"><b>${esc(report.result?.trust ?? "—")}</b>Integrity signal</div></div><div class="notice"><b>Evaluation method:</b> ${esc(report.evaluation_method || "Automated grading details unavailable.")} The score is a support signal, not a final hiring decision. Manual review is required.</div><h2>Topic breakdown</h2><ul>${Object.entries(
       report.result?.topics || {},
     )
       .map(
@@ -6309,7 +6421,7 @@ function AdminConsole({ onLogout }) {
       )
       .join(
         "",
-      )}</ul><h2>Question-by-question evidence</h2>${questions || "<p>No question-level evidence is available for this attempt.</p>"}<p class="sub">Generated by SkillBridge admin review. Save or print this page as PDF using your browser's print dialog.</p><script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`;
+      )}</ul><h2>Question-by-question evidence</h2>${questions || "<p>No question-level evidence is available for this attempt.</p>"}<p class="sub">Generated by TalentForge admin review. Save or print this page as PDF using your browser's print dialog.</p><script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`;
     const win = window.open("", "_blank");
     if (!win) {
       setError("Allow pop-ups to generate the printable PDF report.");
@@ -6525,7 +6637,7 @@ function AdminConsole({ onLogout }) {
         <div className="ad-brand">
           <span className="ad-brand-mark">S</span>
           <span>
-            SkillBridge<small>{A.brand}</small>
+            TalentForge<small>{A.brand}</small>
           </span>
         </div>
         <div className="ad-admin-label">
@@ -9189,7 +9301,7 @@ function AdminConsole({ onLogout }) {
           )}
           {busy && <div className="ad-loading">Syncing platform data…</div>}
           <footer className="ad-footer">
-            <span>SkillBridge Global · Admin Console</span>
+            <span>TalentForge Global · Admin Console</span>
             <span>
               Least privilege · Human review · Evidence-led operations
             </span>
@@ -10720,7 +10832,7 @@ function HiringWorkspace({ role, onLogout }) {
     return (
       <main className="cr-onboard">
         <div className="cr-onboard-brand">
-          skillbridge<span>.</span>
+          talentforge<span>.</span>
         </div>
         <section className="cr-onboard-card">
           <div className="cr-kicker">{CO.onboarding.kicker}</div>
@@ -10788,7 +10900,7 @@ function HiringWorkspace({ role, onLogout }) {
         <div className="cr-brand">
           <span className="cr-brand-mark">s</span>
           <span>
-            skillbridge<span className="cr-brand-dot">.</span>
+            talentforge<span className="cr-brand-dot">.</span>
             <small>{CO.brand}</small>
           </span>
         </div>
@@ -12264,7 +12376,7 @@ function HiringWorkspace({ role, onLogout }) {
           {busy && <div className="cr-loading">Refreshing workspace…</div>}
         </div>
         <footer className="cr-footer">
-          <span>SkillBridge Global · Company workspace</span>
+          <span>TalentForge Global · Company workspace</span>
           <span>Evidence-led hiring · Human decisions · Privacy by design</span>
         </footer>
       </main>
@@ -12578,7 +12690,7 @@ function Shell({ lang, setLang }) {
       <a className="brand sb-top-brand" href="#top">
         <span className="sb-brand-mark">S</span>
         <span>
-          SkillBridge<small>SKILLS · EVIDENCE · OPPORTUNITY</small>
+          TalentForge<small>SKILLS · EVIDENCE · OPPORTUNITY</small>
         </span>
       </a>
       {!authed && (
@@ -12698,7 +12810,7 @@ class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     // Keep the console useful for the team without shipping stack traces to users.
-    console.error("SkillBridge UI error", error, info?.componentStack);
+    console.error("TalentForge UI error", error, info?.componentStack);
   }
 
   render() {

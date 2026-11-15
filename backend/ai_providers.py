@@ -145,7 +145,7 @@ def empty_profile() -> dict:
 # ---------------------------------------------------------
 
 SYSTEM_PROMPT = """
-You are SkillBridge's CV information extraction engine.
+You are TalentForge's CV information extraction engine.
 
 Your task is to extract candidate information from the supplied CV.
 
@@ -474,7 +474,7 @@ def _normalize_item(field: str, item: Any, index: int, evidence: list) -> dict:
 
 
 def normalize_profile(data: dict) -> dict:
-    """Normalize provider data to SkillBridge's canonical profile shape."""
+    """Normalize provider data to TalentForge's canonical profile shape."""
     if not isinstance(data, dict):
         raise ValueError("AI response must be a JSON object")
 

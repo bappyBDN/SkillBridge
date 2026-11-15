@@ -1,4 +1,4 @@
-"""Provision a SkillBridge Super Admin from the running backend environment.
+"""Provision a TalentForge Super Admin from the running backend environment.
 
 Run from the backend directory on the deployed service:
     python create_admin.py
@@ -95,7 +95,7 @@ def main():
     )
     print("\nSuper Admin provisioned successfully.")
     print(f"Email: {email}")
-    print("Sign in through the SkillBridge sign-in page; the Admin Console appears automatically for admin accounts.")
+    print("Sign in through the TalentForge sign-in page; the Admin Console appears automatically for admin accounts.")
 
 
 if __name__ == "__main__":
