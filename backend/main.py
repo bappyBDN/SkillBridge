@@ -4352,7 +4352,11 @@ def _vision_review_evidence(evidence_id: str, payload: bytes):
     """Optional Groq vision review of one stored alert snapshot (never a stream)."""
     try:
         import ai_providers as AIP
-        result = AIP.classify_exam_evidence(payload)
+        classify = getattr(AIP, "classify_exam_evidence", None)
+        if not callable(classify):
+            # The optional vision reviewer is not part of this provider build.
+            return
+        result = classify(payload)
     except Exception:
         log.warning("Evidence vision review failed", exc_info=True)
         return
