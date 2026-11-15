@@ -2472,6 +2472,85 @@ def generate_assessment_blueprint(u=Depends(current_user)):
     }
 
 
+class JobBlueprintRequest(BaseModel):
+    department: str = Field(default="", max_length=40)
+    requested_skill_ids: List[str] = Field(default_factory=list, max_length=5)
+
+
+@app.post("/api/assessment/job-blueprint")
+def generate_job_blueprint(body: Optional[JobBlueprintRequest] = None, u=Depends(current_user)):
+    """Build the 40-question job-specific blueprint from approved questions only.
+
+    No question is fabricated: the policy selector returns ``question_bank_incomplete``
+    with explicit shortages when a quota cannot be met. The client never receives
+    answer keys from this endpoint; they stay in the stored blueprint/attempt.
+    """
+    need_consent(u)
+    prof = one("SELECT redacted,confirmed FROM profiles WHERE user_id=?", (u["id"],))
+    if not prof or not prof["redacted"]:
+        raise HTTPException(409, "Upload and analyse your CV before generating a job-specific assessment")
+    confirmed = set(json.loads(prof["confirmed"] or "[]")) if prof["confirmed"] else set()
+    if not confirmed:
+        raise HTTPException(409, "Confirm your CV skills before generating the assessment")
+
+    import exam_policy
+    from graphrag import SKILL_LABELS
+
+    candidate_profile = one("SELECT * FROM candidate_profiles WHERE user_id=?", (u["id"],))
+    profile_data = dict(candidate_profile) if candidate_profile else {}
+    for key in ("skills", "experience", "projects", "education"):
+        if key in profile_data and isinstance(profile_data[key], str):
+            try:
+                profile_data[key] = json.loads(profile_data[key] or "[]")
+            except (TypeError, ValueError):
+                profile_data[key] = []
+    if not profile_data:
+        profile_data = {"skills": [{"name": SKILL_LABELS.get(s, s)} for s in confirmed]}
+    department = (body.department if body else "").strip() or exam_policy.detect_department(
+        " ".join(str(item) for item in (profile_data.get("education") or []) if item)
+    )
+    if not department:
+        raise HTTPException(422, "Confirm your department before starting this assessment")
+    if not exam_policy.launched_department(department):
+        raise HTTPException(422, f"The {department} track is not launched yet")
+    track = exam_policy.load_track_configs().get(department)
+    if not track:
+        raise HTTPException(422, f"No assessment budget is configured for {department}")
+
+    job_skills = [entry["skill"] for entry in JOB.get("required", []) if entry.get("skill")]
+    rows = allr("SELECT * FROM question_bank WHERE status='active' AND subcategory != 'Legacy curated'")
+    result = exam_policy.plan_job_exam(
+        rows, profile_data, department=department, track=track,
+        confirmed_skills=sorted(confirmed), job_skills=job_skills,
+        requested_skill_ids=(body.requested_skill_ids if body else []),
+    )
+    if result["status"] != "ready":
+        return {
+            "status": result["status"], "department": department,
+            "total_questions": result["total_questions"],
+            "sections": result["sections"], "shortages": result["shortages"],
+            "message": "The approved question bank cannot fill every quota yet. No questions were fabricated.",
+        }
+    import uuid as _uuid
+    blueprint_id = _uuid.uuid4().hex
+    # The 40-minute window is a hard product budget. Per-question allocation is
+    # planning metadata, not the attempt timer.
+    snapshot = {**result, "user_id": u["id"], "blueprint_id": blueprint_id,
+                "mode": "job_specific", "estimated_duration_seconds": result["time_budget_seconds"]}
+    run("INSERT INTO assessment_blueprints(id,user_id,status,payload,created) VALUES (?,?,?,?,?)",
+        (blueprint_id, u["id"], result["status"], json.dumps(snapshot), time.time()))
+    audit(u["id"], "job_assessment_blueprint_generated",
+          f"{blueprint_id};department={department};questions={result['total_questions']};coding={result['coding_tasks']};clusters={len(result['clusters'])}")
+    return {
+        "blueprint_id": blueprint_id, "status": result["status"], "mode": "job_specific",
+        "department": department, "total_questions": result["total_questions"],
+        "sections": result["sections"], "time_budget_seconds": result["time_budget_seconds"],
+        "coding_tasks": result["coding_tasks"], "sql_questions": result["sql_questions"],
+        "clusters": result["clusters"], "requested_skill_ids": result["requested_skill_ids"],
+        "shortages": result["shortages"],
+    }
+
+
 @app.get("/api/admin/assessment/graphrag/status")
 def admin_graphrag_status(u=Depends(current_user)):
     import enterprise as admin_data
@@ -2833,20 +2912,40 @@ def view(att, include_session=False):
         index = int(st.get("question_index", 0))
         current = questions[index] if questions else None
         page = G.question_page(questions, index // G.QUESTION_PAGE_SIZE, st.get("answers", {}))
-        public = None
-        if current:
-            public = {k: current.get(k) for k in ("id", "assessment_section", "assessment_topic",
+
+        def _public(item, position):
+            data = {k: item.get(k) for k in ("id", "assessment_section", "assessment_topic",
                 "skill_id", "question_type", "difficulty_level", "marks", "time_allocation")}
-            public["prompt"] = current.get("question_text", "")
-            public["options"] = current.get("options", [])
-            if "sql" in str(current.get("question_type", "")).lower():
-                public["schema"] = E.SQL_SCHEMA
-            public["index"] = index
-            public["total"] = len(questions)
+            data["prompt"] = item.get("question_text", "")
+            data["options"] = item.get("options", [])
+            if "sql" in str(item.get("question_type", "")).lower():
+                data["schema"] = E.SQL_SCHEMA
+            data["index"] = position
+            data["total"] = len(questions)
+            return data
+
+        # The whole public question set ships with the attempt view so the client
+        # can switch questions instantly and persist the previous answer in the
+        # background. Answer keys are never included.
+        all_questions = [_public(item, position) for position, item in enumerate(questions)]
+        public = all_questions[index] if all_questions else None
         return {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"],
             "remaining": remaining, "answered": len(st.get("answers", {})), "total": len(questions),
             "graphrag": True, "blueprint_id": st["blueprint_id"], "question": public,
+            "all_questions": all_questions, "answers": st.get("answers", {}),
             "page": page, "question_index": index, "duration_seconds": duration,
+            "navigator": [
+                {
+                    "number": position + 1,
+                    "id": item["id"],
+                    "answered": bool(str(st.get("answers", {}).get(item["id"], "")).strip()),
+                    "section": item.get("assessment_section", ""),
+                    "topic": item.get("assessment_topic", ""),
+                    "difficulty": item.get("difficulty_level", ""),
+                    "type": item.get("question_type", ""),
+                }
+                for position, item in enumerate(questions)
+            ],
             "unlimited_time": unlimited_time, **session,
             "manual_review_count": sum(1 for q in questions if not (
                 str(q.get("question_type", "")).lower() in ("mcq", "multiple choice") or
@@ -3329,6 +3428,60 @@ def navigate_question(aid: str, b: NavigateQuestion, u=Depends(current_user)):
     return view(get_att(aid, u["id"]))
 
 
+class GotoQuestion(BaseModel):
+    index: int = Field(ge=0)
+    question_id: Optional[str] = None
+    answer: Optional[str] = None
+
+
+@app.post("/api/attempts/{aid}/goto")
+def goto_question(aid: str, b: GotoQuestion, u=Depends(current_user)):
+    """Save the current answer and move to another question in one round trip.
+
+    The exam UI previously called /answer and /navigate back-to-back, which made
+    every question switch wait for two database round trips. This endpoint keeps
+    the same integrity checks but does both writes once.
+    """
+    att = get_att(aid, u["id"])
+    if att["status"] != "active":
+        raise HTTPException(409, "Attempt already finished")
+    st = json.loads(att["state"])
+    if not st.get("graphrag"):
+        raise HTTPException(409, "Question navigation is unavailable")
+    require_screen_share(aid)
+    if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
+        finalize(att, st)
+        return view(get_att(aid, u["id"]))
+    if b.index >= len(st["selected_questions"]):
+        raise HTTPException(422, "Question index is outside this assessment")
+    current_id = st.get("current")
+    if b.question_id and b.question_id != current_id:
+        raise HTTPException(409, "Question mismatch")
+    if current_id and b.answer is not None:
+        answer_value = str(b.answer or "")
+        revision = one(
+            "SELECT COUNT(*) AS n FROM assessment_answer_events WHERE attempt_id=? AND question_id=?",
+            (aid, current_id),
+        )["n"] + 1
+        run(
+            "INSERT INTO assessment_answer_events(id,attempt_id,question_id,revision,answer_hash,answer_length,created) VALUES (?,?,?,?,?,?,?)",
+            (uuid.uuid4().hex, aid, current_id, revision,
+             hashlib.sha256(answer_value.encode("utf-8")).hexdigest(), len(answer_value), time.time()),
+        )
+        st.setdefault("answers", {})[current_id] = answer_value
+    now = time.time()
+    if current_id:
+        elapsed = max(0, now - float(st.get("question_viewed_at") or now))
+        times = st.setdefault("question_time_seconds", {})
+        times[current_id] = round(float(times.get(current_id, 0)) + elapsed, 1)
+    st["question_index"] = b.index
+    st["current"] = st["selected_questions"][b.index]["id"]
+    st["question_viewed_at"] = now
+    run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, "question_navigate", now))
+    save(aid, st)
+    return view(get_att(aid, u["id"]))
+
+
 @app.post("/api/attempts/{aid}/submit")
 def submit_graphrag_attempt(aid: str, u=Depends(current_user)):
     att = get_att(aid, u["id"])
@@ -3339,9 +3492,8 @@ def submit_graphrag_attempt(aid: str, u=Depends(current_user)):
     if time.time() > att["started"] + int(st["duration_seconds"]) + E.GRACE:
         finalize(att, st)
         return view(get_att(aid, u["id"]))
-    unanswered = len(st["selected_questions"]) - len(st.get("answers", {}))
-    if unanswered:
-        raise HTTPException(409, {"message": "Please answer all questions before submitting.", "unanswered": unanswered})
+    # Skipped questions are allowed: the confirmation happens in the UI. Nothing
+    # is invented for an unanswered question; it is simply scored as unanswered.
     finalize(att, st)
     return view(get_att(aid, u["id"]))
 
@@ -3382,7 +3534,8 @@ EVENT_TYPES = {
     "copy", "cut", "paste", "blur", "tab_hidden", "tab_visible", "fullscreen_exit",
     "screen_share_started", "screen_share_stopped", "screen_share_unavailable",
     "fullscreen_enter", "focus", "wrong_share_surface", "camera_stopped", "ai_gaze_away", "ai_multiple_faces", "ai_no_face", "ai_phone_detected", "ai_audio_level", "ai_model_unavailable",
-    "identity_verified", "identity_mismatch", "identity_skipped", "microphone_stopped"
+    "identity_verified", "identity_mismatch", "identity_skipped", "microphone_stopped",
+    "context_menu", "drag_start"
 }
 EVENT_META_KEYS = {"surface", "editor", "reason", "visibility", "supported", "confidence", "model", "duration_ms", "local_only", "similarity", "distance", "faces", "threshold", "level"}
 

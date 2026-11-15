@@ -14,7 +14,7 @@ TAXONOMY = {
     "excel": {"name": "Excel", "aliases": ["excel", "ms excel", "microsoft excel", "spreadsheet", "spreadsheets", "pivot table", "vlookup", "google sheets"]},
     "git": {"name": "Git", "aliases": ["git", "github", "gitlab", "bitbucket"]},
     "communication": {"name": "Communication", "aliases": ["communication", "presentation", "presentations", "report writing", "stakeholder", "written communication"]},
-    "ai_ml": {"name": "AI & Machine Learning", "aliases": ["ai", "ml", "artificial intelligence", "machine learning", "deep learning", "tensorflow", "pytorch", "scikit-learn", "sklearn", "nlp"]},
+    "ai_ml": {"name": "AI & Machine Learning", "aliases": ["ai", "ml", "artificial intelligence", "machine learning", "deep learning", "tensorflow", "pytorch", "scikit-learn", "sklearn", "nlp", "llm", "large language model", "rag", "retrieval augmented generation", "langchain", "langgraph", "agentic ai", "vector database"]},
     "javascript": {"name": "JavaScript & TypeScript", "aliases": ["javascript", "js", "typescript", "react", "node.js", "nodejs", "next.js", "vue", "angular", "express.js"]},
     "java": {"name": "Java", "aliases": ["java", "spring boot", "jvm"]},
     "docker": {"name": "Docker", "aliases": ["docker", "docker compose", "containerization"]},
@@ -33,6 +33,10 @@ TAXONOMY = {
     "csharp": {"name": "C#", "aliases": ["c#", "c sharp", ".net", "dotnet"]},
     "redis": {"name": "Redis", "aliases": ["redis"]},
     "html_css": {"name": "HTML & CSS", "aliases": ["html", "html5", "css", "css3", "sass", "tailwind", "bootstrap"]},
+    "os": {"name": "Operating Systems", "aliases": ["operating systems", "operating system", "process scheduling", "context switching", "virtual memory", "deadlock"]},
+    "cicd": {"name": "CI/CD & Pipelines", "aliases": ["ci/cd", "ci cd", "continuous integration", "continuous delivery", "continuous deployment", "github actions", "gitlab ci", "jenkins", "pipeline", "pipelines"]},
+    "iac": {"name": "Infrastructure as Code", "aliases": ["infrastructure as code", "iac", "terraform", "opentofu", "cloudformation", "pulumi", "ansible"]},
+    "observability": {"name": "Monitoring & Observability", "aliases": ["monitoring", "observability", "logging", "metrics", "tracing", "prometheus", "grafana", "datadog", "sre", "chaos engineering"]},
 }
 TESTABLE = ["sql", "python", "statistics", "visualization"]
 

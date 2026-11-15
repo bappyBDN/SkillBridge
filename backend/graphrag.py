@@ -100,7 +100,7 @@ class QuestionRecord(BaseModel):
     explanation: str = ""
     reference_answer: str = ""
     grading_rubric: str = ""
-    marks: int = 1
+    marks: float = 1.0
     time_allocation: int = 60
     status: str = "active"
     version: int = 1

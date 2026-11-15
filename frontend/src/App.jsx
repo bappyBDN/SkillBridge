@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { api, getToken, setToken } from "./api.js";
 import { LangCtx, useT } from "./i18n.js";
 import CandidateProfileWorkspace from "./CandidateProfileWorkspace.jsx";
 import Avatar, { useAvatar } from "./Avatar.jsx";
+const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
 House 14, Road 3, Mirpur, Dhaka
@@ -886,6 +887,8 @@ function useExamIntegrity(initial, screenStream) {
   const [notice, setNotice] = useState("");
   const [shareError, setShareError] = useState("");
   const [alerts, setAlerts] = useState([]);
+  const [tabVisible, setTabVisible] = useState(document.visibilityState !== "hidden");
+  const [signals, setSignals] = useState({ clipboard: 0, focus: 0, fullscreen: 0 });
   const pendingEvents = useRef([]);
   const flushPromise = useRef(null);
 
@@ -964,6 +967,7 @@ function useExamIntegrity(initial, screenStream) {
   useEffect(() => {
     const clipboard = (e) => {
       e.preventDefault();
+      setSignals((current) => ({ ...current, clipboard: current.clipboard + 1 }));
       report(e.type);
       setNotice(t("clipboardBlocked"));
     };
@@ -971,46 +975,84 @@ function useExamIntegrity(initial, screenStream) {
       const key = String(e.key || "").toLowerCase();
       if ((e.ctrlKey || e.metaKey) && ["c", "v", "x"].includes(key)) {
         e.preventDefault();
+        setSignals((current) => ({ ...current, clipboard: current.clipboard + 1 }));
         report(key === "c" ? "copy" : key === "x" ? "cut" : "paste");
         setNotice(t("clipboardBlocked"));
       }
       if (e.shiftKey && key === "insert") {
         e.preventDefault();
+        setSignals((current) => ({ ...current, clipboard: current.clipboard + 1 }));
         report("paste");
         setNotice(t("clipboardBlocked"));
       }
     };
-    const context = (e) => e.preventDefault();
-    const blur = () => report("blur");
-    const visibility = () =>
-      report(
-        document.visibilityState === "hidden" ? "tab_hidden" : "tab_visible",
-      );
+    const context = (e) => {
+      e.preventDefault();
+      report("context_menu");
+    };
+    const drag = (e) => {
+      e.preventDefault();
+      report("drag_start");
+    };
+    const editable = (target) =>
+      target?.closest?.("textarea,input,[contenteditable='true'],.cm-editor");
+    const selection = (e) => {
+      if (!editable(e.target)) e.preventDefault();
+    };
+    const auxclick = (e) => {
+      if (e.button === 1) e.preventDefault();
+    };
+    const blur = () => {
+      setSignals((current) => ({ ...current, focus: current.focus + 1 }));
+      report("blur");
+    };
+    const visibility = () => {
+      const visible = document.visibilityState !== "hidden";
+      setTabVisible(visible);
+      if (!visible) {
+        setSignals((current) => ({ ...current, focus: current.focus + 1 }));
+      }
+      report(visible ? "tab_visible" : "tab_hidden");
+    };
     const fullscreen = () => {
       const active = Boolean(document.fullscreenElement);
       setFullscreenActive(active);
       if (!active) {
+        setSignals((current) => ({ ...current, fullscreen: current.fullscreen + 1 }));
         report("fullscreen_exit");
         setNotice(t("fullscreenWarning"));
       }
+    };
+    const unload = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
     };
     document.addEventListener("copy", clipboard, true);
     document.addEventListener("cut", clipboard, true);
     document.addEventListener("paste", clipboard, true);
     document.addEventListener("keydown", keydown, true);
     document.addEventListener("contextmenu", context, true);
+    document.addEventListener("dragstart", drag, true);
+    document.addEventListener("selectstart", selection, true);
+    document.addEventListener("auxclick", auxclick, true);
     document.addEventListener("visibilitychange", visibility);
     document.addEventListener("fullscreenchange", fullscreen);
     window.addEventListener("blur", blur);
+    window.addEventListener("beforeunload", unload);
     return () => {
       document.removeEventListener("copy", clipboard, true);
       document.removeEventListener("cut", clipboard, true);
       document.removeEventListener("paste", clipboard, true);
       document.removeEventListener("keydown", keydown, true);
       document.removeEventListener("contextmenu", context, true);
+      document.removeEventListener("dragstart", drag, true);
+      document.removeEventListener("selectstart", selection, true);
+      document.removeEventListener("auxclick", auxclick, true);
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener("fullscreenchange", fullscreen);
       window.removeEventListener("blur", blur);
+      window.removeEventListener("beforeunload", unload);
     };
   }, [report, t]);
   useEffect(() => {
@@ -1045,6 +1087,8 @@ function useExamIntegrity(initial, screenStream) {
     notice,
     shareError,
     alerts,
+    tabVisible,
+    signals,
     setNotice,
     restartFullscreen,
     report,
@@ -1112,6 +1156,12 @@ function ExamIntegrityBanner({ integrity, onRestartShare }) {
 
 /* ---------- exam ---------- */
 function ExamRun({ initial, onFinished, screenStream, cameraStream, micStream, onRestartShare }) {
+  // An active exam owns the whole viewport: the workspace sidebar/topbar are
+  // hidden so the candidate cannot wander into the app mid-assessment.
+  useEffect(() => {
+    document.body.classList.add("exam-live");
+    return () => document.body.classList.remove("exam-live");
+  }, []);
   if (initial.graphrag)
     return (
       <GraphRAGExamRunGate
@@ -1149,7 +1199,7 @@ function GraphRAGExamRunGate({ initial, onFinished, screenStream, cameraStream, 
 }
 
 /* ---------- local-only AI proctoring ---------- */
-function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEventsForEvidence, inline = false }) {
+function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEventsForEvidence, inline = false, onDetections }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [status, setStatus] = useState("Loading local vision models…");
@@ -1318,6 +1368,9 @@ function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEven
     };
   }, [cameraStream, evidence, report]);
   const live = Boolean(cameraStream?.getVideoTracks?.().some((track) => track.readyState === "live"));
+  useEffect(() => {
+    onDetections?.(detections);
+  }, [detections, onDetections]);
   return (
     <aside className={"camera-float proctor" + (live ? " live" : " off") + (inline ? " inline" : "")} aria-label="Webcam preview and on-device monitoring">
       <div className="camera-float-head">
@@ -1718,16 +1771,40 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
   );
 }
 
+function ExamCountdown({ initial, warnAt = 120 }) {
+  const [left, setLeft] = useState(initial);
+  useEffect(() => {
+    setLeft(initial);
+  }, [initial]);
+  useEffect(() => {
+    const timer = setInterval(() => setLeft((value) => Math.max(0, value - 1)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <b className={left < warnAt ? "low" : ""}>{fmt(left)}</b>;
+}
+
 function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStream, onRestartShare }) {
   const [v, setV] = useState(initial);
+  const [currentIndex, setCurrentIndex] = useState(initial.question_index || 0);
+  const initialAnswers = initial.answers || initial.page?.answers || {};
   const [ans, setAns] = useState(
-    initial.page?.answers?.[initial.question?.id] || "",
+    initialAnswers[initial.question?.id] || "",
   );
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [left, setLeft] = useState(initial.remaining);
+  const [syncing, setSyncing] = useState(false);
   const [sqlOut, setSqlOut] = useState(null);
-  const [marked, setMarked] = useState(() => new Set());
+  const [voiceFlags, setVoiceFlags] = useState(0);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [cameraDetections, setCameraDetections] = useState({ face: "Checking", objects: "Checking" });
+  const voiceTimer = useRef(null);
+  const [marked, setMarked] = useState(() => {
+    try {
+      return new Set(JSON.parse(sessionStorage.getItem(`sb:flags:${initial.attempt_id}`) || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
   const toggleMark = (id) => {
     setMarked((prev) => {
       const next = new Set(prev);
@@ -1737,11 +1814,57 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     });
   };
   const aid = v.attempt_id;
-  const q = v.question;
   const page = v.page || { questions: [], page: 0, page_count: 0, answers: {} };
+  const allQuestions = v.all_questions || [];
+  const q = allQuestions[currentIndex] || v.question;
+  const answersMap = v.answers || initialAnswers;
+  const qRef = useRef(q);
+  const ansRef = useRef(ans);
+  const indexRef = useRef(currentIndex);
+  qRef.current = q;
+  ansRef.current = ans;
+  indexRef.current = currentIndex;
+  const updateAnswer = useCallback((value) => {
+    ansRef.current = value;
+    setAns(value);
+  }, []);
   const sessionId = useRef(initial.session_id);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`sb:flags:${aid}`, JSON.stringify([...marked]));
+    } catch {
+      /* session storage can be unavailable in private mode */
+    }
+  }, [marked, aid]);
+  const visitedKey = `sb:visited:${initial.attempt_id}`;
+  const [visited, setVisited] = useState(() => {
+    try {
+      return new Set(JSON.parse(sessionStorage.getItem(visitedKey) || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    const id = q?.id;
+    if (!id) return;
+    setVisited((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      try {
+        sessionStorage.setItem(visitedKey, JSON.stringify([...next]));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, [q?.id, visitedKey]);
   const reportEvent = integrity.report;
   const onVoice = useCallback(({ confidence, level, duration_ms }) => {
+    setVoiceFlags((count) => count + 1);
+    setVoiceActive(true);
+    if (voiceTimer.current) clearTimeout(voiceTimer.current);
+    voiceTimer.current = setTimeout(() => setVoiceActive(false), 6000);
     reportEvent("ai_audio_level", {
       confidence: Number(Number(confidence).toFixed(2)),
       level: Number(level),
@@ -1749,6 +1872,9 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       local_only: true,
     });
   }, [reportEvent]);
+  useEffect(() => () => {
+    if (voiceTimer.current) clearTimeout(voiceTimer.current);
+  }, []);
   useEffect(() => {
     const track = micStream?.getAudioTracks?.()[0];
     if (!track) return undefined;
@@ -1758,13 +1884,11 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   }, [micStream, reportEvent]);
 
   useEffect(() => {
-    const i = setInterval(() => setLeft((x) => Math.max(0, x - 1)), 1000);
-    return () => clearInterval(i);
-  }, []);
-  useEffect(() => {
-    setAns(page.answers?.[q?.id] || "");
+    setAns(answersMap[q?.id] || "");
     setSqlOut(null);
-  }, [q?.id, v.question_index]);
+    // Only react to a question change; background saves must not overwrite typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q?.id]);
   const saveAnswer = async () => {
     if (!integrity.shareActive || !integrity.fullscreenActive)
       throw new Error(
@@ -1780,8 +1904,57 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     setV(next);
     return next;
   };
-  const goTo = async (index) => {
-    if (busy) return;
+  const queueRef = useRef([]);
+  const pumpPromise = useRef(null);
+  const mergeView = useCallback((res) => {
+    setV((prev) => ({
+      ...prev,
+      navigator: res.navigator ?? prev.navigator,
+      answered: res.answered ?? prev.answered,
+      answers: res.answers ?? prev.answers,
+      all_questions: res.all_questions ?? prev.all_questions,
+      remaining: res.remaining ?? prev.remaining,
+    }));
+  }, []);
+  const pumpQueue = useCallback(() => {
+    if (pumpPromise.current) return pumpPromise.current;
+    pumpPromise.current = (async () => {
+      setSyncing(true);
+      try {
+        while (queueRef.current.length) {
+          const item = queueRef.current.shift();
+          try {
+            const res = await api(`/attempts/${aid}/goto`, { method: "POST", body: item });
+            mergeView(res);
+          } catch (e) {
+            setErr(e);
+            // The optimistic position and the server disagree; reload once.
+            try {
+              const fresh = await api(`/attempts/${aid}`);
+              setV(fresh);
+              setCurrentIndex(fresh.question_index || 0);
+              setAns((fresh.answers || {})[fresh.question?.id] || "");
+            } catch {
+              /* keep the current screen */
+            }
+            queueRef.current = [];
+          }
+        }
+      } finally {
+        pumpPromise.current = null;
+        setSyncing(false);
+      }
+    })();
+    return pumpPromise.current;
+  }, [aid, mergeView]);
+  const flushQueue = async () => {
+    while (queueRef.current.length || pumpPromise.current) {
+      await pumpQueue();
+    }
+  };
+  const goTo = (index) => {
+    const previousQuestion = qRef.current;
+    if (!previousQuestion || index === indexRef.current) return;
     if (!integrity.shareActive || !integrity.fullscreenActive) {
       setErr(
         new Error(
@@ -1792,21 +1965,19 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       );
       return;
     }
-    setBusy(true);
-    setErr(null);
-    try {
-      await saveAnswer();
-      const next = await api(`/attempts/${aid}/navigate`, {
-        method: "POST",
-        body: { index },
-      });
-      setV(next);
-      setAns(next.page?.answers?.[next.question?.id] || "");
-    } catch (e) {
-      setErr(e);
-    } finally {
-      setBusy(false);
-    }
+    const target = allQuestions[index];
+    if (!target) return;
+    // Instant UI switch. The previous answer and the navigation are written in
+    // the background, serialised so the server state follows click order.
+    const previousId = previousQuestion.id;
+    const previousAnswer = String(ansRef.current ?? "");
+    indexRef.current = index;
+    ansRef.current = answersMap[target.id] || "";
+    setCurrentIndex(index);
+    setAns(answersMap[target.id] || "");
+    setSqlOut(null);
+    queueRef.current.push({ index, question_id: previousId, answer: previousAnswer });
+    pumpQueue();
   };
   const save = async () => {
     setBusy(true);
@@ -1840,9 +2011,18 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       setErr(new Error("screen_share_required"));
       return;
     }
+    const alreadySaved = Boolean(String(answersMap[q?.id] ?? "").trim());
+    const unsaved = !alreadySaved && String(ans).trim() ? 1 : 0;
+    const unanswered = Math.max(0, v.total - (v.answered + unsaved));
+    if (unanswered > 0 && !window.confirm(
+      `${unanswered} question${unanswered === 1 ? " is" : "s are"} still unanswered. Submit anyway?`,
+    )) {
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
+      await flushQueue();
       await saveAnswer();
       const r = await api(`/attempts/${aid}/submit`, { method: "POST" });
       if (r.status === "done") onFinished(aid);
@@ -1859,131 +2039,101 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   );
   const answered =
     page.answers?.[q.id] != null && String(page.answers[q.id]).trim() !== "";
-  const currentNumber =
-    page.questions.find((item) => item.id === q.id)?.question_number ??
-    q.index + 1;
-  const previousIndex = Math.max(0, page.page * 5 - 1);
-  const nextIndex = Math.min(v.total - 1, (page.page + 1) * 5);
+  const currentNumber = currentIndex + 1;
+  const previousIndex = Math.max(0, currentIndex - 1);
+  const nextIndex = Math.min(v.total - 1, currentIndex + 1);
   const progressPct = v.total ? Math.round((v.answered / v.total) * 100) : 0;
   const perQuestionMinutes = Math.max(
     1,
     Math.round(Number(q.time_allocation || 60) / 60),
   );
   const sqlQuestion = String(q.question_type).toLowerCase().includes("sql");
-  const batchNumber = page.page + 1;
+  const codingQuestion = String(q.question_type).toLowerCase() === "coding";
+  const codingLanguage = /javascript|typescript|react|next\.?js|node\.?js|express/i.test(
+    String(q.question_text || ""),
+  )
+    ? "javascript"
+    : "python";
+  const navigator = v.navigator || [];
+  const cameraLive = Boolean(
+    cameraStream?.getVideoTracks?.().some((track) => track.readyState === "live"),
+  );
   return (
-    <section className="tech-exam">
+    <section className="tech-exam exam2">
       <MicMonitor stream={micStream} onVoice={onVoice} />
-      <div className="tech-exam-head">
-        <div className="tech-brand">
-          <span className="tech-logo">◇</span>
-          <div>
-            <b>SkillBridge</b>
-            <small>Candidate Assessment</small>
-          </div>
+      <div className="exam2-top">
+        <div className="exam2-top-q">
+          <span className="exam2-top-icon">▤</span>
+          <b>Question {currentNumber} of {v.total}</b>
+          {syncing && <span className="exam2-syncing">saving…</span>}
         </div>
-        <span
-          className={
-            "tech-live" +
-            (integrity.shareActive && integrity.fullscreenActive ? "" : " warn")
-          }
-        >
-          {integrity.shareActive && integrity.fullscreenActive
-            ? "Assessment active"
-            : "Attention required"}
-        </span>
+        <div className="exam2-timer">
+          <span>🕐 Time Remaining</span>
+          <ExamCountdown initial={v.remaining} />
+        </div>
       </div>
 
       <div className="tech-exam-grid">
+        <aside className="exam2-palette" aria-label="Question palette">
+          <div className="exam2-palette-head">
+            <b>▦ Question Palette</b>
+            <span>{v.total} Questions</span>
+          </div>
+          <div className="exam2-palette-grid">
+            {navigator.map((item) => {
+              const isCurrent = item.id === q.id;
+              const answered = isCurrent ? String(ans).trim() !== "" : item.answered;
+              const skipped = !answered && visited.has(item.id);
+              const status = answered ? "answered" : skipped ? "skipped" : "todo";
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={
+                    "exam2-q " + status +
+                    (isCurrent ? " current" : "") +
+                    (marked.has(item.id) ? " flagged" : "")
+                  }
+                  onClick={() => goTo(item.number - 1)}
+                  disabled={busy}
+                  title={`${marked.has(item.id) ? "Flagged · " : ""}${item.section === "project" ? "Project probe" : item.section === "cv" ? "CV cluster" : "Fundamental"} · ${item.topic} · ${item.difficulty}`}
+                >
+                  {item.number}
+                  {marked.has(item.id) && (
+                    <span className="exam2-flagmark" aria-hidden="true">⚑</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="exam2-palette-legend">
+            <span><i className="dot current" /> Current Question</span>
+            <span><i className="dot answered" /> Answered</span>
+            <span><i className="dot" /> Not Answered</span>
+            <span><i className="dot skipped" /> Skipped</span>
+            <span><i className="flag" /> Flagged</span>
+          </div>
+          <button type="button" className="exam2-submit" onClick={submit} disabled={busy}>
+            {busy ? "Submitting…" : "Submit assessment"}
+          </button>
+        </aside>
         <main className="tech-main">
-          <div className="tech-hero">
-            <div className="tech-hero-copy">
-              <h1>Technical Assessment</h1>
-              <p>
-                {v.total} questions · {Math.ceil(v.duration_seconds / 60)}{" "}
-                minutes · fundamentals + CV skills
-              </p>
+          <div className="tech-panel tech-question-panel">
+            <div className="exam2-card-head">
+              <span className="exam2-type">▤ Technical Question</span>
+              <button
+                type="button"
+                className={"exam2-flag-btn" + (marked.has(q.id) ? " on" : "")}
+                onClick={() => toggleMark(q.id)}
+              >
+                <span aria-hidden="true">⚑</span>
+                {marked.has(q.id) ? "Flagged" : "Flag Question"}
+              </button>
             </div>
-            <div className="tech-stats">
-              <div>
-                <span>Questions</span>
-                <b>
-                  {String(currentNumber).padStart(2, "0")} /{" "}
-                  {String(v.total).padStart(2, "0")}
-                </b>
-              </div>
-              <div>
-                <span>Answered</span>
-                <b>
-                  {v.answered} / {page.questions.length}
-                </b>
-              </div>
-              <div>
-                <span>Time left</span>
-                <b className={left < 120 ? "low" : ""}>{fmt(left)}</b>
-              </div>
-            </div>
-            <div className="tech-progress">
-              <span style={{ width: progressPct + "%" }} />
-            </div>
-            <div className="tech-progress-row">
-              <b>Assessment progress</b>
-              <span>{progressPct}% completed</span>
-            </div>
-          </div>
-
-          <div className="tech-panel">
-            <div className="tech-panel-head">
-              <h2>Question navigator</h2>
-              <span>
-                Batch {String(batchNumber).padStart(2, "0")} ·{" "}
-                {page.questions.length} questions
-              </span>
-            </div>
-            <div className="tech-nav">
-              {page.questions.map((item) => {
-                const done =
-                  page.answers?.[item.id] != null &&
-                  String(page.answers[item.id]).trim() !== "";
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={
-                      "tech-nav-btn" +
-                      (item.id === q.id ? " current" : "") +
-                      (done ? " done" : "")
-                    }
-                    onClick={() => goTo(item.question_number - 1)}
-                    disabled={busy}
-                  >
-                    <b>{String(item.question_number).padStart(2, "0")}</b>
-                    <i aria-hidden="true" />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="tech-panel">
-            <div className="tech-q-head">
-              <span className="tech-badge">
-                {q.assessment_section === "cv" && q.skill_id !== "sql"
-                  ? "CV-BASED QUESTION"
-                  : "EXPLAINABLE QUESTION"}
-              </span>
-              <span className="tech-q-time">{perQuestionMinutes} min</span>
-            </div>
-            <h2 className="tech-q-number">Question {currentNumber}</h2>
             <h3 className="tech-question">{q.prompt}</h3>
-            <div className="tech-context">
-              <span>Question context</span>
-              <p>
-                {q.assessment_topic} · {q.difficulty_level} · {q.question_type}
-                {q.marks
-                  ? ` · ${q.marks} mark${Number(q.marks) === 1 ? "" : "s"}`
-                  : ""}
-              </p>
+            <div className="exam2-meta">
+              {q.assessment_topic} · {q.difficulty_level} · {q.question_type}
+              {q.marks ? ` · ${q.marks} mark${Number(q.marks) === 1 ? "" : "s"}` : ""}
             </div>
 
             {isChoice ? (
@@ -1999,7 +2149,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
                       type="radio"
                       name={"gr-option-" + q.id}
                       checked={String(ans) === String(option)}
-                      onChange={() => setAns(String(option))}
+                      onChange={() => updateAnswer(String(option))}
                     />
                     <span>{option}</span>
                   </label>
@@ -2015,34 +2165,54 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
                 )}
                 <div className="tech-answer-head">
                   <b>Your answer</b>
-                  <span>{sqlQuestion ? "SQL editor" : "Response editor"}</span>
+                  <span>
+                    {codingQuestion
+                      ? "Code workspace"
+                      : sqlQuestion
+                        ? "SQL editor"
+                        : "Response editor"}
+                  </span>
                 </div>
-                <textarea
-                  className="tech-textarea"
-                  rows={8}
-                  spellCheck={false}
-                  value={ans}
-                  onChange={(e) => setAns(e.target.value)}
-                  placeholder={
-                    sqlQuestion
-                      ? "SELECT ..."
-                      : "Write your explanation, scenario response or code here…"
-                  }
-                />
-                {sqlQuestion && (
-                  <button
-                    type="button"
-                    className="tech-btn ghost"
-                    onClick={runSql}
-                    disabled={!ans.trim()}
-                  >
-                    Run SQL
-                  </button>
-                )}
-                {sqlOut && (
-                  <pre className="tech-sqlout">
-                    {JSON.stringify(sqlOut, null, 2)}
-                  </pre>
+                {codingQuestion ? (
+                  <Suspense fallback={<div className="cw-loading">Loading code workspace…</div>}>
+                    <CodeWorkspace
+                      question={q}
+                      value={ans}
+                      onChange={updateAnswer}
+                      defaultLanguage={codingLanguage}
+                      disabled={busy}
+                    />
+                  </Suspense>
+                ) : (
+                  <>
+                    <textarea
+                      className="tech-textarea"
+                      rows={8}
+                      spellCheck={false}
+                      value={ans}
+                      onChange={(e) => updateAnswer(e.target.value)}
+                      placeholder={
+                        sqlQuestion
+                          ? "SELECT ..."
+                          : "Write your explanation, scenario response or code here…"
+                      }
+                    />
+                    {sqlQuestion && (
+                      <button
+                        type="button"
+                        className="tech-btn ghost"
+                        onClick={runSql}
+                        disabled={!ans.trim()}
+                      >
+                        Run SQL
+                      </button>
+                    )}
+                    {sqlOut && (
+                      <pre className="tech-sqlout">
+                        {JSON.stringify(sqlOut, null, 2)}
+                      </pre>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -2051,69 +2221,41 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
             </p>
           </div>
 
-          <label className="tech-mark">
-            <input
-              type="checkbox"
-              checked={marked.has(q.id)}
-              onChange={() => toggleMark(q.id)}
-            />
-            <span>Mark for review</span>
-          </label>
-
-          <div className="tech-qnav">
+          <div className="exam2-bottom">
             <button
               type="button"
-              className="tech-btn ghost"
+              className="exam2-nav prev"
               onClick={() => goTo(previousIndex)}
-              disabled={page.page === 0 || busy}
+              disabled={currentNumber <= 1 || busy}
             >
-              ‹ Previous
+              ← Previous
             </button>
-            <span>
-              Page {page.page + 1} of {page.page_count}
-            </span>
+            <div className="exam2-bottom-legend">
+              <span className="exam2-bottom-label">Question Status:</span>
+              <span><i className="dot current" /> Current</span>
+              <span><i className="dot answered" /> Answered</span>
+              <span><i className="dot skipped" /> Skipped</span>
+              <span><i className="flag" /> Flagged</span>
+            </div>
             <button
               type="button"
-              className="tech-btn ghost"
+              className="exam2-nav next"
               onClick={() => goTo(nextIndex)}
-              disabled={!page.has_next || busy}
+              disabled={currentNumber >= v.total || busy}
             >
-              Next question ›
+              Next Question →
             </button>
-          </div>
-
-          <div className="tech-panel tech-review">
-            <h2>Review &amp; submission</h2>
-            <p>
-              <span className="tech-good">
-                {marked.size} question{marked.size === 1 ? "" : "s"} marked for
-                review.
-              </span>{" "}
-              Review your responses before submitting.
-            </p>
-            <button
-              type="button"
-              className="tech-submit"
-              onClick={submit}
-              disabled={
-                busy ||
-                !integrity.shareActive ||
-                !integrity.fullscreenActive ||
-                v.answered + (answered ? 0 : String(ans).trim() ? 1 : 0) < v.total
-              }
-            >
-              {busy ? "Submitting…" : "Submit batch answers"}
-            </button>
-            <p className="tech-note">
-              Answers are saved to your attempt. Correct answers stay hidden until
-              submission. Coding, SQL, scenario and explanation responses may
-              require human review.
-            </p>
           </div>
           <Err e={err} />
         </main>
 
-        <aside className="tech-side">
+        <aside className="tech-side exam2-camera">
+          <div className="exam2-camera-head">
+            <b><span className="exam2-cam-dot" /> Camera Monitoring</b>
+            <span className={"exam2-active" + (cameraLive ? "" : " off")}>
+              {cameraLive ? "Active" : "Offline"}
+            </span>
+          </div>
           <LocalProctor
             inline
             cameraStream={cameraStream}
@@ -2122,49 +2264,59 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
             nextSeq={integrity.nextSeq}
             report={integrity.report}
             flushEventsForEvidence={integrity.flushEvents}
+            onDetections={setCameraDetections}
           />
+          <div className={"exam2-face " + (cameraDetections.face === "One face" ? "ok" : "warn")}>
+            <span className="exam2-face-icon" aria-hidden="true">
+              {cameraDetections.face === "One face" ? "✓" : "◉"}
+            </span>
+            <div>
+              <b>
+                {cameraDetections.face === "One face"
+                  ? "Face detected"
+                  : cameraDetections.face === "No face"
+                    ? "Face not detected"
+                    : "Checking your camera…"}
+              </b>
+              <span>You are being monitored for fairness.</span>
+            </div>
+          </div>
           <IntegrityAlerts alerts={integrity.alerts} inline />
-          <div className="tech-side-card">
-            <h3>Session checks</h3>
-            <ul>
-              <li className={integrity.shareActive ? "ok" : "bad"}>
-                Screen sharing
-              </li>
-              <li className={integrity.fullscreenActive ? "ok" : "bad"}>
-                Full-screen
-              </li>
-              <li className={cameraStream ? "ok" : "bad"}>Webcam</li>
-              <li className={micStream ? "ok" : "bad"}>Microphone</li>
-            </ul>
-            {(!integrity.shareActive || !integrity.fullscreenActive) && (
-              <div className="tech-side-actions">
-                {!integrity.shareActive && (
-                  <button
-                    type="button"
-                    className="tech-btn"
-                    onClick={async () => {
-                      const stream = await onRestartShare?.();
-                      if (!stream) integrity.setNotice("screen_share_required");
-                    }}
-                  >
-                    Restore screen share
-                  </button>
-                )}
-                {!integrity.fullscreenActive && (
-                  <button
-                    type="button"
-                    className="tech-btn"
-                    onClick={integrity.restartFullscreen}
-                  >
-                    Restore full-screen
-                  </button>
-                )}
-              </div>
-            )}
-            <p className="tech-note">
-              Face, gaze and phone checks run in this browser. Flags are advisory
-              review signals and never an automatic fail.
-            </p>
+          <div className="exam2-camera-status">
+            <span className={integrity.shareActive ? "ok" : "bad"}>▣ Screen</span>
+            <span className={integrity.fullscreenActive ? "ok" : "bad"}>⛶ Full screen</span>
+            <span className={micStream ? "ok" : "bad"}>🎙 Voice</span>
+            <span className={integrity.tabVisible ? "ok" : "warn"}>◱ Tab</span>
+            <span className="ok">⧉ Clipboard off</span>
+            {voiceActive && <span className="warn live">Voice detected</span>}
+            {marked.size > 0 && <span className="warn">⚑ {marked.size} flagged</span>}
+          </div>
+          {(!integrity.shareActive || !integrity.fullscreenActive) && (
+            <div className="exam2-restore">
+              {!integrity.shareActive && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const stream = await onRestartShare?.();
+                    if (!stream) integrity.setNotice("screen_share_required");
+                  }}
+                >
+                  Restore screen share
+                </button>
+              )}
+              {!integrity.fullscreenActive && (
+                <button type="button" onClick={integrity.restartFullscreen}>
+                  Restore full-screen
+                </button>
+              )}
+            </div>
+          )}
+          <div className="exam2-tip">
+            <b>Keep your face in view</b>
+            <span>
+              You are being monitored for fairness. Switching tabs or leaving
+              full-screen is logged for review.
+            </span>
           </div>
         </aside>
       </div>
@@ -2655,6 +2807,8 @@ const ALERT_MAP = {
   copy: { title: "Copy attempt blocked", detail: "Clipboard actions are recorded as review signals.", level: "warn", icon: "⧉" },
   cut: { title: "Cut attempt blocked", detail: "Clipboard actions are recorded as review signals.", level: "warn", icon: "⧉" },
   paste: { title: "Paste attempt blocked", detail: "Clipboard actions are recorded as review signals.", level: "warn", icon: "⧉" },
+  context_menu: { title: "Right-click blocked", detail: "The context menu is disabled during the assessment.", level: "warn", icon: "⧉" },
+  drag_start: { title: "Drag attempt blocked", detail: "Dragging text or images is disabled during the assessment.", level: "warn", icon: "⧉" },
   blur: { title: "Window focus lost", detail: "Stay on the assessment window.", level: "warn", icon: "◱" },
   tab_hidden: { title: "Tab switch detected", detail: "Keep the assessment tab visible.", level: "warn", icon: "◱" },
   fullscreen_exit: { title: "Full-screen exited", detail: "Return to full-screen to answer.", level: "warn", icon: "⛶" },
@@ -2722,10 +2876,10 @@ function MicMonitor({ stream, onVoice }) {
       }
       const rms = Math.sqrt(sum / samples.length);
       const now = Date.now();
-      if (rms > 0.035) {
+      if (rms > 0.028) {
         loudTicks += 1;
         // ~1 second of sustained speech before flagging, then throttle.
-        if (loudTicks >= 4 && now - lastAlert > 8000) {
+        if (loudTicks >= 3 && now - lastAlert > 6000) {
           lastAlert = now;
           loudTicks = 0;
           onVoice({
@@ -2756,6 +2910,30 @@ function loadFaceApi() {
   if (!faceApiPromise) {
     faceApiPromise = (async () => {
       const faceapi = await import("@vladmandic/face-api");
+      // The bundled tfjs picks its "highest priority" backend lazily. If a
+      // detection op runs first, tfjs throws "backend 'wasm' has not yet been
+      // initialized". Initialise a concrete backend (WebGL, then CPU) and wait
+      // for it before loading or running any model.
+      const tf = faceapi.tf;
+      if (tf?.setBackend) {
+        let ready = false;
+        for (const backend of ["webgl", "cpu"]) {
+          try {
+            const selected = await tf.setBackend(backend);
+            if (selected === false) continue;
+            await tf.ready();
+            ready = true;
+            break;
+          } catch {
+            // Try the next backend (WebGL can be unavailable in some browsers).
+          }
+        }
+        if (!ready) {
+          throw new Error(
+            "Face analysis could not start in this browser. Use Chrome or Edge with hardware acceleration enabled, or continue with the manual identity check.",
+          );
+        }
+      }
       await faceapi.nets.tinyFaceDetector.loadFromUri("/face-api/model");
       await faceapi.nets.faceLandmark68TinyNet.loadFromUri("/face-api/model");
       await faceapi.nets.faceRecognitionNet.loadFromUri("/face-api/model");
@@ -2998,6 +3176,9 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const [shareReady, setShareReady] = useState(false);
   const [fullscreenReady, setFullscreenReady] = useState(Boolean(document.fullscreenElement));
   const [setupBusy, setSetupBusy] = useState(false);
+  const [jobMode, setJobMode] = useState(false);
+  const [jobDept, setJobDept] = useState("CS/IT");
+  const [jobSkills, setJobSkills] = useState([]);
   const mobileDevice = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
   const browserSupported = Boolean(navigator.mediaDevices?.getDisplayMedia && document.documentElement.requestFullscreen);
   const done = st.attempts
@@ -3184,33 +3365,48 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     try {
       // Prefer the CV-based GraphRAG assessment; fall back to adaptive.
       let blueprintId = null;
-      try {
-        const bp = await api("/assessment/blueprint", { method: "POST" });
-        if (bp && bp.status === "ready") {
-          blueprintId = bp.blueprint_id;
-          if (bp.uncovered_skills?.length) {
+      if (jobMode) {
+        const bp = await api("/assessment/job-blueprint", {
+          method: "POST",
+          body: { department: jobDept, requested_skill_ids: jobSkills },
+        });
+        if (!bp || bp.status !== "ready") {
+          setBanner(
+            bp?.message ||
+              "The 40-question job-specific bank cannot fill every quota yet. No questions were fabricated; try the profile exam or ask an admin to activate more approved questions.",
+          );
+          return;
+        }
+        blueprintId = bp.blueprint_id;
+      } else {
+        try {
+          const bp = await api("/assessment/blueprint", { method: "POST" });
+          if (bp && bp.status === "ready") {
+            blueprintId = bp.blueprint_id;
+            if (bp.uncovered_skills?.length) {
+              setBanner(
+                "Some confirmed skills have no approved practice questions yet: " +
+                  bp.uncovered_skills.map((x) => x.label).join(", ") +
+                  ". The assessment will cover the available skills.",
+              );
+            }
+          } else if (bp) {
             setBanner(
-              "Some confirmed skills have no approved practice questions yet: " +
-                bp.uncovered_skills.map((x) => x.label).join(", ") +
-                ". The assessment will cover the available skills.",
+              "The GraphRAG question bank is not complete yet (" +
+                (bp.shortages?.length || 0) +
+                " coverage gaps). Using the standard adaptive assessment so you can still verify your skills.",
             );
           }
-        } else if (bp) {
-          setBanner(
-            "The GraphRAG question bank is not complete yet (" +
-              (bp.shortages?.length || 0) +
-              " coverage gaps). Using the standard adaptive assessment so you can still verify your skills.",
-          );
+        } catch (e) {
+          if (st?.confirmed?.length) {
+            setBanner(
+              "GraphRAG assessment is unavailable for this profile (" +
+                (e.message || "unknown error") +
+                "). Using the standard adaptive assessment.",
+            );
+          }
+          blueprintId = null;
         }
-      } catch (e) {
-        if (st?.confirmed?.length) {
-          setBanner(
-            "GraphRAG assessment is unavailable for this profile (" +
-              (e.message || "unknown error") +
-              "). Using the standard adaptive assessment.",
-          );
-        }
-        blueprintId = null;
       }
       const v = await api("/attempts", {
         method: "POST",
@@ -3249,7 +3445,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     } finally {
       setSetupBusy(false);
     }
-  }, [refresh, screenStream, cameraStream, cameraReady, t, identityResult]);
+  }, [refresh, screenStream, cameraStream, cameraReady, t, identityResult, jobMode, jobDept, jobSkills]);
   const finished = async () => {
     screenStream?.getTracks().forEach((track) => track.stop());
     cameraStream?.getTracks().forEach((track) => track.stop());
@@ -3402,11 +3598,103 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           My live face did not match closely. Continue anyway and flag this attempt for human review.
         </label>
       )}
+      <div className={"exam-mode" + (jobMode ? " on" : "")}>
+        <div className="exam-mode-head">
+          <div>
+            <strong>Assessment mode</strong>
+            <span>
+              <b>Profile exam</b> = the broad CV assessment: 25 core fundamentals plus
+              5 questions per confirmed CV skill, used for your skill passport and gap
+              report. <b>Job-specific exam</b> = a stricter 40-question / 40-minute
+              exam with 20 department fundamentals, 16 CV-cluster questions and 4
+              project probes, including one coding task.
+            </span>
+          </div>
+          <div className="exam-mode-switch" role="group" aria-label="Assessment mode">
+            <button
+              type="button"
+              className={!jobMode ? "on" : ""}
+              onClick={() => { setJobMode(false); setBanner(""); }}
+              disabled={setupBusy}
+            >
+              Profile exam
+            </button>
+            <button
+              type="button"
+              className={jobMode ? "on" : ""}
+              onClick={() => { setJobMode(true); setBanner(""); }}
+              disabled={setupBusy || !(st.confirmed?.length)}
+              title={!(st.confirmed?.length) ? "Confirm your CV skills first" : ""}
+            >
+              Job-specific exam
+            </button>
+          </div>
+        </div>
+        {jobMode && (
+          <div className="exam-mode-body">
+            <label className="exam-mode-field">
+              <span>Department</span>
+              <select value={jobDept} onChange={(e) => setJobDept(e.target.value)} disabled={setupBusy}>
+                <option value="CS/IT">CS/IT</option>
+              </select>
+              <small>Other tracks are prepared but not launched yet.</small>
+            </label>
+            <div className="exam-mode-skills">
+              <div className="exam-mode-skills-head">
+                <b>Skills you most want verified</b>
+                <span>{jobSkills.length}/5 selected</span>
+              </div>
+              <p>
+                Pick up to 5. The rest stay claimed and can be checked later in optional
+                short modules.
+              </p>
+              <div className="exam-skill-picker">
+                {(() => {
+                  const options = new Map();
+                  (st.profile_skill_items || []).forEach((skill) => {
+                    const id = skill.id || skill.skill_id;
+                    if (id) options.set(id, skill.label || skill.name || id);
+                  });
+                  (st.confirmed || []).forEach((id) => {
+                    if (!options.has(id)) {
+                      options.set(id, String(id).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+                    }
+                  });
+                  return [...options.entries()].map(([id, label]) => {
+                    const on = jobSkills.includes(id);
+                    const full = jobSkills.length >= 5 && !on;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        className={"skill-pick" + (on ? " on" : "")}
+                        disabled={setupBusy || full}
+                        onClick={() =>
+                          setJobSkills((prev) =>
+                            prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+                          )
+                        }
+                      >
+                        {on ? "✓ " : ""}{label}
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+            <p className="exam-mode-note">
+              40 questions · 40 minutes hard limit · 1 coding task with an in-browser code
+              workspace · SQL questions are capped. Questions come only from approved,
+              stored answer keys.
+            </p>
+          </div>
+        )}
+      </div>
       {banner && <p className="note">{banner}</p>}
       <Err e={err} />
       <div className="exam-setup-actions">
         <button className="btn" onClick={start} disabled={setupBusy || mobileDevice || !browserSupported || !navigator.onLine || !shareReady || !fullscreenReady || !cameraReady || !identityPass || !micReady}>
-          {setupBusy ? t("saving") : t("startTest")}
+          {setupBusy ? t("saving") : jobMode ? "Start job-specific exam · 40Q" : "Start profile exam"}
         </button>
         <small>Screen sharing, webcam, microphone, full-screen and the identity check must be complete before you can start.</small>
       </div>

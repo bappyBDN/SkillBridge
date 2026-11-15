@@ -1531,12 +1531,15 @@ def ensure_admin_console_schema():
             id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
             icon TEXT NOT NULL DEFAULT '◇', subcategories TEXT NOT NULL DEFAULT '[]',
             created_by TEXT NOT NULL DEFAULT 'System', created_at REAL NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS assessment_track_config (
+            department TEXT PRIMARY KEY, config TEXT NOT NULL,
+            launched INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS question_bank (
             id TEXT PRIMARY KEY, category_id TEXT NOT NULL, subcategory TEXT NOT NULL DEFAULT '',
             question_type TEXT NOT NULL, difficulty_level TEXT NOT NULL, question_text TEXT NOT NULL,
             options TEXT NOT NULL DEFAULT '[]', correct_answer TEXT NOT NULL DEFAULT '',
             explanation TEXT NOT NULL DEFAULT '', reference_answer TEXT NOT NULL DEFAULT '',
-            grading_rubric TEXT NOT NULL DEFAULT '', marks INTEGER NOT NULL DEFAULT 1,
+            grading_rubric TEXT NOT NULL DEFAULT '', marks REAL NOT NULL DEFAULT 1,
             time_allocation INTEGER NOT NULL DEFAULT 60, status TEXT NOT NULL DEFAULT 'draft',
             created_by TEXT NOT NULL, created_at REAL NOT NULL, version INTEGER NOT NULL DEFAULT 1)""",
         """CREATE TABLE IF NOT EXISTS question_import_staging (
@@ -1545,7 +1548,7 @@ def ensure_admin_console_schema():
             question_type TEXT NOT NULL, difficulty_level TEXT NOT NULL, question_text TEXT NOT NULL,
             options TEXT NOT NULL DEFAULT '[]', correct_answer TEXT NOT NULL DEFAULT '',
             explanation TEXT NOT NULL DEFAULT '', reference_answer TEXT NOT NULL DEFAULT '',
-            grading_rubric TEXT NOT NULL DEFAULT '', marks INTEGER NOT NULL DEFAULT 1,
+            grading_rubric TEXT NOT NULL DEFAULT '', marks REAL NOT NULL DEFAULT 1,
             time_allocation INTEGER NOT NULL DEFAULT 60, status TEXT NOT NULL DEFAULT 'draft',
             raw TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL, created_at REAL NOT NULL)""",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_question_categories_name_ci ON question_categories(lower(name))",
@@ -1558,6 +1561,18 @@ def ensure_admin_console_schema():
         if not one("SELECT user_id FROM admin_staff_roles WHERE user_id=?", (row["user_id"],)):
             run("INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at) VALUES (?,?,?,?)",
                 (row["user_id"], "super_admin", row["user_id"], time.time()))
+    # Department exam budgets are configurable data, not hard-coded UI branches.
+    # Seeding is insert-only: an operator edit is never overwritten on restart.
+    try:
+        import exam_policy
+        for department, track in exam_policy.DEPARTMENT_TRACKS.items():
+            if one("SELECT department FROM assessment_track_config WHERE department=?", (department,)):
+                continue
+            config = {key: value for key, value in track.items() if key not in ("department", "launched")}
+            run("INSERT INTO assessment_track_config(department,config,launched,updated_at) VALUES (?,?,?,?)",
+                (department, json.dumps(config), int(bool(track.get("launched"))), time.time()))
+    except Exception:
+        log.exception("Could not seed assessment track config")
 
 
 ensure_admin_console_schema()
@@ -2388,15 +2403,18 @@ def admin_audit_logs(user=Depends(current_user), limit: int = 100, action: str =
 
 QUESTION_CATEGORIES = [
     {"id":"CAT-01","name":"SQL","icon":"▤","description":"Queries, joins, indexing and database operations","subcategories":["SQL Basics","Joins","Aggregation","Subqueries","Indexing","Transactions","Query Optimization"]},
-    {"id":"CAT-02","name":"DSA","icon":"⌘","description":"Data structures, algorithms and complexity","subcategories":["Arrays & Strings","Linked Lists","Stacks & Queues","Trees","Graphs","Sorting & Searching","Dynamic Programming","Big-O Analysis"]},
-    {"id":"CAT-03","name":"Coding","icon":"</>","description":"Programming exercises and implementation","subcategories":["Python","C++","Problem Solving","Debugging","Functions","OOP Coding"]},
-    {"id":"CAT-04","name":"RAG & AI","icon":"✳","description":"LLMs, retrieval, embeddings and AI agents","subcategories":["LLM Fundamentals","RAG Pipelines","Embeddings","Vector Databases","Prompt Engineering","AI Agents","Evaluation"]},
+    {"id":"CAT-02","name":"DSA","icon":"⌘","description":"Data structures, algorithms and complexity","subcategories":["Arrays & Strings","Linked Lists","Stacks & Queues","Trees","Graphs","Sorting & Searching","Dynamic Programming","Big-O Analysis","Data Structures & Algorithms"]},
+    {"id":"CAT-03","name":"Coding","icon":"</>","description":"Programming exercises and implementation","subcategories":["Python","C++","Problem Solving","Debugging","Functions","OOP Coding","Programming Fundamentals","C Programming","JavaScript"]},
+    {"id":"CAT-04","name":"RAG & AI","icon":"✳","description":"LLMs, retrieval, embeddings and AI agents","subcategories":["LLM Fundamentals","RAG Pipelines","Embeddings","Vector Databases","Prompt Engineering","AI Agents","Evaluation","LangChain","LangGraph","Machine Learning","Fine-Tuning & PyTorch"]},
     {"id":"CAT-05","name":"Java","icon":"☕","description":"Java language, JVM and ecosystem","subcategories":["Core Java","OOP","Collections","Exception Handling","Multithreading","JVM & Memory","Spring Basics"]},
     {"id":"CAT-06","name":"Scenario-Based","icon":"◇","description":"Practical workplace and technical situations","subcategories":["Troubleshooting","Decision Making","Production Issues","Team Collaboration","Case Study","Debugging Scenario"]},
     {"id":"CAT-07","name":"IQ & Aptitude","icon":"◎","description":"Logical, numerical and analytical reasoning","subcategories":["Logical Reasoning","Numerical Ability","Pattern Recognition","Verbal Reasoning","Data Interpretation"]},
     {"id":"CAT-08","name":"CS Fundamentals","icon":"▦","description":"Core computer science and engineering concepts","subcategories":["Operating Systems","Computer Networks","DBMS","OOP Concepts","Software Engineering","Computer Architecture","Compiler Basics"]},
     {"id":"CAT-09","name":"System Design","icon":"⌘","description":"Architecture, APIs, scalability and reliability","subcategories":["Architecture","API Design","Scalability","Caching","Messaging","Database Design","Security & Reliability"]},
-    {"id":"CAT-10","name":"CV Technology Skills","icon":"◇","description":"Technology-specific questions matched to explicitly confirmed CV skills","subcategories":[spec["name"] for spec in TAXONOMY.values()] + ["Other"]}
+    {"id":"CAT-10","name":"CV Technology Skills","icon":"◇","description":"Technology-specific questions matched to explicitly confirmed CV skills","subcategories":[spec["name"] for spec in TAXONOMY.values()] + ["Other"]},
+    {"id":"CAT-11","name":"Backend Frameworks","icon":"▤","description":"FastAPI, Django, Node.js and backend framework engineering","subcategories":["FastAPI","Django","Node.js","Express","REST APIs","Framework Architecture"]},
+    {"id":"CAT-12","name":"Frontend Frameworks","icon":"▦","description":"React, Next.js, state management and frontend performance","subcategories":["React","Next.js","React & Next.js","State Management","Performance","Testing"]},
+    {"id":"CAT-13","name":"DevOps & Systems","icon":"⌘","description":"Linux, containers, operating systems, CI/CD and deployment","subcategories":["Linux","Docker","Operating Systems","CI/CD","Kubernetes","Cloud Deployment","Monitoring & Observability","Git & Version Control","Infrastructure as Code"]}
 ]
 QUESTION_CATEGORY_BY_ID = {x["id"]:x for x in QUESTION_CATEGORIES}
 QUESTION_CATEGORY_BY_NAME = {x["name"].lower():x["id"] for x in QUESTION_CATEGORIES}
@@ -2404,7 +2422,7 @@ QUESTION_CATEGORY_BY_NAME = {x["name"].lower():x["id"] for x in QUESTION_CATEGOR
 
 def _ensure_question_category(value, actor="Admin"):
     name = re.sub(r"\s+", " ", str(value or "").strip())[:80] or "Uncategorized"
-    existing = one("SELECT * FROM question_categories WHERE lower(name)=lower(?)", (name,))
+    existing = one("SELECT * FROM question_categories WHERE id=? OR lower(name)=lower(?)", (name, name))
     if existing:
         return dict(existing)
     base = re.sub(r"[^A-Z0-9]+", "-", name.upper()).strip("-")[:24] or "CUSTOM"
@@ -2451,6 +2469,12 @@ def _infer_question_type(question_text, options=None, requested=""):
     label = str(requested or "").strip().lower()
     if len(options) >= 2:
         return "MCQ"
+    # An explicitly supplied canonical type wins over keyword inference, so an
+    # author can file a scenario question that happens to mention "function".
+    explicit = {"coding": "Coding", "explainable": "Explainable",
+                "scenario-based": "Scenario-Based", "scenario": "Scenario-Based"}
+    if label in explicit:
+        return explicit[label]
     text = str(question_text or "").lower()
     coding_terms = ("write a program","write code","implement ","function that","code to ",
                     "debug the following","complete the code","write a function","sql query to",
@@ -2505,7 +2529,7 @@ def _question_payload(raw, actor="Admin"):
     options=[str(x).strip() for x in options if str(x).strip()]
     qtype = _infer_question_type(qtext, options, requested_type)
     category_id = _ensure_question_category(category_id or category or _guess_question_category(qtext) or "Uncategorized", actor)["id"]
-    try: marks=int(raw.get("marks") or 1)
+    try: marks=float(raw.get("marks") if raw.get("marks") not in (None, "") else 1)
     except (TypeError,ValueError): marks=0
     try:
         if raw.get("time_allocation") not in (None,""):
@@ -2521,7 +2545,7 @@ def _question_payload(raw, actor="Admin"):
     if not qtext: errors.append("Question text is required.")
     if not qtype: errors.append("Question type is required.")
     if difficulty not in ("Easy","Medium","Hard"): errors.append("Difficulty must be Easy, Medium or Hard.")
-    if marks<1 or marks>100: errors.append("Marks must be between 1 and 100.")
+    if marks<0.5 or marks>100: errors.append("Marks must be between 0.5 and 100.")
     if seconds<15 or seconds>7200: errors.append("Time allocation must be 15–7200 seconds.")
     if status not in ("draft","active","archived"): errors.append("Status must be Draft, Active or Archived.")
     if len(qtext)>10000: errors.append("Question text is too long.")

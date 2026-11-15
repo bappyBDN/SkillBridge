@@ -1491,3 +1491,281 @@ select{max-width:100%}
 .detect-chip.ok{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.1);color:#34d399}
 .detect-chip.warn{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1);color:#fbbf24}
 .detect-chip.bad{border-color:rgba(251,113,133,.45);background:rgba(251,113,133,.12);color:#fb7185}
+
+/* ---------- candidate code workspace (VS Code-like editor + terminal) ---------- */
+.cw{margin:14px 0 4px;border:1px solid #242c36;border-radius:14px;overflow:hidden;background:#0b1016;box-shadow:0 18px 40px rgba(0,0,0,.25)}
+.cw-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:#10161d;border-bottom:1px solid #242c36;flex-wrap:wrap}
+.cw-bar-left{display:flex;align-items:center;gap:8px;min-width:0;color:#e8eef6;font-size:.78rem}
+.cw-bar-left b{font-weight:700;letter-spacing:.02em}
+.cw-dot{width:9px;height:9px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.12);flex:none}
+.cw-file{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#8b98a8;background:#0b1016;border:1px solid #242c36;border-radius:6px;padding:2px 7px;font-size:.7rem}
+.cw-badge{font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;font-weight:800;color:#7dd3fc;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.25);border-radius:999px;padding:3px 7px;white-space:nowrap}
+.cw-bar-right{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.cw-select{background:#0b1016;color:#dbe6f2;border:1px solid #2a3441;border-radius:8px;padding:6px 8px;font-size:.72rem;font-weight:600}
+.cw-btn{background:#18212b;color:#dbe6f2;border:1px solid #2a3441;border-radius:8px;padding:7px 11px;font-size:.72rem;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s}
+.cw-btn:hover:not(:disabled){background:#1f2a36;border-color:#3b4653}
+.cw-btn:disabled{opacity:.45;cursor:not-allowed}
+.cw-btn.primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+.cw-btn.primary:hover:not(:disabled){background:#2563eb;border-color:#2563eb}
+.cw-editor .cm-editor{font-size:.82rem;background:#0b1016}
+.cw-editor .cm-scroller{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.55}
+.cw-editor .cm-gutters{background:#0b1016;border-right:1px solid #1b232d;color:#4b5a6a}
+.cw-editor .cm-activeLine,.cw-editor .cm-activeLineGutter{background:rgba(56,189,248,.06)}
+.cw-term{border-top:1px solid #242c36;background:#080d12}
+.cw-term-head{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#0d1319;border-bottom:1px solid #1b232d;font-size:.62rem;letter-spacing:.1em;font-weight:800;color:#8b98a8;text-transform:uppercase}
+.cw-term-hint{letter-spacing:0;text-transform:none;font-weight:600;color:#5d6d7e;flex:1}
+.cw-term-clear{margin-left:auto;background:transparent;border:1px solid #2a3441;color:#8b98a8;border-radius:6px;padding:3px 8px;font-size:.62rem;font-weight:700;cursor:pointer;text-transform:none;letter-spacing:0}
+.cw-term-body{margin:0;padding:12px 14px;min-height:120px;max-height:240px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem;line-height:1.55;color:#c9d6e3;white-space:pre-wrap;word-break:break-word}
+.cw-term-idle{color:#5d6d7e}
+.cw-line{white-space:pre-wrap}
+.cw-line.cmd{color:#7dd3fc;font-weight:700}
+.cw-line.out{color:#d7e3ef}
+.cw-line.err{color:#fb7185}
+.cw-line.meta{color:#5d6d7e;font-style:italic}
+.cw-note{margin:0;padding:8px 12px 11px;font-size:.66rem;color:#6f7f90;background:#0b1016}
+@media(max-width:620px){.cw-bar{align-items:flex-start}.cw-bar-right{width:100%;justify-content:flex-end}.cw-editor .cm-editor{font-size:.76rem}}
+
+/* ---------- assessment mode selector (profile vs job-specific) ---------- */
+.exam-mode{margin:14px 0 0;border:1px solid #24313c;border-radius:14px;background:#0d141b;padding:14px}
+.exam-mode.on{border-color:#2f6f66;box-shadow:0 0 0 1px rgba(47,111,102,.25)}
+.exam-mode-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.exam-mode-head>div:first-child{display:grid;gap:4px;max-width:560px}
+.exam-mode-head strong{font-size:.85rem;color:#e8eef6}
+.exam-mode-head span{font-size:.74rem;color:#9fb0c2;line-height:1.5}
+.exam-mode-switch{display:inline-flex;border:1px solid #2a3441;border-radius:10px;overflow:hidden;background:#0b1016}
+.exam-mode-switch button{background:transparent;border:0;color:#8b98a8;padding:8px 12px;font-size:.72rem;font-weight:700;cursor:pointer}
+.exam-mode-switch button+button{border-left:1px solid #2a3441}
+.exam-mode-switch button.on{background:#1c3a36;color:#7ee2d0}
+.exam-mode-switch button:disabled{opacity:.45;cursor:not-allowed}
+.exam-mode-body{margin-top:14px;display:grid;gap:14px}
+.exam-mode-field{display:grid;gap:5px;max-width:340px}
+.exam-mode-field>span{font-size:.66rem;text-transform:uppercase;letter-spacing:.08em;font-weight:800;color:#8b98a8}
+.exam-mode-field select{background:#0b1016;border:1px solid #2a3441;border-radius:9px;color:#e8eef6;padding:8px 10px;font-size:.8rem}
+.exam-mode-field small{font-size:.66rem;color:#6f7f90}
+.exam-mode-skills{display:grid;gap:6px}
+.exam-mode-skills-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.exam-mode-skills-head b{font-size:.78rem;color:#e8eef6}
+.exam-mode-skills-head span{font-size:.68rem;font-weight:800;color:#7dd3fc}
+.exam-mode-skills p{margin:0;font-size:.7rem;color:#8b98a8}
+.exam-skill-picker{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
+.skill-pick{background:#111a22;border:1px solid #2a3441;border-radius:999px;color:#c9d6e3;padding:6px 11px;font-size:.7rem;font-weight:700;cursor:pointer}
+.skill-pick:hover:not(:disabled){border-color:#3b6f66;background:#14211f}
+.skill-pick.on{background:#1c3a36;border-color:#2f6f66;color:#7ee2d0}
+.skill-pick:disabled{opacity:.4;cursor:not-allowed}
+.exam-mode-note{margin:0;font-size:.68rem;color:#6f7f90;line-height:1.5}
+@media(max-width:620px){.exam-mode-head{flex-direction:column}.exam-mode-switch{width:100%}.exam-mode-switch button{flex:1}}
+
+/* ---------- exam takes the full viewport (workspace chrome hidden) ---------- */
+body.exam-live{background:#0b0f14}
+body.exam-live .candidate-sidebar,
+body.exam-live .candidate-topbar,
+body.exam-live .candidate-footer{display:none}
+body.exam-live .candidate-shell{grid-template-columns:minmax(0,1fr);min-height:100vh;min-height:100dvh}
+body.exam-live .candidate-main{min-height:100vh;min-height:100dvh}
+body.exam-live .candidate-page{max-width:none;margin:0;padding:0}
+body.exam-live .tech-exam{border-radius:0;min-height:100vh;min-height:100dvh;padding:14px 18px 18px;box-shadow:none}
+body.exam-live .tech-exam-head{padding-bottom:12px}
+
+/* three-column exam: question list | question | proctoring */
+.tech-exam-grid{grid-template-columns:176px minmax(0,1fr) 296px;gap:14px}
+.tech-qlist{position:sticky;top:14px;display:flex;flex-direction:column;gap:10px;background:var(--tx-panel,#11161d);border:1px solid var(--tx-line,#242c36);border-radius:14px;padding:12px;max-height:calc(100vh - 110px)}
+.tech-qlist-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.tech-qlist-head b{font-size:.76rem;color:#fff}
+.tech-qlist-head span{font-size:.62rem;font-weight:700;color:#8b98a8;white-space:nowrap}
+.tech-qlist-scroll{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;overflow:auto;padding:2px}
+.tech-qitem{aspect-ratio:1;display:grid;place-items:center;background:#0b1016;border:1px solid #242c36;border-radius:8px;color:#9fb0c2;font-size:.68rem;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.tech-qitem:hover:not(:disabled){border-color:#3b4653;color:#e8eef6}
+.tech-qitem.done{background:rgba(52,211,153,.14);border-color:rgba(52,211,153,.5);color:#34d399}
+.tech-qitem.current{outline:2px solid #7dd3fc;outline-offset:1px;color:#fff}
+.tech-qitem.current.done{color:#a7f3d0}
+.tech-qitem:disabled{opacity:.5;cursor:wait}
+.tech-qlist-legend{display:grid;gap:4px;border-top:1px solid #1b232d;padding-top:8px}
+.tech-qlist-legend span{display:flex;align-items:center;gap:6px;font-size:.6rem;color:#6f7f90}
+.tech-qlist-legend .dot{width:7px;height:7px;border-radius:50%;background:#3b4653;flex:none}
+.tech-qlist-legend .dot.done{background:#34d399}
+.tech-qlist .tech-btn{width:100%;margin-top:2px}
+@media(max-width:1280px){.tech-exam-grid{grid-template-columns:150px minmax(0,1fr)}.tech-side{grid-column:1/-1;position:static;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.tech-qlist{max-height:none}}
+@media(max-width:900px){.tech-exam-grid{grid-template-columns:1fr}.tech-qlist{position:static;max-height:none}.tech-qlist-scroll{grid-template-columns:repeat(8,minmax(0,1fr))}.tech-qlist-legend{grid-auto-flow:column;justify-content:start;gap:12px}}
+
+/* ---------- exam integrity status + flags ---------- */
+.tech-statusbar{display:flex;flex-wrap:wrap;gap:6px;padding:8px 4px 0}
+.tech-statusbar span{font-size:.6rem;font-weight:800;letter-spacing:.02em;border:1px solid #242c36;border-radius:999px;padding:4px 8px;color:#8b98a8;background:#11161d;white-space:nowrap}
+.tech-statusbar .ok{color:#34d399;border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08)}
+.tech-statusbar .bad{color:#fb7185;border-color:rgba(251,113,133,.45);background:rgba(251,113,133,.08)}
+.tech-statusbar .warn{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.08)}
+.tech-focus-note{margin:6px 0 0;font-size:.7rem;color:#6f7f90;max-width:560px}
+.tech-qitem{position:relative}
+.tech-qitem.flagged{border-color:rgba(251,191,36,.65);box-shadow:inset 0 0 0 1px rgba(251,191,36,.22)}
+.tech-qitem.flagged::after{content:"";position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:#fbbf24}
+.tech-flag{display:inline-flex;align-items:center;gap:7px;background:#11161d;border:1px solid #2a3441;border-radius:9px;color:#c9d6e3;padding:7px 11px;font-size:.72rem;font-weight:700;cursor:pointer}
+.tech-flag:hover{border-color:#3b4653;background:#18212b}
+.tech-flag.on{background:rgba(251,191,36,.1);border-color:rgba(251,191,36,.5);color:#fbbf24}
+/* Clipboard/selection lockdown: text stays selectable only inside answer fields. */
+.tech-exam{user-select:none;-webkit-user-select:none}
+.tech-exam textarea,
+.tech-exam input,
+.tech-exam select,
+.tech-exam .cm-editor,
+.tech-exam .cm-content{user-select:text;-webkit-user-select:text}
+
+/* ---------- viewport-locked exam: no page scrolling ---------- */
+body.exam-live{overflow:hidden}
+body.exam-live .candidate-main,
+body.exam-live .candidate-page{height:100vh;height:100dvh;overflow:hidden}
+body.exam-live .tech-exam{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;padding:10px 14px 12px}
+body.exam-live .tech-exam-head{flex:none;padding:4px 2px 8px}
+body.exam-live .tech-statusbar{flex:none;padding:6px 2px 0;gap:5px}
+body.exam-live .tech-statusbar span{font-size:.56rem;padding:3px 7px}
+body.exam-live .tech-exam-grid{flex:1 1 auto;min-height:0;overflow:hidden;padding-top:10px;gap:12px}
+body.exam-live .tech-main{display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
+body.exam-live .tech-hero{flex:none;padding:11px 14px}
+body.exam-live .tech-hero h1{font-size:1.05rem;margin:0;letter-spacing:-.02em}
+body.exam-live .tech-hero-copy>p{font-size:.68rem;margin:2px 0 0}
+body.exam-live .tech-focus-note{display:none}
+body.exam-live .tech-stats{gap:12px;margin:7px 0 5px}
+body.exam-live .tech-stats span{font-size:.56rem}
+body.exam-live .tech-stats b{font-size:.88rem;margin-top:1px}
+body.exam-live .tech-progress{height:5px}
+body.exam-live .tech-progress-row{font-size:.6rem;margin-top:3px}
+body.exam-live .tech-panel{padding:13px 14px}
+body.exam-live .tech-question-panel{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column}
+body.exam-live .tech-question-panel .tech-note{margin-top:6px;font-size:.64rem}
+body.exam-live .tech-question-panel .tech-textarea{flex:1;min-height:120px;resize:none}
+body.exam-live .tech-question-actions{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:2px}
+body.exam-live .tech-question-actions .tech-qnav{flex:1;min-width:260px;margin:0}
+body.exam-live .tech-qlist{height:100%;max-height:none}
+body.exam-live .tech-side{height:100%;max-height:none;overflow:auto;position:static}
+body.exam-live .cw{margin:8px 0 0}
+body.exam-live .cw-editor .cm-editor{height:min(300px,30vh)}
+body.exam-live .cw-term-body{max-height:16vh;min-height:70px}
+body.exam-live .cw-note{display:none}
+body.exam-live .tech-statusbar .live{animation:tech-pulse 1.1s ease-in-out infinite}
+@keyframes tech-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+.cw-loading{padding:20px;border:1px dashed #2a3441;border-radius:12px;color:#8b98a8;font-size:.78rem;background:#0b1016}
+@media(max-height:760px){
+  body.exam-live .tech-hero{display:none}
+  body.exam-live .tech-statusbar span:nth-child(n+6){display:none}
+}
+
+/* ================= light exam UI (reference design) ================= */
+body.exam-live{background:#eef3fb}
+body.exam-live .candidate-page{background:#eef3fb}
+.exam2{--e2-bg:#eef3fb;--e2-card:#fff;--e2-line:#e3e9f3;--e2-ink:#0f1b2d;--e2-muted:#7c8aa0;--e2-blue:#2563eb;background:var(--e2-bg);color:var(--e2-ink);height:100%;display:flex;flex-direction:column;gap:12px;padding:14px 18px 16px;border-radius:0;box-shadow:none}
+.exam2-top{flex:none;display:flex;align-items:center;justify-content:space-between;gap:14px;background:#fff;border:1px solid var(--e2-line);border-radius:14px;padding:10px 18px;box-shadow:0 4px 14px rgba(15,27,45,.045)}
+.exam2-top-q{display:flex;align-items:center;gap:10px;font-size:.95rem;color:var(--e2-ink)}
+.exam2-top-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#e8efff;color:var(--e2-blue);font-size:.85rem}
+.exam2-timer{display:flex;align-items:center;gap:14px;background:#f4f8ff;border:1px solid #dbe7ff;border-radius:12px;padding:6px 14px;color:var(--e2-blue);font-size:.76rem;font-weight:700}
+.exam2-timer b{font-size:1.45rem;letter-spacing:.02em;color:#1d4ed8;font-variant-numeric:tabular-nums}
+.exam2-timer b.low{color:#dc2626}
+.exam2 .tech-exam-grid{flex:1 1 auto;min-height:0;overflow:hidden;grid-template-columns:212px minmax(0,1fr) 276px;gap:14px;padding-top:0}
+.exam2-palette{background:#fff;border:1px solid var(--e2-line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:12px;height:100%;overflow:hidden;box-shadow:0 4px 14px rgba(15,27,45,.045)}
+.exam2-palette-head b{display:block;font-size:.9rem;color:var(--e2-ink);letter-spacing:-.01em}
+.exam2-palette-head span{display:block;margin-top:2px;font-size:.68rem;color:var(--e2-muted)}
+.exam2-palette-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;overflow:auto;align-content:start;padding:2px}
+.exam2-q{position:relative;aspect-ratio:1;display:grid;place-items:center;background:#fff;border:1px solid #dbe3ee;border-radius:10px;font-size:.9rem;font-weight:800;color:#334155;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.exam2-q:hover:not(:disabled){border-color:#b9cdf3;background:#f7faff}
+.exam2-q.answered{background:#e8f7ee;border-color:#bfe8cd;color:#15803d}
+.exam2-q.skipped{background:#fff7e8;border-color:#fde3b0;color:#b45309}
+.exam2-q.current{background:var(--e2-blue);border-color:var(--e2-blue);color:#fff;box-shadow:0 6px 14px rgba(37,99,235,.25)}
+.exam2-q:disabled{opacity:.6;cursor:wait}
+.exam2-flagmark{position:absolute;top:-5px;right:-4px;background:#fff;border-radius:50%;color:#ef4444;font-size:.72rem;line-height:1;padding:1px 2px;box-shadow:0 1px 3px rgba(15,27,45,.18)}
+.exam2-palette-legend{display:grid;gap:6px;border-top:1px solid #edf1f7;padding-top:10px;font-size:.68rem;color:#475569}
+.exam2-palette-legend span{display:flex;align-items:center;gap:8px}
+.exam2-palette-legend .dot{width:8px;height:8px;border-radius:50%;background:#e2e8f0;border:1px solid #cbd5e1;flex:none}
+.exam2-palette-legend .dot.current{background:var(--e2-blue);border-color:var(--e2-blue)}
+.exam2-palette-legend .dot.answered{background:#22c55e;border-color:#22c55e}
+.exam2-palette-legend .dot.skipped{background:#f59e0b;border-color:#f59e0b}
+.exam2-palette-legend .flag{color:#ef4444;font-size:.8rem;line-height:1}
+.exam2-submit{margin-top:auto;background:var(--e2-blue);color:#fff;border:0;border-radius:10px;padding:10px;font-size:.76rem;font-weight:800;cursor:pointer}
+.exam2-submit:hover:not(:disabled){background:#1d4ed8}
+.exam2-submit:disabled{opacity:.55;cursor:not-allowed}
+.exam2 .tech-main{min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:10px}
+.exam2 .tech-question-panel{flex:1 1 auto;min-height:0;overflow:auto;background:#fff;border:1px solid var(--e2-line);border-radius:16px;padding:20px 22px;box-shadow:0 4px 14px rgba(15,27,45,.045);color:var(--e2-ink)}
+.exam2-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.exam2-type{display:inline-flex;align-items:center;gap:6px;background:#eaf1ff;color:#1d4ed8;border:1px solid #d8e4ff;border-radius:999px;padding:6px 11px;font-size:.7rem;font-weight:800}
+.exam2-flag-btn{display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid #f3b4b4;color:#dc2626;border-radius:9px;padding:7px 12px;font-size:.72rem;font-weight:800;cursor:pointer}
+.exam2-flag-btn:hover{background:#fff5f5;border-color:#ef4444}
+.exam2-flag-btn.on{background:#fef2f2;border-color:#ef4444}
+.exam2 .tech-question{margin:2px 0 6px;font-size:1.18rem;line-height:1.5;color:var(--e2-ink);font-weight:700}
+.exam2-meta{font-size:.68rem;color:var(--e2-muted);margin:0 0 16px}
+.exam2 .tech-options{display:grid;gap:10px;margin-bottom:8px}
+.exam2 .tech-opt{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:12px;border:1px solid #dbe3ee;background:#fff;color:#1e293b;font-size:.88rem;line-height:1.45;cursor:pointer;transition:border-color .12s,background .12s,box-shadow .12s}
+.exam2 .tech-opt:hover{border-color:#b9cdf3;background:#f8fbff}
+.exam2 .tech-opt.on{border-color:var(--e2-blue);background:#eef4ff;box-shadow:inset 0 0 0 1px var(--e2-blue)}
+.exam2 .tech-opt input{appearance:none;-webkit-appearance:none;width:18px;height:18px;border-radius:50%;border:2px solid #cbd5e1;margin:0;position:relative;flex:none;background:#fff}
+.exam2 .tech-opt.on input{border-color:var(--e2-blue)}
+.exam2 .tech-opt.on input::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--e2-blue)}
+.exam2 .tech-answer-head{color:var(--e2-ink)}
+.exam2 .tech-answer-head b{font-size:.78rem}
+.exam2 .tech-answer-head span{font-size:.66rem;color:var(--e2-muted)}
+.exam2 .tech-textarea{background:#f8fafc;border:1px solid #dbe3ee;color:var(--e2-ink);border-radius:11px}
+.exam2 .tech-note{color:var(--e2-muted);font-size:.66rem}
+.exam2 .tech-sqlout{background:#f8fafc;border:1px solid #dbe3ee;color:#0f1b2d}
+.exam2 .tech-btn.ghost{background:#fff;border:1px solid #dbe3ee;color:#1d4ed8}
+.exam2 .exam2-bottom{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff;border:1px solid var(--e2-line);border-radius:14px;padding:10px 14px;box-shadow:0 4px 14px rgba(15,27,45,.045)}
+.exam2-nav{display:inline-flex;align-items:center;gap:6px;border-radius:11px;padding:10px 18px;font-size:.78rem;font-weight:800;cursor:pointer;white-space:nowrap}
+.exam2-nav.prev{background:#fff;color:#1d4ed8;border:1px solid #bfd3ff}
+.exam2-nav.next{background:var(--e2-blue);color:#fff;border:1px solid var(--e2-blue)}
+.exam2-nav:disabled{opacity:.45;cursor:not-allowed}
+.exam2-nav:hover:not(:disabled){filter:brightness(.97)}
+.exam2-bottom-legend{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;font-size:.68rem;color:#64748b}
+.exam2-bottom-label{color:#94a3b8}
+.exam2-bottom-legend span{display:inline-flex;align-items:center;gap:6px}
+.exam2-bottom-legend .dot{width:8px;height:8px;border-radius:50%;background:#e2e8f0;border:1px solid #cbd5e1}
+.exam2-bottom-legend .dot.current{background:var(--e2-blue);border-color:var(--e2-blue)}
+.exam2-bottom-legend .dot.answered{background:#22c55e;border-color:#22c55e}
+.exam2-bottom-legend .dot.skipped{background:#f59e0b;border-color:#f59e0b}
+.exam2-bottom-legend .flag{color:#ef4444}
+.exam2-camera{background:#fff;border:1px solid var(--e2-line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px;height:100%;overflow:auto;box-shadow:0 4px 14px rgba(15,27,45,.045)}
+.exam2-camera-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.82rem;color:var(--e2-ink)}
+.exam2-camera-head b{display:inline-flex;align-items:center;gap:7px;font-weight:800}
+.exam2-cam-dot{width:9px;height:9px;border-radius:50%;background:var(--e2-blue);display:inline-block}
+.exam2-active{background:#dcfce7;color:#15803d;border-radius:999px;padding:4px 9px;font-size:.62rem;font-weight:800}
+.exam2-active.off{background:#fee2e2;color:#b91c1c}
+.exam2 .camera-float.inline{background:#fff;border:1px solid var(--e2-line);border-radius:12px;box-shadow:none;padding:8px;gap:8px}
+.exam2 .camera-float-head,.exam2 .camera-float-foot{display:none}
+.exam2 .camera-frame{border-radius:10px;overflow:hidden;background:#0f172a;position:relative}
+.exam2 .camera-frame video{width:100%;height:auto;aspect-ratio:4/3;object-fit:cover;display:block}
+.exam2 .camera-status{display:grid;gap:6px;padding:0 2px;color:#64748b;font-size:.64rem}
+.exam2 .camera-status>span{display:block;font-size:.62rem;color:#64748b}
+.exam2 .camera-detect{display:flex;flex-wrap:wrap;gap:5px;margin-top:0}
+.exam2 .detect-chip{background:#f1f5f9;border:1px solid #e2e8f0;color:#475569;font-size:.58rem;padding:3px 8px}
+.exam2 .detect-chip.ok{background:#e8f7ee;border-color:#bfe8cd;color:#15803d}
+.exam2 .detect-chip.warn{background:#fff7e8;border-color:#fde3b0;color:#b45309}
+.exam2 .detect-chip.bad{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.exam2-camera-status{display:flex;flex-wrap:wrap;gap:5px}
+.exam2-camera-status span{font-size:.56rem;font-weight:800;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;border-radius:999px;padding:3px 7px}
+.exam2-camera-status .ok{background:#e8f7ee;border-color:#bfe8cd;color:#15803d}
+.exam2-camera-status .bad{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.exam2-camera-status .warn{background:#fff7e8;border-color:#fde3b0;color:#b45309}
+.exam2-camera-status .live{animation:tech-pulse 1.1s ease-in-out infinite}
+.exam2-restore{display:grid;gap:6px}
+.exam2-restore button{background:#fff;border:1px solid #bfd3ff;color:#1d4ed8;border-radius:8px;padding:7px 9px;font-size:.66rem;font-weight:800;cursor:pointer}
+.exam2-tip{background:#eef4ff;border:1px solid #dbe7ff;border-radius:10px;padding:9px 10px;display:grid;gap:2px;margin-top:auto}
+.exam2-tip b{font-size:.7rem;color:#1e40af}
+.exam2-tip span{font-size:.62rem;color:#64748b;line-height:1.45}
+.exam2 .cw-loading{background:#f8fafc;border-color:#dbe3ee;color:#64748b}
+@media(max-width:1280px){.exam2 .tech-exam-grid{grid-template-columns:170px minmax(0,1fr) 240px}}
+@media(max-width:1080px){.exam2 .tech-exam-grid{grid-template-columns:150px minmax(0,1fr)}.exam2-camera{grid-column:1/-1;max-height:300px}.exam2 .tech-question-panel{padding:16px}}
+
+/* camera card / alert polish */
+.exam2 .camera-status>span{display:none}
+.exam2 .integrity-alerts.inline{background:transparent;padding:0}
+.exam2 .integrity-alerts.inline .integrity-alert{background:#fff7e8;border:1px solid #fde3b0;border-radius:10px;box-shadow:none;color:#7c2d12}
+.exam2 .integrity-alerts.inline .integrity-alert strong{color:#7c2d12}
+.exam2 .integrity-alerts.inline .integrity-alert small{color:#92400e}
+.exam2 .integrity-alerts.inline .integrity-alerts-note{display:none}
+
+.exam2-face{display:flex;align-items:flex-start;gap:8px;background:#e8f7ee;border:1px solid #bfe8cd;border-radius:10px;padding:8px 10px}
+.exam2-face.warn{background:#fff7e8;border-color:#fde3b0}
+.exam2-face-icon{width:20px;height:20px;border-radius:50%;background:#22c55e;color:#fff;display:grid;place-items:center;font-size:.62rem;font-weight:900;flex:none}
+.exam2-face.warn .exam2-face-icon{background:#f59e0b}
+.exam2-face b{display:block;font-size:.7rem;color:#15803d;line-height:1.3}
+.exam2-face.warn b{color:#b45309}
+.exam2-face div>span{font-size:.6rem;color:#64748b;line-height:1.4}
+.exam2-palette-grid{flex:1;min-height:0}
+.exam2-palette-head,.exam2-palette-legend,.exam2-submit{flex:none}
+body.exam-live .candidate-page > .page-title,
+body.exam-live .candidate-page > .steps{display:none!important}
+body.exam-live .candidate-page > .journey-content{padding:0;border:0;background:transparent;box-shadow:none;border-radius:0;margin:0}
+.exam2-syncing{font-size:.6rem;font-weight:800;color:#94a3b8;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:2px 7px;margin-left:4px}
