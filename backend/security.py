@@ -25,7 +25,7 @@ import struct
 import time
 
 # ------------------------------------------------------------------ passwords
-PASSWORD_MIN_LENGTH = 12
+PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 128
 PBKDF2_ITERATIONS = int(os.getenv("PBKDF2_ITERATIONS", "600000"))
 PBKDF2_ALGORITHM = "pbkdf2_sha256"
@@ -66,35 +66,18 @@ def _has_sequence(password: str, size: int = 4) -> bool:
 
 
 def password_errors(password: str, *, email: str = "", name: str = "") -> list[str]:
-    """Return a list of human-readable policy violations (empty means valid)."""
+    """Return a list of human-readable policy violations (empty means valid).
+
+    Policy: a minimum of 8 characters, nothing else. ``email``/``name`` are kept
+    in the signature so callers do not have to change.
+    """
     password = password or ""
     problems: list[str] = []
     if len(password) < PASSWORD_MIN_LENGTH:
         problems.append(f"Password must be at least {PASSWORD_MIN_LENGTH} characters.")
     if len(password) > PASSWORD_MAX_LENGTH:
         problems.append(f"Password must be at most {PASSWORD_MAX_LENGTH} characters.")
-    if password.lower() in COMMON_PASSWORDS:
-        problems.append("This password is too common and appears in public breach lists.")
-    if not re.search(r"[a-z]", password) or not re.search(r"[A-Z]", password):
-        problems.append("Password must mix upper- and lower-case letters.")
-    if not re.search(r"\d", password):
-        problems.append("Password must include at least one number.")
-    if not re.search(r"[^A-Za-z0-9]", password):
-        problems.append("Password must include at least one symbol.")
-    local = (email or "").split("@")[0].strip().lower()
-    normalized_password = re.sub(r"[^a-z0-9]", "", password.lower())
-    normalized_local = re.sub(r"[^a-z0-9]", "", local)
-    if normalized_local and len(normalized_local) >= 3 and normalized_local in normalized_password:
-        problems.append("Password must not contain your email address.")
-    for part in re.split(r"\s+", (name or "").strip().lower()):
-        part = re.sub(r"[^a-z0-9]", "", part)
-        if len(part) >= 3 and part in normalized_password:
-            problems.append("Password must not contain your name.")
-            break
-    if _has_sequence(password):
-        problems.append("Password must not contain keyboard or number sequences (for example 1234 or qwer).")
-    # Collapse duplicates while keeping order.
-    return list(dict.fromkeys(problems))
+    return problems
 
 
 def password_strength(password: str) -> int:

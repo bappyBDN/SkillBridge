@@ -36,13 +36,19 @@ def _headers(token):
 
 
 def test_weak_password_is_rejected():
-    r = _register("weak@example.com", password="password123")
+    r = _register("weak@example.com", password="Ab1!xy")
     assert r.status_code == 422
-    assert "common" in r.text.lower() or "symbol" in r.text.lower() or "12" in r.text
+    assert "8" in r.text
 
 
 def test_short_password_is_rejected():
-    assert _register("short@example.com", password="Ab1!xy").status_code == 422
+    assert _register("short@example.com", password="1234567").status_code == 422
+
+
+def test_eight_character_password_is_accepted():
+    r = _register("simple@example.com", password="12345678")
+    assert r.status_code == 200, r.text
+    assert r.json().get("token")
 
 
 def test_registration_never_reveals_an_existing_account():

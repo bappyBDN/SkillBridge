@@ -164,8 +164,8 @@ function Landing({ onAuthed }) {
         setErr(new Error(L.passwordMismatch));
         return;
       }
-      if (score < 2) {
-        setErr(new Error(L.passwordWeak));
+      if (f.password.length < 8) {
+        setErr(new Error(L.passwordShort));
         return;
       }
     }
@@ -344,10 +344,10 @@ function Landing({ onAuthed }) {
                       value={f.password}
                       onChange={set("password")}
                       required
-                      minLength={isRegister ? 12 : 1}
+                      minLength={isRegister ? 8 : 1}
                       maxLength={128}
                       autoComplete={isRegister ? "new-password" : "current-password"}
-                      placeholder={isRegister ? "At least 12 characters" : ""}
+                      placeholder={isRegister ? "At least 8 characters" : ""}
                     />
                     <button
                       type="button"
@@ -362,10 +362,7 @@ function Landing({ onAuthed }) {
                       <div className={"sb-strength s" + score} aria-hidden="true">
                         <span /><span /><span /><span />
                       </div>
-                      <small className="sb-hint">
-                        {score >= 3 ? "✓ " : ""}
-                        {L.passwordHint}
-                      </small>
+                      <small className="sb-hint">{L.passwordHint}</small>
                     </>
                   )}
                 </label>

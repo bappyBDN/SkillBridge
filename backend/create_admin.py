@@ -67,10 +67,10 @@ def main():
         if not name:
             raise SystemExit("A display name is required.")
         if not password:
-            password = getpass.getpass("New admin password (minimum 14 characters): ")
+            password = getpass.getpass("New admin password (minimum 8 characters): ")
             confirm_password = getpass.getpass("Confirm password: ")
-            if len(password) < 14:
-                raise SystemExit("Use a password with at least 14 characters.")
+            if len(password) < 8:
+                raise SystemExit("Use a password with at least 8 characters.")
             if password != confirm_password:
                 raise SystemExit("Passwords do not match.")
         elif len(password) < 8:

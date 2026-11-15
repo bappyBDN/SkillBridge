@@ -8,15 +8,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import security as SEC
 
 
-def test_weak_and_common_passwords_are_rejected():
-    for weak in ("12345678", "password123", "Password123", "qwertyuiop12", "Abcdefghijkl"):
-        assert SEC.password_errors(weak), weak
-    assert SEC.password_errors("Str0ng-Passw0rd-2026") == []
+def test_password_policy_is_minimum_length_only():
+    # 8 characters is the whole rule.
+    for too_short in ("", "abc", "1234567"):
+        assert SEC.password_errors(too_short), too_short
+    for accepted in ("12345678", "password", "Str0ng-Passw0rd-2026"):
+        assert SEC.password_errors(accepted) == [], accepted
 
 
-def test_password_cannot_contain_email_or_name():
-    errors = SEC.password_errors("Sadia-Rahman-2026!", email="sadia.rahman@example.com", name="Sadia Rahman")
-    assert any("email" in e.lower() for e in errors)
+def test_password_cannot_exceed_the_maximum():
+    assert SEC.password_errors("x" * (SEC.PASSWORD_MAX_LENGTH + 1))
 
 
 def test_strength_score_reacts_to_quality():
