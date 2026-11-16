@@ -5,6 +5,8 @@ import CandidateProfileWorkspace from "./CandidateProfileWorkspace.jsx";
 import Avatar, { useAvatar } from "./Avatar.jsx";
 import SecurityPanel from "./SecurityPanel.jsx";
 import { useConsoleT } from "./consoleI18n.js";
+import { CvPreview, WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./WorkspaceUI.jsx";
+import TeamInvitations from "./TeamInvitations.jsx";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
@@ -3296,9 +3298,9 @@ function AttemptAppeal({ attempt, onSubmitted }) {
   );
 }
 
-function AssessmentNotifications({ attempts, onRefresh }) {
+function AssessmentNotifications({ attempts, onRefresh, embedded = false }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const latest = attempts[0];
   const latestKey = latest ? `${latest.id}:${latest.reviewed_at}:${latest.review_decision}` : "";
   const previousKey = useRef(latestKey);
@@ -5590,6 +5592,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   const lang = useLangValue();
   const setLang = useSetLang();
   const [section, setSection] = useState("overview");
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [journeyView, setJourneyView] = useState(() => {
     const completed = (st.attempts || []).filter(
       (a) => a.status === "done",
@@ -5611,7 +5614,8 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   const t = useT();
   const done = (st?.attempts || []).filter((a) => a.status === "done");
   const activeAttempt = (st?.attempts || []).find((a) => a.status === "active");
-  const latest = done[done.length - 1];
+  const latest = done[0];
+  const hasSkills = Boolean(st.confirmed?.length);
 
   const W = t("ws");
   const nav = [
@@ -5640,6 +5644,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   };
   return (
     <div className="candidate-shell">
+      <a className="ws-skip-link" href="#candidate-content">Skip to content</a>
       <aside className="candidate-sidebar">
         <div className="sidebar-brand">
           <span className="brand-mark tf-logo-mark">TF</span>
@@ -5673,7 +5678,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   aria-current={section === n.id ? "page" : undefined}
                   onClick={() => go(n.id)}
                 >
-                  <span>{n.icon}</span>
+                  <span><WorkspaceIcon name={n.id} /></span>
                   {n.label}
                 </button>
               ))}
@@ -5690,28 +5695,15 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
       </aside>
       <main className="candidate-main">
         <header className="candidate-topbar tf-topbar">
-          <div className="tf-search">
-            <span aria-hidden="true">⌕</span>
-            <input
-              type="search"
-              placeholder={W.searchPlaceholder || "Search anything…"}
-              aria-label={W.searchPlaceholder || "Search anything"}
-              onChange={(e) => {
-                const value = e.target.value.trim().toLowerCase();
-                if (!value) return;
-                const match = nav.find((n) => n.label.toLowerCase().includes(value));
-                if (match) go(match.id);
-              }}
-            />
-            <kbd>Ctrl K</kbd>
-          </div>
+          <button type="button" className="ws-mobile-brand" aria-label="TalentForge dashboard" onClick={() => go("overview")}>TF</button>
+          <div className="ws-location"><small>{W.groupWorkspace}</small><strong>{nav.find((item) => item.id === section)?.label}</strong></div>
+          <WorkspaceSearch items={nav} onNavigate={go} lang={lang} />
           <div className="topbar-actions">
-            <button type="button" className="tf-icon-btn" title={W.notifications || "Notifications"}>
-              <span aria-hidden="true">🔔</span>
+            <button type="button" className="tf-icon-btn" title={W.notifications || "Notifications"} aria-label={W.notifications || "Notifications"} aria-expanded={notificationsOpen} aria-controls="candidate-notifications" onClick={() => setNotificationsOpen((value) => !value)}>
+              <WorkspaceIcon name="bell" size={19} />
               {st.attempts?.length ? <i className="tf-dot" /> : null}
             </button>
             <div className="language-switch tf-lang">
-              <span aria-hidden="true">🌐</span>
               <select
                 aria-label="Language"
                 value={lang}
@@ -5752,14 +5744,16 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
               aria-current={section === n.id ? "page" : undefined}
               onClick={() => go(n.id)}
             >
-              <span>{n.icon}</span>
+              <span><WorkspaceIcon name={n.id} size={18} /></span>
               {n.label}
             </button>
           ))}
         </nav>
-        <div className="candidate-page">
+        <div className="candidate-page" id="candidate-content" tabIndex={-1}>
+          {notificationsOpen && <section className="portal-panel ws-notifications" id="candidate-notifications" aria-label="Assessment notifications"><div className="panel-heading"><h2>Assessment updates</h2><button type="button" className="cr-outline-btn" onClick={() => setNotificationsOpen(false)}>Close</button></div><AssessmentNotifications attempts={st.attempts || []} onRefresh={refresh} embedded />{!st.attempts?.length && <p>No assessment updates yet. Your results and review updates will appear here.</p>}</section>}
           {section === "overview" && (
             <>
+              <div className="ws-overview-heading"><div><span className="eyebrow">YOUR PERSONAL WORKSPACE</span><h1>Career overview</h1></div><span className="ws-date">{new Intl.DateTimeFormat(lang === "bn" ? "bn-BD" : "en-GB", { weekday: "short", day: "numeric", month: "long" }).format(new Date())}</span></div>
               <section className="welcome-banner">
                 <div>
                   <span className="eyebrow light">
@@ -5778,7 +5772,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                       className="btn btn-light"
                       onClick={() => go("profile")}
                     >
-                      Complete my profile →
+                      {st.from_profile ? "View my profile" : "Complete my profile"} →
                     </button>
                     <button
                       className="welcome-link"
@@ -5791,7 +5785,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                 <div className="welcome-art" aria-hidden="true">
                   <div className="art-orbit orbit-one" />
                   <div className="art-orbit orbit-two" />
-                  <div className="art-center">SB</div>
+                  <div className="art-center">TF</div>
                   <span className="art-node node-one">✦</span>
                   <span className="art-node node-two">✓</span>
                   <span className="art-node node-three">↗</span>
@@ -5805,13 +5799,13 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
               </div>
               <div className="metric-grid">
                 <button className="metric-card" onClick={() => go("profile")}>
-                  <span className="metric-icon">◉</span>
+                  <span className="metric-icon"><WorkspaceIcon name="profile" /></span>
                   <span className="metric-label">Profile & CV</span>
                   <strong>{st.from_profile ? "Profile added" : st.has_cv ? "CV added" : "Build profile"}</strong>
                   <small>{st.confirmed?.length || 0} confirmed skills</small>
                 </button>
                 <button className="metric-card" onClick={() => go("journey")}>
-                  <span className="metric-icon">✓</span>
+                  <span className="metric-icon"><WorkspaceIcon name="exams" /></span>
                   <span className="metric-label">Assessments</span>
                   <strong>{done.length} completed</strong>
                   <small>
@@ -5824,13 +5818,13 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   className="metric-card"
                   onClick={() => go("applications")}
                 >
-                  <span className="metric-icon">▤</span>
+                  <span className="metric-icon"><WorkspaceIcon name="applications" /></span>
                   <span className="metric-label">Applications</span>
                   <strong>Track progress</strong>
                   <small>Manage result sharing</small>
                 </button>
                 <button className="metric-card" onClick={() => go("passport")}>
-                  <span className="metric-icon">◇</span>
+                  <span className="metric-icon"><WorkspaceIcon name="passport" /></span>
                   <span className="metric-label">Skill Passport</span>
                   <strong>
                     {st.passports?.filter((x) => !x.revoked).length || 0} active
@@ -5842,14 +5836,14 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                 <section className="portal-panel">
                   <span className="eyebrow">RECOMMENDED NEXT STEP</span>
                   <h2>
-                    {!st.confirmed
+                    {!hasSkills
                       ? "Build your candidate profile"
                       : done.length === 0
                         ? "Verify your skills"
                         : "Keep growing your skills"}
                   </h2>
                   <p>
-                    {!st.confirmed
+                    {!hasSkills
                       ? "Add your background and review the skills extracted from your CV."
                       : done.length === 0
                         ? "Take an assessment to understand your strengths and learning gaps."
@@ -5857,9 +5851,9 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   </p>
                   <button
                     className="btn"
-                    onClick={() => go(!st.confirmed ? "profile" : "journey")}
+                    onClick={() => go(!hasSkills ? "profile" : "journey")}
                   >
-                    {!st.confirmed ? "Open profile" : "Open skill journey"} →
+                    {!hasSkills ? "Open profile" : "Open skill journey"} →
                   </button>
                 </section>
                 <section className="portal-panel quick-links">
@@ -6104,12 +6098,20 @@ function ProfileJourneyRouter({ st, refresh, onEditProfile, tick, setTick, done,
 /* ---------- platform administration ---------- */
 /** Open an authenticated PDF in a new tab (the API requires the bearer token). */
 async function openAuthedPdf(url) {
+  // Reserve the tab during the user gesture, before fetching authenticated bytes.
+  const tab = window.open("about:blank", "_blank");
+  if (tab) tab.opener = null;
   try {
     const blob = await api(url, { responseType: "blob" });
     const objectUrl = URL.createObjectURL(blob);
-    window.open(objectUrl, "_blank", "noopener");
+    if (tab) tab.location.replace(objectUrl);
+    else {
+      URL.revokeObjectURL(objectUrl);
+      throw new Error("Your browser blocked the PDF tab. Allow pop-ups for this site, or use the CV preview download.");
+    }
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
   } catch (e) {
+    tab?.close();
     alert(e.message || "Could not open that file.");
   }
 }
@@ -6117,6 +6119,8 @@ async function openAuthedPdf(url) {
 function CandidateDetailModal({ userId, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const dialog = useRef(null);
+  useEffect(() => { dialog.current?.showModal(); }, []);
 
   useEffect(() => {
     let alive = true;
@@ -6131,15 +6135,15 @@ function CandidateDetailModal({ userId, onClose }) {
   const when = (value) => (value ? new Date(value * 1000).toLocaleString() : "—");
 
   return (
-    <div className="ad-modal-backdrop" onClick={onClose}>
-      <div className="ad-candidate-modal" onClick={(e) => e.stopPropagation()}>
+    <dialog ref={dialog} className="ws-candidate-dialog" aria-labelledby="candidate-record-title" onCancel={onClose} onClick={(event) => { if (event.target === dialog.current) onClose(); }}>
+      <div className="ad-candidate-modal">
         <header>
           <div>
             <div className="ad-eyebrow">CANDIDATE RECORD</div>
-            <h2>{data?.user?.name || "Loading…"}</h2>
+            <h2 id="candidate-record-title">{data?.user?.name || "Loading…"}</h2>
             <p>{data?.user?.email}</p>
           </div>
-          <button type="button" onClick={onClose}>×</button>
+          <button type="button" onClick={onClose} aria-label="Close candidate record">×</button>
         </header>
         {error && <div className="ad-error" role="alert">{error}</div>}
         {data && (
@@ -6147,17 +6151,7 @@ function CandidateDetailModal({ userId, onClose }) {
             <section>
               <h3>CV on file</h3>
               {data.cv?.has_pdf ? (
-                <div className="ad-cv-card">
-                  <div>
-                    <strong>{data.cv.filename}</strong>
-                    <small>
-                      {(data.cv.size_bytes / 1024).toFixed(1)} KB · uploaded {when(data.cv.uploaded)}
-                    </small>
-                  </div>
-                  <button className="btn sm" onClick={() => openAuthedPdf(data.cv.pdf_url)}>
-                    Open CV (PDF)
-                  </button>
-                </div>
+                <CvPreview url={data.cv.pdf_url} filename={data.cv.filename} />
               ) : (
                 <p className="muted">No CV uploaded yet.</p>
               )}
@@ -6270,7 +6264,7 @@ function CandidateDetailModal({ userId, onClose }) {
           </div>
         )}
       </div>
-    </div>
+    </dialog>
   );
 }
 
@@ -6426,6 +6420,8 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
 function AdminConsole({ onLogout }) {
   const C = useConsoleT();
   const A = C.admin;
+  const lang = useLangValue();
+  const setLang = useSetLang();
   const [page, setPage] = useState("overview");
   const [adminRole, setAdminRole] = useState("super_admin");
   const [data, setData] = useState({});
@@ -7341,9 +7337,10 @@ function AdminConsole({ onLogout }) {
   const current = nav.find((x) => x[0] === page);
   return (
     <div className="ad-app">
+      <a className="ws-skip-link" href="#admin-content">Skip to content</a>
       <aside className="ad-sidebar">
         <div className="ad-brand">
-          <span className="ad-brand-mark">S</span>
+          <span className="ad-brand-mark">TF</span>
           <span>
             TalentForge<small>{A.brand}</small>
           </span>
@@ -7352,7 +7349,7 @@ function AdminConsole({ onLogout }) {
           <span className="ad-online-dot" /> {A.label}
         </div>
         <nav className="ad-nav" aria-label={A.navAria}>
-          {visibleNav.map(([id, label, icon]) => (
+          {visibleNav.map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -7364,7 +7361,7 @@ function AdminConsole({ onLogout }) {
                 setSearch("");
               }}
             >
-              <span>{icon}</span>
+              <span><WorkspaceIcon name={id} /></span>
               {label}
               {id === "companies" && counts.pending_companies > 0 ? (
                 <b>{counts.pending_companies}</b>
@@ -7412,19 +7409,21 @@ function AdminConsole({ onLogout }) {
             {current?.[1] || A.nav.overview}
           </div>
           <div className="ad-top-actions">
+            <WorkspaceSearch items={visibleNav.map(([id, label]) => ({ id, label }))} onNavigate={(id) => { setPage(id); setSearch(""); }} lang={lang} />
             <span className="ad-secure-label">
               <i /> {A.secureSession}
             </span>
-            <button onClick={load} disabled={busy} title={C.common.refresh}>
-              ↻
+            <button onClick={load} disabled={busy} title={C.common.refresh} aria-label={C.common.refresh}>
+              <WorkspaceIcon name="refresh" size={18} />
             </button>
+            <select className="ws-language" aria-label="Language" value={lang} onChange={(event) => setLang(event.target.value)}><option value="en">English</option><option value="bn">বাংলা</option></select>
             <span className="ad-top-avatar">SA</span>
             <button className="ad-signout" onClick={onLogout} type="button">
               ↪ {C.common.signOut}
             </button>
           </div>
         </header>
-        <div className="ad-content">
+        <div className="ad-content" id="admin-content" tabIndex={-1} aria-busy={busy}>
           {toast && (
             <div className="ad-toast" role="status">
               ✓ {toast}
@@ -11055,9 +11054,12 @@ function AdminConsole({ onLogout }) {
 function HiringWorkspace({ role, onLogout }) {
   const C = useConsoleT();
   const CO = C.company;
+  const lang = useLangValue();
+  const setLang = useSetLang();
   const [page, setPage] = useState("overview");
   const [companyEmail, setCompanyEmail] = useState("");
   const [workspace, setWorkspace] = useState(null);
+  const [needsOrganisation, setNeedsOrganisation] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [applications, setApplications] = useState([]);
   const [analytics, setAnalytics] = useState(null);
@@ -11065,9 +11067,14 @@ function HiringWorkspace({ role, onLogout }) {
   const [phaseTwo, setPhaseTwo] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
+  const applicationDialog = useRef(null);
+  useEffect(() => { if (detail) applicationDialog.current?.showModal(); }, [detail]);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [memberBusy, setMemberBusy] = useState(false);
+  const [secondaryErrors, setSecondaryErrors] = useState([]);
+  const [copyStatus, setCopyStatus] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [website, setWebsite] = useState("");
   const [verification, setVerification] = useState({
@@ -11172,6 +11179,7 @@ function HiringWorkspace({ role, onLogout }) {
       // unavailable report endpoint cannot blank the rest of the company page.
       const w = await api("/company/workspace");
       setWorkspace(w);
+      setNeedsOrganisation(false);
       setCompanyName(w.company.name);
       setWebsite(w.company.website || "");
       if (!companyEmail) {
@@ -11182,11 +11190,12 @@ function HiringWorkspace({ role, onLogout }) {
       const j = await api("/company/jobs");
       setJobs(j.items || []);
       const optional = [];
+      const failures = [];
       if (w.company.verified && w.permissions.manage_pipeline) {
         optional.push(
           api("/company/applications")
             .then((a) => setApplications(a.items || []))
-            .catch(() => setApplications([])),
+            .catch((e) => { failures.push("Applicants: " + e.message); }),
         );
       } else {
         setApplications([]);
@@ -11195,23 +11204,25 @@ function HiringWorkspace({ role, onLogout }) {
         optional.push(
           api("/company/analytics")
             .then((x) => setAnalytics(x))
-            .catch(() => setAnalytics(null)),
+            .catch((e) => { failures.push("Analytics: " + e.message); }),
         );
         optional.push(
           api("/company/phase-two")
             .then((p) => setPhaseTwo(p.items || []))
-            .catch(() => setPhaseTwo([])),
+            .catch((e) => { failures.push("Assessment requests: " + e.message); }),
         );
       }
       if (w.permissions.manage_team) {
         optional.push(
           api("/company/team")
             .then((t) => setTeam(t.items || []))
-            .catch(() => setTeam([])),
+            .catch((e) => { failures.push("Team: " + e.message); }),
         );
       }
       await Promise.allSettled(optional);
+      setSecondaryErrors(failures);
     } catch (e) {
+      if (e.status === 409 && e.message.toLowerCase().includes("organisation")) setNeedsOrganisation(true);
       fail(e);
     } finally {
       setBusy(false);
@@ -11382,33 +11393,51 @@ function HiringWorkspace({ role, onLogout }) {
       fail(e);
     }
   };
-  const inviteMember = async (e) => {
-    e.preventDefault();
+  const sendInvite = async (invitation) => {
+    if (memberBusy) return;
+    setMemberBusy(true);
     try {
       const r = await api("/company/team/invitations", {
         method: "POST",
-        body: teamForm,
+        body: invitation,
       });
       setInviteToken(r.invite_token);
-      flash(
-        "Invitation created. Share the token securely with the invited user.",
-      );
+      setCopyStatus("");
+      setTeamForm({ email: "", role: "recruiter" });
+      flash(r.message);
       const t = await api("/company/team");
       setTeam(t.items || []);
     } catch (e) {
       fail(e);
-    }
+    } finally { setMemberBusy(false); }
+  };
+  const inviteMember = (e) => {
+    e.preventDefault();
+    sendInvite(teamForm);
+  };
+  const changeMemberRole = async (member, newRole) => {
+    if (newRole === "revoked" && !window.confirm(`Revoke workspace access for ${member.email}?`)) return;
+    setMemberBusy(true);
+    try {
+      await api("/company/team/" + member.id, { method: "PATCH", body: { role: newRole } });
+      const result = await api("/company/team");
+      setTeam(result.items || []);
+      flash(newRole === "revoked" ? "Workspace access revoked." : "Team permissions updated.");
+    } catch (e) { fail(e); }
+    finally { setMemberBusy(false); }
   };
   const acceptInvite = async (e) => {
     e.preventDefault();
+    if (memberBusy) return;
+    setMemberBusy(true);
     try {
-      await api("/company/team/accept/" + inviteToken, { method: "POST" });
+      await api("/company/team/accept/" + encodeURIComponent(inviteToken.trim()), { method: "POST" });
       setInviteToken("");
       flash("Organisation invitation accepted. Refreshing workspace.");
       await load();
     } catch (e) {
       fail(e);
-    }
+    } finally { setMemberBusy(false); }
   };
   const createPhase = async (e) => {
     e.preventDefault();
@@ -11497,6 +11526,7 @@ function HiringWorkspace({ role, onLogout }) {
   ].map(([id]) => [id, CO.stages[id] || id]);
   const stageTransitions = {
     submitted: ["preliminary_assessment", "in_review", "withdrawn"],
+    applied: ["preliminary_assessment", "in_review", "withdrawn"],
     preliminary_assessment: [
       "in_review",
       "phase_two_invited",
@@ -11525,9 +11555,13 @@ function HiringWorkspace({ role, onLogout }) {
       ((a.candidate_name || "").toLowerCase().includes(search.toLowerCase()) ||
         (a.job_title || "").toLowerCase().includes(search.toLowerCase())),
   );
+  const pipelineCounts = analytics?.stages
+    ? Object.fromEntries(analytics.stages.map((stage) => [stage.status, stage.n]))
+    : workspace?.applications || {};
+  const pipelineTotal = Object.values(pipelineCounts).reduce((sum, count) => sum + Number(count), 0);
   const metric = (label, value, sub, icon) => (
     <div className="cr-metric">
-      <span className="cr-metric-icon">{icon}</span>
+      <span className="cr-metric-icon"><WorkspaceIcon name={{ "▤": "jobs", "♙": "team", "◷": "exams", "✓": "privacy", "↗": "journey" }[icon] || "analytics"} /></span>
       <div>
         <small>{label}</small>
         <strong>{value}</strong>
@@ -11536,16 +11570,17 @@ function HiringWorkspace({ role, onLogout }) {
     </div>
   );
   if (role === "admin") return <AdminConsole onLogout={onLogout} />;
-  if (!workspace && error.toLowerCase().includes("organisation"))
+  if (!workspace && needsOrganisation)
     return (
       <main className="cr-onboard">
         <div className="cr-onboard-brand">
-          talentforge<span>.</span>
+          TalentForge<span>.</span>
         </div>
         <section className="cr-onboard-card">
           <div className="cr-kicker">{CO.onboarding.kicker}</div>
           <h1>{CO.onboarding.title}</h1>
           <p>{CO.onboarding.body}</p>
+          <TeamInvitations onJoined={load} />
           <form onSubmit={saveCompany}>
             <label>
               {CO.onboarding.companyName}
@@ -11572,21 +11607,7 @@ function HiringWorkspace({ role, onLogout }) {
           <div className="cr-onboard-divider">
             <span>OR</span>
           </div>
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              try {
-                await api("/company/team/accept/" + inviteToken, {
-                  method: "POST",
-                });
-                setInviteToken("");
-                flash("Invitation accepted.");
-                await load();
-              } catch (e) {
-                fail(e);
-              }
-            }}
-          >
+          <form onSubmit={acceptInvite}>
             <label>
               Have a team invitation? Enter its token
               <input
@@ -11596,19 +11617,21 @@ function HiringWorkspace({ role, onLogout }) {
                 placeholder="Paste invitation token"
               />
             </label>
-            <button className="cr-outline-btn">Accept team invitation</button>
+            <button className="cr-outline-btn" disabled={memberBusy}>{memberBusy ? "Joining…" : "Accept team invitation"}</button>
           </form>
-          {error && <p className="cr-error">{error}</p>}
+          {error && !error.toLowerCase().includes("organisation") && <p className="cr-error" role="alert">{error}</p>}
+          <button type="button" className="cr-text-btn" onClick={onLogout}>Sign out</button>
         </section>
       </main>
     );
   return (
     <div className="cr-app">
+      <a className="ws-skip-link" href="#company-content">Skip to content</a>
       <aside className="cr-sidebar">
         <div className="cr-brand">
-          <span className="cr-brand-mark">s</span>
+          <span className="cr-brand-mark">TF</span>
           <span>
-            talentforge<span className="cr-brand-dot">.</span>
+            TalentForge<span className="cr-brand-dot">.</span>
             <small>{CO.brand}</small>
           </span>
         </div>
@@ -11628,7 +11651,7 @@ function HiringWorkspace({ role, onLogout }) {
         </div>
         <div className="cr-nav-label">{CO.workspace}</div>
         <nav className="cr-nav" aria-label={CO.navAria}>
-          {nav.map(([id, label, icon]) => (
+          {nav.map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -11641,7 +11664,7 @@ function HiringWorkspace({ role, onLogout }) {
                 setDetail(null);
               }}
             >
-              <span>{icon}</span>
+              <span><WorkspaceIcon name={id} /></span>
               {label}
               {id === "applicants" && applications.length > 0 ? (
                 <b>{applications.length}</b>
@@ -11675,6 +11698,7 @@ function HiringWorkspace({ role, onLogout }) {
             {CO.breadcrumb} <span>/</span>{" "}
             {nav.find((x) => x[0] === page)?.[1] || CO.nav.overview}
           </div>
+          <WorkspaceSearch items={nav.map(([id, label]) => ({ id, label }))} onNavigate={(id) => { setPage(id); setSelected(null); setDetail(null); }} lang={lang} />
           <div className="cr-top-actions">
             <span className="cr-secure">
               <i /> {CO.privateWorkspace}
@@ -11685,8 +11709,9 @@ function HiringWorkspace({ role, onLogout }) {
               title={C.common.refresh}
               aria-label={C.common.refresh}
             >
-              ↻
+              <WorkspaceIcon name="refresh" size={18} />
             </button>
+            <select className="ws-language" aria-label="Language" value={lang} onChange={(event) => setLang(event.target.value)}><option value="en">English</option><option value="bn">বাংলা</option></select>
             <div className="cr-top-avatar">
               {initials(workspace?.company?.name)}
             </div>
@@ -11695,7 +11720,8 @@ function HiringWorkspace({ role, onLogout }) {
             </button>
           </div>
         </header>
-        <div className="cr-content">
+        <div className="cr-content" id="company-content" tabIndex={-1} aria-busy={busy}>
+          {!workspace && busy && <WorkspaceLoading />}
           {toast && (
             <div className="cr-toast" role="status">
               <span>✓</span>
@@ -11704,13 +11730,14 @@ function HiringWorkspace({ role, onLogout }) {
             </div>
           )}
           {error &&
-            !(!workspace && error.toLowerCase().includes("organisation")) && (
+            !needsOrganisation && (
               <div className="cr-error-banner" role="alert">
                 {error}
                 <button onClick={() => setError("")}>×</button>
               </div>
             )}
-          {workspace?.verification?.status !== "verified" && (
+          {secondaryErrors.length > 0 && <div className="cr-error-banner" role="alert"><div><strong>Some workspace data could not be refreshed.</strong>{secondaryErrors.map((message) => <p key={message}>{message}</p>)}</div><button type="button" className="cr-outline-btn" onClick={load} disabled={busy}>Retry</button></div>}
+          {workspace && workspace.verification?.status !== "verified" && (
             <div className="cr-verification-banner">
               <div>
                 <strong>{CO.verification.title}</strong>
@@ -11790,6 +11817,7 @@ function HiringWorkspace({ role, onLogout }) {
                     <button
                       className="cr-text-btn"
                       onClick={() => setPage("applicants")}
+                      disabled={!canManagePipeline}
                     >
                       View all →
                     </button>
@@ -11835,22 +11863,13 @@ function HiringWorkspace({ role, onLogout }) {
                     <div className="cr-stage-line" key={key}>
                       <span>{label}</span>
                       <strong>
-                        {applications.filter((a) => a.status === key).length}
+                        {pipelineCounts[key] || 0}
                       </strong>
                       <div>
                         <i
                           style={{
                             width:
-                              (applications.length
-                                ? Math.max(
-                                    2,
-                                    (applications.filter(
-                                      (a) => a.status === key,
-                                    ).length /
-                                      applications.length) *
-                                      100,
-                                  )
-                                : 0) + "%",
+                              (pipelineTotal ? ((pipelineCounts[key] || 0) / pipelineTotal) * 100 : 0) + "%",
                           }}
                         />
                       </div>
@@ -12702,7 +12721,7 @@ function HiringWorkspace({ role, onLogout }) {
                 </div>
                 {phaseTwo.length ? (
                   phaseTwo.map((p) => (
-                    <div className="cr-assessment-row">
+                    <div className="cr-assessment-row" key={p.id}>
                       <div>
                         <strong>{p.title}</strong>
                         <span>
@@ -12773,22 +12792,13 @@ function HiringWorkspace({ role, onLogout }) {
                     <div className="cr-stage-line" key={key}>
                       <span>{label}</span>
                       <strong>
-                        {applications.filter((a) => a.status === key).length}
+                        {pipelineCounts[key] || 0}
                       </strong>
                       <div>
                         <i
                           style={{
                             width:
-                              (applications.length
-                                ? Math.max(
-                                    2,
-                                    (applications.filter(
-                                      (a) => a.status === key,
-                                    ).length /
-                                      applications.length) *
-                                      100,
-                                  )
-                                : 0) + "%",
+                              (pipelineTotal ? ((pipelineCounts[key] || 0) / pipelineTotal) * 100 : 0) + "%",
                           }}
                         />
                       </div>
@@ -12803,7 +12813,7 @@ function HiringWorkspace({ role, onLogout }) {
                     </div>
                   </div>
                   {(analytics?.jobs || []).map((j) => (
-                    <div className="cr-performance-row">
+                    <div className="cr-performance-row" key={j.id}>
                       <div>
                         <strong>{j.title}</strong>
                         <span>{j.status}</span>
@@ -12864,7 +12874,7 @@ function HiringWorkspace({ role, onLogout }) {
                       <option value="viewer">Viewer / Analyst</option>
                     </select>
                   </label>
-                  <button className="cr-primary">Create invitation</button>
+                  <button className="cr-primary" disabled={memberBusy}>{memberBusy ? "Creating…" : "Create invitation"}</button>
                   {inviteToken && (
                     <div className="cr-invite-token">
                       <strong>Invitation token</strong>
@@ -12872,12 +12882,17 @@ function HiringWorkspace({ role, onLogout }) {
                       <button
                         type="button"
                         className="cr-outline-btn"
-                        onClick={() =>
-                          navigator.clipboard?.writeText(inviteToken)
-                        }
+                        onClick={async () => {
+                          try {
+                            if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+                            await navigator.clipboard.writeText(inviteToken);
+                            setCopyStatus("Copied. Share securely with the invited teammate.");
+                          } catch { setCopyStatus("Could not copy automatically. Select the token above and copy it manually."); }
+                        }}
                       >
                         Copy token
                       </button>
+                      {copyStatus && <p className="cr-footnote" role="status">{copyStatus}</p>}
                       <p className="cr-footnote">
                         The invited teammate can enter this token on the company
                         setup screen after signing in.
@@ -12893,8 +12908,9 @@ function HiringWorkspace({ role, onLogout }) {
                     <p>Current invitations and active memberships</p>
                   </div>
                 </div>
+                <div className="cr-team-row"><div className="cr-person-avatar"><WorkspaceIcon name="privacy" size={18} /></div><div><strong>{companyEmail || "Workspace owner"}</strong><span>Organisation owner · full workspace access</span></div><span className="cr-role-pill">Owner</span></div>
                 {team.map((m) => (
-                  <div className="cr-team-row">
+                  <div className="cr-team-row" key={m.id}>
                     <div className="cr-person-avatar">{initials(m.email)}</div>
                     <div>
                       <strong>{m.email}</strong>
@@ -12905,20 +12921,10 @@ function HiringWorkspace({ role, onLogout }) {
                     </span>
                     {canManageTeam && m.status !== "revoked" && (
                       <select
+                        aria-label={`Role for ${m.email}`}
+                        disabled={memberBusy}
                         value={m.company_role}
-                        onChange={(e) =>
-                          api("/company/team/" + m.id, {
-                            method: "PATCH",
-                            body: {
-                              role:
-                                e.target.value === "revoked"
-                                  ? "revoked"
-                                  : e.target.value,
-                            },
-                          })
-                            .then(load)
-                            .catch(fail)
-                        }
+                        onChange={(e) => changeMemberRole(m, e.target.value)}
                       >
                         <option value="recruiter">Recruiter</option>
                         <option value="hiring_manager">Hiring Manager</option>
@@ -12926,6 +12932,7 @@ function HiringWorkspace({ role, onLogout }) {
                         <option value="revoked">Revoke</option>
                       </select>
                     )}
+                    {canManageTeam && m.status !== "active" && <button type="button" className="cr-outline-btn" disabled={memberBusy} onClick={() => sendInvite({ email: m.email, role: m.company_role })}>{m.status === "revoked" ? "Re-invite" : "New token"}</button>}
                   </div>
                 ))}
                 {!team.length && (
@@ -13089,21 +13096,22 @@ function HiringWorkspace({ role, onLogout }) {
         </footer>
       </main>
       {detail && (
-        <div
-          className="cr-drawer-backdrop"
-          onClick={() => {
-            setDetail(null);
-            setSelected(null);
-          }}
+        <dialog
+          ref={applicationDialog}
+          className="ws-application-dialog"
+          aria-labelledby="application-report-title"
+          onCancel={() => { setDetail(null); setSelected(null); }}
+          onClick={(event) => { if (event.target === applicationDialog.current) { setDetail(null); setSelected(null); } }}
         >
           <aside className="cr-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="cr-drawer-head">
               <div>
                 <div className="cr-kicker">APPLICATION REPORT</div>
-                <h2>{detail.candidate_name}</h2>
+                <h2 id="application-report-title">{detail.candidate_name}</h2>
                 <p>{detail.job_title}</p>
               </div>
               <button
+                aria-label="Close application report"
                 onClick={() => {
                   setDetail(null);
                   setSelected(null);
@@ -13132,24 +13140,7 @@ function HiringWorkspace({ role, onLogout }) {
               <div className="cr-report-section">
                 <h3>Candidate CV</h3>
                 {detail.candidate_cv?.available ? (
-                  <div className="cr-cv-row">
-                    <div>
-                      <strong>{detail.candidate_cv.filename}</strong>
-                      <small>
-                        Uploaded{" "}
-                        {detail.candidate_cv.uploaded
-                          ? date(detail.candidate_cv.uploaded)
-                          : "—"}{" "}
-                        · PDF
-                      </small>
-                    </div>
-                    <button
-                      className="cr-primary"
-                      onClick={() => openAuthedPdf(detail.candidate_cv.url)}
-                    >
-                      Open CV (PDF)
-                    </button>
-                  </div>
+                  <CvPreview url={detail.candidate_cv.url} filename={detail.candidate_cv.filename} />
                 ) : (
                   <p className="cr-muted-box">This candidate has not uploaded a CV.</p>
                 )}
@@ -13330,7 +13321,7 @@ function HiringWorkspace({ role, onLogout }) {
               </div>
             </div>
           </aside>
-        </div>
+        </dialog>
       )}
     </div>
   );
@@ -13344,8 +13335,10 @@ function Shell({ lang, setLang }) {
   const [st, setSt] = useState(null);
   const [view, setView] = useState(null);
   const [tick, setTick] = useState(0);
+  const [loadError, setLoadError] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoadError("");
     try {
       const identity = await api("/enterprise/me");
       setRole(identity.role || "candidate");
@@ -13358,7 +13351,7 @@ function Shell({ lang, setLang }) {
         setToken(null);
         setAuthed(false);
         setRole(null);
-      }
+      } else setLoadError(e.message || "Could not load your workspace. Check your connection and try again.");
     }
   }, []);
   useEffect(() => {
@@ -13447,7 +13440,7 @@ function Shell({ lang, setLang }) {
   else if (!st || !view)
     body = (
       <main className="wrap">
-        <p>{t("loading")}</p>
+        {loadError ? <section className="card" role="alert"><h2>Your workspace couldn’t load</h2><p>{loadError}</p><div className="row"><button type="button" className="btn" onClick={() => refresh().then((result) => { if (result) setView("profile"); })}>Try again</button><button type="button" className="btn ghost" onClick={logout}>Sign out</button></div></section> : <WorkspaceLoading label={t("loading")} />}
       </main>
     );
   else if (!st.consented)

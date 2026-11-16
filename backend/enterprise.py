@@ -1612,27 +1612,55 @@ def invite_company_member(body: TeamInviteInput, user=Depends(current_user)):
     require_company_permission(user, company, "owner")
     roles = {"recruiter", "hiring_manager", "viewer"}
     email = body.email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(422, "Enter a valid email address")
+    if email == user["email"].lower():
+        raise HTTPException(409, "You already own this workspace")
     if body.role not in roles:
         raise HTTPException(422, "Choose Recruiter, Hiring Manager or Viewer")
-    existing = one("SELECT id FROM company_members WHERE company_id=? AND email=?", (company["id"], email))
-    if existing:
-        raise HTTPException(409, "This email already has a membership or invitation")
+    existing = one("SELECT id,status FROM company_members WHERE company_id=? AND LOWER(email)=?", (company["id"], email))
+    if existing and existing["status"] == "active":
+        raise HTTPException(409, "This teammate is already active. Change their role in Workspace access.")
     token = secrets.token_urlsafe(24)
-    mid = uuid.uuid4().hex
-    run("INSERT INTO company_members(id,company_id,user_id,email,company_role,status,invite_token,created) VALUES (?,?,NULL,?,?, 'invited',?,?)",
-        (mid, company["id"], email, body.role, token, time.time()))
+    mid = existing["id"] if existing else uuid.uuid4().hex
+    if existing:
+        run("UPDATE company_members SET user_id=NULL,email=?,company_role=?,status='invited',invite_token=?,created=? WHERE id=? AND company_id=?",
+            (email, body.role, token, time.time(), mid, company["id"]))
+    else:
+        run("INSERT INTO company_members(id,company_id,user_id,email,company_role,status,invite_token,created) VALUES (?,?,NULL,?,?, 'invited',?,?)",
+            (mid, company["id"], email, body.role, token, time.time()))
     audit(user["id"], "company_member_invited", email + ":" + body.role)
     return {"id": mid, "status": "invited", "invite_token": token,
-            "delivery": "manual_link", "message": "No email provider is configured; share this invitation token through your approved channel."}
+            "delivery": "manual_link", "message": "Invitation ready. Share the token securely, or ask the teammate to sign in with this email to accept it during company setup. No invitation email was sent."}
+
+
+@router.get("/api/company/invitations")
+def my_company_invitations(user=Depends(current_user)):
+    """Discover invitations without needing an existing organisation membership."""
+    require_role(user, "company")
+    require_verified_email(user)
+    rows = allr("""SELECT m.id,m.company_role,m.invite_token,m.created,c.name AS company_name
+                   FROM company_members m JOIN companies c ON c.id=m.company_id
+                   WHERE LOWER(m.email)=? AND m.status='invited' ORDER BY m.created DESC""",
+                (user["email"].lower(),))
+    return {"items": [dict(row) for row in rows]}
 
 
 @router.post("/api/company/team/accept/{token}")
 def accept_company_invitation(token: str, user=Depends(current_user)):
     require_role(user, "company")
+    require_verified_email(user)
     row = one("SELECT * FROM company_members WHERE invite_token=? AND status='invited'", (token,))
     if not row or row["email"].lower() != user["email"].lower():
         raise HTTPException(404, "Invitation not found for this account")
-    run("UPDATE company_members SET user_id=?,status='active',invite_token='' WHERE id=?", (user["id"], row["id"]))
+    # The current product has one workspace per account. Do not accept an invite
+    # that company_for_access would immediately hide behind another membership.
+    if one("SELECT id FROM companies WHERE owner_user_id=?", (user["id"],)):
+        raise HTTPException(409, "This account already owns a workspace. Use a separate company account to join this team.")
+    if one("SELECT id FROM company_members WHERE user_id=? AND status='active'", (user["id"],)):
+        raise HTTPException(409, "This account already belongs to a workspace. Ask its owner to revoke access before joining another team.")
+    run("UPDATE company_members SET user_id=?,status='active',invite_token='' WHERE id=? AND status='invited' AND invite_token=?",
+        (user["id"], row["id"], token))
     audit(user["id"], "company_invitation_accepted", row["company_id"])
     return {"status": "active", "company_id": row["company_id"], "role": row["company_role"]}
 
@@ -1641,14 +1669,16 @@ def accept_company_invitation(token: str, user=Depends(current_user)):
 def update_company_member(member_id: str, body: TeamRoleUpdate, user=Depends(current_user)):
     company = company_for_access(user)
     require_company_permission(user, company, "owner")
-    row = one("SELECT id FROM company_members WHERE id=? AND company_id=?", (member_id, company["id"]))
+    row = one("SELECT id,status FROM company_members WHERE id=? AND company_id=?", (member_id, company["id"]))
     if not row:
         raise HTTPException(404, "Team member not found")
     if body.role not in ("recruiter", "hiring_manager", "viewer", "revoked"):
         raise HTTPException(422, "Unsupported team role")
     if body.role == "revoked":
-        run("UPDATE company_members SET status='revoked' WHERE id=?", (member_id,))
+        run("UPDATE company_members SET status='revoked',invite_token='' WHERE id=?", (member_id,))
     else:
+        if row["status"] == "revoked":
+            raise HTTPException(409, "Send a new invitation to restore access; the teammate must accept again")
         run("UPDATE company_members SET company_role=? WHERE id=?", (body.role, member_id))
     audit(user["id"], "company_member_permission_changed", member_id + ":" + body.role)
     return {"id": member_id, "role": body.role}

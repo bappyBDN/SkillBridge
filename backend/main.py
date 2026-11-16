@@ -1228,7 +1228,7 @@ def state(u=Depends(current_user)):
     if candidate_profile:
         profile_skills = json.loads(candidate_profile["skills"] or "[]")
         skill_entries = profile_skill_entries({"skills": profile_skills})
-    atts = allr("""SELECT a.id,a.kind,a.status,a.result,a.finished,
+    atts = allr("""SELECT a.id,a.kind,a.status,a.result,a.finished,a.started,
                    r.decision AS review_decision,r.reason AS review_reason,r.reviewed_at,
                    a.appeal,d.decision AS appeal_decision,d.reason AS appeal_reason,d.decided_at AS appeal_decided_at
                    FROM attempts a LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
@@ -1246,6 +1246,7 @@ def state(u=Depends(current_user)):
             "overall": result.get("overall"), "level": result.get("level"),
             "trust": result.get("trust"), "date": result.get("date"),
             "finished": a["finished"],
+            "started": a["started"],
             "topics": result.get("topics", {}),
             "review_decision": a["review_decision"], "review_reason": a["review_reason"],
             "reviewed_at": a["reviewed_at"], "appeal": a["appeal"],

@@ -1,6 +1,6 @@
 const KEY = "sb_token";
 // Set VITE_API_BASE_URL in Vercel to the deployed FastAPI origin (for example, https://skillbridge.onrender.com).
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "").replace(/\/api$/, "");
 export const getToken = () => localStorage.getItem(KEY);
 export const setToken = (t) => (t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY));
 
@@ -41,14 +41,25 @@ function formatApiError(detail, statusText) {
   return statusText;
 }
 
-export async function api(path, { method = "GET", body, form, responseType } = {}) {
+// Server-provided document URLs already include /api. Never attach a bearer
+// token to an arbitrary absolute URL, even if it came from a response.
+export function apiUrl(path) {
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || /[\\\r\n]/.test(path)) {
+    throw new Error("Invalid API path");
+  }
+  const normalized = path === "/api" || path.startsWith("/api/") ? path : "/api" + path;
+  return API_BASE + normalized;
+}
+
+export async function api(path, { method = "GET", body, form, responseType, signal } = {}) {
+  const url = apiUrl(path);
   const headers = {};
   const t = getToken();
   if (t) headers.Authorization = "Bearer " + t;
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
-  const res = await fetch(API_BASE + "/api" + path, { method, headers, body: payload });
+  const res = await fetch(url, { method, headers, body: payload, signal });
   let data = null;
   if (res.ok && responseType === "blob") return res.blob();
   try { data = await res.json(); } catch { /* empty */ }

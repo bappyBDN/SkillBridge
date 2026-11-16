@@ -12,3 +12,5 @@ cv_files/
 data/
 .coverage
 htmlcov/
+playwright-report/
+test-results/
