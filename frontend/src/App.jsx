@@ -118,12 +118,120 @@ function passwordScore(pw) {
   return Math.min(score, 4);
 }
 
+/* ---------- public landing page (design: docs/Landing page.pdf) ---------- */
+function LpIcon({ children }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+const LpI = {
+  check: () => (
+    <LpIcon>
+      <path d="M4.2 10.5l3.6 3.6 8-9" />
+    </LpIcon>
+  ),
+  arrow: () => (
+    <LpIcon>
+      <path d="M3.2 10h13M11.6 5.2l4.8 4.8-4.8 4.8" />
+    </LpIcon>
+  ),
+  upload: () => (
+    <LpIcon>
+      <path d="M10 12.6V3.5M6.3 7.2L10 3.5l3.7 3.7M3.4 13v2.2a1.4 1.4 0 0 0 1.4 1.4h10.4a1.4 1.4 0 0 0 1.4-1.4V13" />
+    </LpIcon>
+  ),
+  person: () => (
+    <LpIcon>
+      <circle cx="10" cy="6.6" r="3" />
+      <path d="M3.7 17c.4-3.2 2.9-5 6.3-5s5.9 1.8 6.3 5" />
+    </LpIcon>
+  ),
+  clock: () => (
+    <LpIcon>
+      <circle cx="10" cy="10" r="6.9" />
+      <path d="M10 5.9V10l3 1.8" />
+    </LpIcon>
+  ),
+  shield: () => (
+    <LpIcon>
+      <path d="M10 2.9l6 2.2v4.5c0 3.6-2.4 6.2-6 7.5-3.6-1.3-6-3.9-6-7.5V5.1l6-2.2z" />
+      <path d="M7.1 9.9l2.1 2.1 3.9-4.1" />
+    </LpIcon>
+  ),
+  briefcase: () => (
+    <LpIcon>
+      <rect x="2.9" y="6.5" width="14.2" height="9.8" rx="2" />
+      <path d="M7.4 6.5V5a1.6 1.6 0 0 1 1.6-1.6h2A1.6 1.6 0 0 1 12.6 5v1.5M2.9 10.7h14.2" />
+    </LpIcon>
+  ),
+  listCheck: () => (
+    <LpIcon>
+      <rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.6" />
+      <path d="M6.6 10l2.2 2.2 4.7-5" />
+    </LpIcon>
+  ),
+  badge: () => (
+    <LpIcon>
+      <circle cx="10" cy="10" r="7" />
+      <path d="M6.9 10.2l2.2 2.2 4.2-4.6" />
+    </LpIcon>
+  ),
+  lock: () => (
+    <LpIcon>
+      <rect x="4.4" y="8.7" width="11.2" height="7.9" rx="1.9" />
+      <path d="M7.2 8.7V6.5a2.8 2.8 0 0 1 5.6 0v2.2" />
+    </LpIcon>
+  ),
+  trend: () => (
+    <LpIcon>
+      <path d="M3.4 13.7l4-4.3 3 2.6 5.5-6.3" />
+      <path d="M11.7 5.8h4.3v4.3" />
+    </LpIcon>
+  ),
+  filter: () => (
+    <LpIcon>
+      <path d="M3.2 5.2h13.6M5.4 10h9.2M7.8 14.8h4.4" />
+    </LpIcon>
+  ),
+  search: () => (
+    <LpIcon>
+      <circle cx="9" cy="9" r="5.4" />
+      <path d="M13.1 13.1l4 4" />
+    </LpIcon>
+  ),
+  stages: () => (
+    <LpIcon>
+      <rect x="3" y="3.4" width="14" height="13.2" rx="1.9" />
+      <path d="M8 3.4v13.2M13 3.4v13.2" />
+    </LpIcon>
+  ),
+};
+
 function Landing({ onAuthed }) {
   const t = useT();
   const L = t("landing");
+  const H = L.home;
   const [mode, setMode] = useState(
     location.hash === "#signin" ? "login" : "register",
   );
+  const [authOpen, setAuthOpen] = useState(
+    location.hash === "#signin" || location.hash === "#signup",
+  );
+  const [journey, setJourney] = useState("candidate");
+  const [faqOpen, setFaqOpen] = useState(0);
   const [f, setF] = useState({
     name: "",
     email: "",
@@ -142,18 +250,50 @@ function Landing({ onAuthed }) {
   const confirmMismatch = isRegister && f.confirm && f.confirm !== f.password;
   useEffect(() => {
     const syncMode = () => {
-      if (location.hash === "#signin") setMode("login");
-      if (location.hash === "#signup") setMode("register");
+      if (location.hash === "#signin") {
+        setMode("login");
+        setAuthOpen(true);
+      }
+      if (location.hash === "#signup") {
+        setMode("register");
+        setAuthOpen(true);
+      }
     };
+    syncMode();
     window.addEventListener("hashchange", syncMode);
     return () => window.removeEventListener("hashchange", syncMode);
   }, []);
+  useEffect(() => {
+    if (!authOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setAuthOpen(false);
+    };
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [authOpen]);
   const changeMode = (next) => {
     setErr(null);
     setNotice("");
     setMfaChallenge("");
     setMode(next);
-    history.replaceState(null, "", next === "login" ? "#signin" : "#signup");
+  };
+  const openAuth = (next, role) => {
+    if (role) setF((v) => ({ ...v, role }));
+    changeMode(next);
+    setAuthOpen(true);
+    const hash = next === "login" ? "#signin" : "#signup";
+    if (location.hash !== hash) history.replaceState(null, "", hash);
+  };
+  const closeAuth = () => {
+    setAuthOpen(false);
+    if (location.hash === "#signin" || location.hash === "#signup") {
+      history.replaceState(null, "", "#top");
+    }
   };
   const submit = async (e) => {
     e.preventDefault();
@@ -205,276 +345,820 @@ function Landing({ onAuthed }) {
     }
   };
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const focusSignup = (role) => {
-    setF((v) => ({ ...v, role }));
-    changeMode("register");
-    document.getElementById("signup")?.scrollIntoView({ behavior: "smooth" });
-  };
+  const steps = journey === "candidate" ? H.candSteps : H.hireSteps;
   return (
-    <main className="sb-marketing">
-      <section className="sb-hero" id="top">
-        <div className="sb-hero-copy">
-          <div className="sb-eyebrow">
-            <span className="sb-eyebrow-dot" />{" "}
-            {isRegister ? L.eyebrowRegister : L.eyebrowLogin}
-          </div>
-          <h1>
-            {isRegister ? (
-              <>
-                {L.heroRegisterA}
-                <br />
-                <em>{L.heroRegisterB}</em>
-              </>
-            ) : (
-              <>
-                {L.heroLoginA}
-                <br />
-                <em>{L.heroLoginB}</em>
-              </>
-            )}
+    <main className="lp">
+      <section className="lp-hero" id="top" aria-labelledby="lp-hero-title">
+        <div className="lp-hero-copy">
+          <span className="lp-eyebrow">
+            <i /> {H.eyebrow}
+          </span>
+          <h1 id="lp-hero-title">
+            {H.heroA1}
+            <br />
+            {H.heroA2}
+            <br />
+            <em>
+              {H.heroB1}
+              <br />
+              {H.heroB2}
+            </em>
           </h1>
-          <p className="sb-hero-lead">
-            {isRegister ? L.leadRegister : L.leadLogin}
-          </p>
-          <div className="sb-hero-actions">
-            <a className="sb-hero-cta" href="#signup" onClick={() => changeMode("register")}>
-              {L.candidateCta} <span>→</span>
-            </a>
-            <a className="sb-hero-secondary" href="#how-it-works">
-              {L.howItWorks}
-            </a>
+          <p className="lp-hero-lead">{H.lead}</p>
+          <div className="lp-hero-actions">
+            <button
+              type="button"
+              className="lp-btn lp-btn-mint"
+              onClick={() => openAuth("register", "candidate")}
+            >
+              <LpI.upload />
+              {H.ctaUpload}
+              <LpI.arrow />
+            </button>
+            <button
+              type="button"
+              className="lp-btn lp-btn-ghost"
+              onClick={() => openAuth("register", "company")}
+            >
+              {H.ctaHiring}
+              <LpI.arrow />
+            </button>
+          </div>
+          <div className="lp-hero-trust">
+            <span>
+              <LpI.check /> {H.trustFree}
+            </span>
+            <span>
+              <LpI.check /> {H.trustTests}
+            </span>
+            <span>
+              <LpI.check /> {H.trustLang}
+            </span>
           </div>
         </div>
-        <div className="sb-auth-wrap" id="signup">
-          <div className="sb-auth-glow" />
-          <div className="sb-auth-card">
-            <div className="sb-auth-card-top">
-              <span className="sb-auth-mark">S</span>
-              <span className="sb-auth-secure">
-                <span /> {L.authSecure}
+        <div className="lp-hero-visual">
+          <span className="lp-visual-note">{H.sample}</span>
+          <div className="lp-score-card">
+            <div className="lp-score-top">
+              <span className="lp-avatar">SA</span>
+              <div className="lp-score-who">
+                <strong>{H.candidateName}</strong>
+                <small>{H.candidateRole}</small>
+              </div>
+              <span className="lp-verified">
+                <LpI.check /> {H.verified}
               </span>
             </div>
-            <div className="sb-auth-heading">
-              <div className="sb-kicker">
-                {isRegister ? L.authKickerRegister : L.authKickerLogin}
-              </div>
-              <h2>{isRegister ? L.authTitleRegister : L.authTitleLogin}</h2>
-              <p>{isRegister ? L.authSubRegister : L.authSubLogin}</p>
+            <div className="lp-score-main">
+              <b>82</b>
+              <span>
+                <small>/ 100</small>
+                <em>{H.scoreLabel}</em>
+              </span>
             </div>
-            <div className="sb-auth-tabs" role="tablist" aria-label="Account access">
+            <ul className="lp-bars">
+              <li>
+                <div>
+                  <b>SQL</b>
+                  <span>
+                    88 · <em>{H.verified}</em>
+                  </span>
+                </div>
+                <div className="lp-bar">
+                  <i style={{ width: "88%" }} />
+                </div>
+              </li>
+              <li>
+                <div>
+                  <b>Excel</b>
+                  <span>
+                    91 · <em>{H.verified}</em>
+                  </span>
+                </div>
+                <div className="lp-bar">
+                  <i style={{ width: "91%" }} />
+                </div>
+              </li>
+              <li>
+                <div>
+                  <b>Power BI</b>
+                  <span>
+                    74 · <em>{H.verified}</em>
+                  </span>
+                </div>
+                <div className="lp-bar">
+                  <i style={{ width: "74%" }} />
+                </div>
+              </li>
+              <li className="lp-bar-pending">
+                <div>
+                  <b>Python</b>
+                  <span>{H.fromCv}</span>
+                </div>
+                <div className="lp-bar lp-bar-ghost" />
+              </li>
+            </ul>
+            <div className="lp-score-foot">
+              <span>{H.cvRead}</span>
               <button
                 type="button"
-                role="tab"
-                aria-selected={isRegister}
-                className={isRegister ? "active" : ""}
-                onClick={() => changeMode("register")}
+                className="lp-score-link"
+                onClick={() => openAuth("register", "candidate")}
               >
-                {L.tabCreate}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={!isRegister}
-                className={!isRegister ? "active" : ""}
-                onClick={() => changeMode("login")}
-              >
-                {L.tabSignin}
+                {H.takeTest} <LpI.arrow />
               </button>
             </div>
-            <form className="sb-auth-form" onSubmit={submit}>
-              {isRegister && (
-                <>
-                  <div className="sb-field-label">{L.joiningAs}</div>
-                  <div className="sb-role-choices">
-                    <button
-                      type="button"
-                      className={f.role === "candidate" ? "selected" : ""}
-                      onClick={() => setF({ ...f, role: "candidate" })}
-                    >
-                      <span className="sb-role-icon">↗</span>
-                      <span>
-                        <b>{L.roleCandidate}</b>
-                        <small>{L.roleCandidateSub}</small>
-                      </span>
-                      <i>{f.role === "candidate" ? "✓" : ""}</i>
-                    </button>
-                    <button
-                      type="button"
-                      className={f.role === "company" ? "selected" : ""}
-                      onClick={() => setF({ ...f, role: "company" })}
-                    >
-                      <span className="sb-role-icon">⌂</span>
-                      <span>
-                        <b>{L.roleCompany}</b>
-                        <small>{L.roleCompanySub}</small>
-                      </span>
-                      <i>{f.role === "company" ? "✓" : ""}</i>
-                    </button>
-                  </div>
-                  <label>
-                    {L.labelName}
-                    <input
-                      value={f.name}
-                      onChange={set("name")}
-                      required
-                      minLength={2}
-                      autoComplete="name"
-                      placeholder="e.g. Samira Ahmed"
-                    />
-                  </label>
-                </>
-              )}
-              <label>
-                {L.labelEmail}
-                <input
-                  type="email"
-                  value={f.email}
-                  onChange={set("email")}
-                  required
-                  autoComplete="email"
-                  placeholder="you@example.com"
-                />
-              </label>
-              {!mfaChallenge && (
-                <label>
-                  {L.labelPassword}
-                  <div className="sb-password-field">
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={f.password}
-                      onChange={set("password")}
-                      required
-                      minLength={isRegister ? 8 : 1}
-                      maxLength={128}
-                      autoComplete={isRegister ? "new-password" : "current-password"}
-                      placeholder={isRegister ? "At least 8 characters" : ""}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? L.hide : L.show}
-                    >
-                      {showPassword ? L.hide : L.show}
-                    </button>
-                  </div>
-                  {isRegister && (
-                    <>
-                      <div className={"sb-strength s" + score} aria-hidden="true">
-                        <span /><span /><span /><span />
-                      </div>
-                      <small className="sb-hint">{L.passwordHint}</small>
-                    </>
-                  )}
-                </label>
-              )}
-              {isRegister && !mfaChallenge && (
-                <label>
-                  {L.confirmPassword}
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={f.confirm}
-                    onChange={set("confirm")}
-                    required
-                    autoComplete="new-password"
-                  />
-                  {confirmMismatch && <small className="err">{L.passwordMismatch}</small>}
-                </label>
-              )}
-              {mfaChallenge && (
-                <label>
-                  Authenticator code
-                  <input
-                    value={mfaCode}
-                    onChange={(e) => setMfaCode(e.target.value)}
-                    required
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    placeholder="123456"
-                  />
-                </label>
-              )}
-              {notice && <p className="sb-notice" role="status">{notice}</p>}
-              <Err e={err} />
-              <button className="sb-submit" disabled={busy || Boolean(confirmMismatch)}>
-                {busy
-                  ? L.submitting
-                  : mfaChallenge
-                    ? "Verify code"
-                    : isRegister
-                      ? L.submitRegister
-                      : L.submitLogin}
-                <span>→</span>
-              </button>
-            </form>
-            <div className="sb-auth-switch">
-              {isRegister ? L.switchHave : L.switchNew}{" "}
-              <button
-                type="button"
-                onClick={() => changeMode(isRegister ? "login" : "register")}
-              >
-                {isRegister ? L.tabSignin : L.tabCreate}
-              </button>
-            </div>
-            <div className="sb-auth-legal">{L.legal}</div>
           </div>
-          <div className="sb-auth-note">
-            <span>✦</span> {L.authNote}
+          <div className="lp-shortlist">
+            <span className="lp-shortlist-icon">
+              <LpI.briefcase />
+            </span>
+            <div>
+              <strong>{H.shortlisted}</strong>
+              <small>{H.meets}</small>
+            </div>
           </div>
         </div>
       </section>
-      <section className="sb-proof-strip" aria-label="TalentForge journey">
-        <div className="sb-proof-title">{L.proofTitle}</div>
-        <div className="sb-journey">
-          {L.journey.map((step, index) => (
-            <>
-              {index > 0 && <b key={"sep" + index}>—</b>}
-              <span key={step}>
-                <i>{String(index + 1).padStart(2, "0")}</i> {step}
+
+      <section className="lp-section lp-why" aria-labelledby="lp-why-title">
+        <p className="lp-kicker">{H.whyKicker}</p>
+        <h2 id="lp-why-title" className="lp-h2">
+          {H.whyA}
+          <br />
+          <em>{H.whyB}</em>
+        </h2>
+        <div className="lp-why-grid">
+          <article className="lp-why-card">
+            <span className="lp-why-icon lp-icon-rose">
+              <LpI.person />
+            </span>
+            <h3>{H.why1T}</h3>
+            <p>{H.why1B}</p>
+          </article>
+          <article className="lp-why-card">
+            <span className="lp-why-icon lp-icon-amber">
+              <LpI.clock />
+            </span>
+            <h3>{H.why2T}</h3>
+            <p>{H.why2B}</p>
+          </article>
+          <article className="lp-why-card lp-why-card-dark">
+            <span className="lp-why-icon">
+              <LpI.shield />
+            </span>
+            <h3>{H.why3T}</h3>
+            <p>{H.why3B}</p>
+          </article>
+        </div>
+      </section>
+
+      <section
+        className="lp-section lp-how"
+        id="how-it-works"
+        aria-labelledby="lp-how-title"
+      >
+        <div className="lp-how-head">
+          <div>
+            <p className="lp-kicker">{H.howKicker}</p>
+            <h2 id="lp-how-title" className="lp-h2">
+              {H.howA}
+              <br />
+              {H.howB}
+            </h2>
+          </div>
+          <div className="lp-tabs" role="tablist" aria-label={H.howKicker}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={journey === "candidate"}
+              className={journey === "candidate" ? "on" : ""}
+              onClick={() => setJourney("candidate")}
+            >
+              {H.tabCandidate}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={journey === "hiring"}
+              className={journey === "hiring" ? "on" : ""}
+              onClick={() => setJourney("hiring")}
+            >
+              {H.tabHiring}
+            </button>
+          </div>
+        </div>
+        <div className="lp-steps" role="tabpanel">
+          {steps.map((step, index) => (
+            <article className="lp-step" key={step.t}>
+              <span className="lp-step-num">
+                {String(index + 1).padStart(2, "0")}
               </span>
-            </>
+              <h3>{step.t}</h3>
+              <p>{step.b}</p>
+            </article>
+          ))}
+        </div>
+        <div className="lp-how-cta">
+          <button
+            type="button"
+            className="lp-btn lp-btn-dark"
+            onClick={() =>
+              openAuth("register", journey === "hiring" ? "company" : "candidate")
+            }
+          >
+            {journey === "hiring" ? H.startHiring : H.howCta}
+            <LpI.arrow />
+          </button>
+          <span>{H.howNote}</span>
+        </div>
+      </section>
+
+      <section className="lp-section lp-score-section" aria-labelledby="lp-score-title">
+        <div className="lp-score" id="skill-score">
+          <div className="lp-score-copy">
+          <p className="lp-kicker">{H.scoreKicker}</p>
+          <h2 id="lp-score-title" className="lp-h2">
+            {H.scoreA}
+          </h2>
+          <p className="lp-lead">{H.scoreLead}</p>
+          <div className="lp-score-features">
+            <div>
+              <span className="lp-feature-icon">
+                <LpI.listCheck />
+              </span>
+              <div>
+                <b>{H.scoreF1T}</b>
+                <p>{H.scoreF1B}</p>
+              </div>
+            </div>
+            <div>
+              <span className="lp-feature-icon">
+                <LpI.badge />
+              </span>
+              <div>
+                <b>{H.scoreF2T}</b>
+                <p>{H.scoreF2B}</p>
+              </div>
+            </div>
+            <div>
+              <span className="lp-feature-icon">
+                <LpI.lock />
+              </span>
+              <div>
+                <b>{H.scoreF3T}</b>
+                <p>{H.scoreF3B}</p>
+              </div>
+            </div>
+            <div>
+              <span className="lp-feature-icon">
+                <LpI.trend />
+              </span>
+              <div>
+                <b>{H.scoreF4T}</b>
+                <p>{H.scoreF4B}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="lp-score-panel">
+          <div className="lp-donut">
+            <svg viewBox="0 0 160 160" aria-hidden="true">
+              <circle className="lp-donut-track" cx="80" cy="80" r="62" />
+              <circle
+                className="lp-donut-value"
+                cx="80"
+                cy="80"
+                r="62"
+                strokeDasharray="319.2 389.6"
+              />
+            </svg>
+            <div>
+              <b>82</b>
+              <span>{H.ringLabel}</span>
+            </div>
+          </div>
+          <div className="lp-legend">
+            <div>
+              <i className="dot-green" />
+              <span>{H.legendVerified}</span>
+              <b>3</b>
+            </div>
+            <div>
+              <i className="dot-hollow" />
+              <span>{H.legendCv}</span>
+              <b>6</b>
+            </div>
+            <div>
+              <i className="dot-amber" />
+              <span>{H.legendNext}</span>
+              <b>{H.nextSkill}</b>
+            </div>
+          </div>
+        </div>
+        </div>
+      </section>
+
+      <section
+        className="lp-section lp-hire"
+        id="for-recruiters"
+        aria-labelledby="lp-hire-title"
+      >
+        <div className="lp-hire-head">
+          <div>
+            <p className="lp-kicker">{H.recKicker}</p>
+            <h2 id="lp-hire-title" className="lp-h2">
+              {H.recA}
+              <br />
+              <em>{H.recB}</em>
+            </h2>
+          </div>
+          <p className="lp-lead">{H.recLead}</p>
+        </div>
+        <div className="lp-role-card">
+          <div className="lp-role-head">
+            <div>
+              <strong>{H.role}</strong>
+              <small>{H.roleSub}</small>
+            </div>
+            <div className="lp-role-chips">
+              <span className="lp-chip lp-chip-mint">{H.chipSql}</span>
+              <span className="lp-chip lp-chip-mint">{H.chipExcel}</span>
+              <span className="lp-chip">{H.chipDhaka}</span>
+              <span className="lp-chip lp-chip-live">
+                <i /> {H.chipNow}
+              </span>
+            </div>
+          </div>
+          <div className="lp-tablewrap">
+            <table className="lp-table">
+              <thead>
+                <tr>
+                  <th>{H.thCandidate}</th>
+                  <th>{H.thScore}</th>
+                  <th>{H.thVerified}</th>
+                  <th>{H.thMet}</th>
+                  <th>{H.thStage}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label={H.thCandidate}>
+                    <span className="lp-row-person">
+                      <span className="lp-row-avatar av-mint">SA</span>
+                      <strong>{H.c1}</strong>
+                    </span>
+                  </td>
+                  <td data-label={H.thScore}>
+                    <span className="lp-score-chip">82</span>
+                  </td>
+                  <td data-label={H.thVerified}>
+                    SQL 88 · Excel 91 · Power BI 74
+                  </td>
+                  <td data-label={H.thMet}>3 / 3</td>
+                  <td data-label={H.thStage}>
+                    <span className="lp-stage lp-stage-short">
+                      {H.stageShortlisted}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td data-label={H.thCandidate}>
+                    <span className="lp-row-person">
+                      <span className="lp-row-avatar av-lilac">NJ</span>
+                      <strong>{H.c2}</strong>
+                    </span>
+                  </td>
+                  <td data-label={H.thScore}>
+                    <span className="lp-score-chip">79</span>
+                  </td>
+                  <td data-label={H.thVerified}>
+                    Excel 90 · SQL 76 · Power BI 71
+                  </td>
+                  <td data-label={H.thMet}>3 / 3</td>
+                  <td data-label={H.thStage}>
+                    <span className="lp-stage lp-stage-interview">
+                      {H.stageInterview}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td data-label={H.thCandidate}>
+                    <span className="lp-row-person">
+                      <span className="lp-row-avatar av-sand">RH</span>
+                      <strong>{H.c3}</strong>
+                    </span>
+                  </td>
+                  <td data-label={H.thScore}>
+                    <span className="lp-score-chip">75</span>
+                  </td>
+                  <td data-label={H.thVerified}>SQL 81 · Excel 85</td>
+                  <td data-label={H.thMet}>2 / 3</td>
+                  <td data-label={H.thStage}>
+                    <span className="lp-stage">{H.stageNew}</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td data-label={H.thCandidate}>
+                    <span className="lp-row-person">
+                      <span className="lp-row-avatar av-sky">TI</span>
+                      <strong>{H.c4}</strong>
+                    </span>
+                  </td>
+                  <td data-label={H.thScore}>
+                    <span className="lp-score-chip">71</span>
+                  </td>
+                  <td data-label={H.thVerified}>SQL 72 · Power BI 77</td>
+                  <td data-label={H.thMet}>2 / 3</td>
+                  <td data-label={H.thStage}>
+                    <span className="lp-stage">{H.stageNew}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="lp-table-note">{H.sampleData}</p>
+        </div>
+        <div className="lp-hire-features">
+          <div>
+            <LpI.filter />
+            <div>
+              <b>{H.recF1T}</b>
+              <p>{H.recF1B}</p>
+            </div>
+          </div>
+          <div>
+            <LpI.search />
+            <div>
+              <b>{H.recF2T}</b>
+              <p>{H.recF2B}</p>
+            </div>
+          </div>
+          <div>
+            <LpI.stages />
+            <div>
+              <b>{H.recF3T}</b>
+              <p>{H.recF3B}</p>
+            </div>
+          </div>
+        </div>
+        <div className="lp-audience">
+          <article className="lp-audience-card">
+            <p className="lp-audience-tag">{L.candidateTag}</p>
+            <h3>{L.candidateTitle}</h3>
+            <ul>
+              {H.candBullets.map((item) => (
+                <li key={item}>
+                  <LpI.check /> {item}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="lp-btn lp-btn-dark"
+              onClick={() => openAuth("register", "candidate")}
+            >
+              {L.candidateCta} <LpI.arrow />
+            </button>
+          </article>
+          <article className="lp-audience-card lp-audience-dark">
+            <p className="lp-audience-tag">{L.companyTag}</p>
+            <h3>{L.companyTitle}</h3>
+            <ul>
+              {H.compBullets.map((item) => (
+                <li key={item}>
+                  <LpI.check /> {item}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="lp-btn lp-btn-mint"
+              onClick={() => openAuth("register", "company")}
+            >
+              {L.companyCta} <LpI.arrow />
+            </button>
+          </article>
+        </div>
+        <div className="lp-values">
+          {H.values.map((value) => (
+            <div key={value.t}>
+              <b>{value.t}</b>
+              <p>{value.b}</p>
+            </div>
           ))}
         </div>
       </section>
-      <section className="sb-value-section" id="how-it-works">
-        <div className="sb-section-intro">
-          <div className="sb-kicker">{L.valueKicker}</div>
-          <h2>
-            {L.valueTitleA}
+
+      <section className="lp-section lp-faq" id="faq" aria-labelledby="lp-faq-title">
+        <div className="lp-faq-intro">
+          <p className="lp-kicker">{H.faqKicker}</p>
+          <h2 id="lp-faq-title" className="lp-h2">
+            {H.faqA}
             <br />
-            <em>{L.valueTitleB}</em>
+            {H.faqB}
           </h2>
-          <p>{L.valueLead}</p>
+          <p className="lp-faq-support">
+            {H.faqSupport}{" "}
+            <span className="lp-support-mail">{H.supportEmail}</span>
+          </p>
         </div>
-        <div className="sb-value-grid">
-          <article className="sb-value-card">
-            <div className="sb-value-number">{L.candidateTag}</div>
-            <div className="sb-value-icon">↗</div>
-            <h3>{L.candidateTitle}</h3>
-            <p>{L.candidateBody}</p>
-            <button type="button" onClick={() => focusSignup("candidate")}>
-              {L.candidateCta} <span>→</span>
-            </button>
-          </article>
-          <article className="sb-value-card sb-value-card-dark">
-            <div className="sb-value-number">{L.companyTag}</div>
-            <div className="sb-value-icon">⌂</div>
-            <h3>{L.companyTitle}</h3>
-            <p>{L.companyBody}</p>
-            <button type="button" onClick={() => focusSignup("company")}>
-              {L.companyCta} <span>→</span>
-            </button>
-          </article>
+        <div className="lp-faq-list">
+          {H.faqs.map((item, index) => {
+            const open = faqOpen === index;
+            return (
+              <div className={"lp-faq-item" + (open ? " open" : "")} key={item.q}>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-controls={"lp-faq-a-" + index}
+                  onClick={() => setFaqOpen(open ? -1 : index)}
+                >
+                  <span>{item.q}</span>
+                  <i aria-hidden="true">{open ? "−" : "+"}</i>
+                </button>
+                <div id={"lp-faq-a-" + index} hidden={!open}>
+                  <p>{item.a}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
-      <footer className="sb-footer">
-        <div>
-          <span className="sb-footer-mark">S</span>
-          <b>TalentForge</b>
-          <small>{L.footerTag}</small>
+
+      <section className="lp-section lp-cta-section" aria-labelledby="lp-cta-title">
+        <div className="lp-cta">
+          <h2 id="lp-cta-title">
+            {H.ctaA}
+            <br />
+            <em>{H.ctaB}</em>
+          </h2>
+          <p>{H.ctaLead}</p>
+          <div className="lp-cta-actions">
+            <button
+              type="button"
+              className="lp-btn lp-btn-mint"
+              onClick={() => openAuth("register", "candidate")}
+            >
+              {H.howCta} <LpI.arrow />
+            </button>
+            <button
+              type="button"
+              className="lp-btn lp-btn-ghost"
+              onClick={() => openAuth("register", "company")}
+            >
+              {H.startHiring}
+            </button>
+          </div>
         </div>
-        <span>{L.footerNote}</span>
-        <a href="#top">{L.backToTop}</a>
+      </section>
+
+      <footer className="lp-footer" id="legal">
+        <div className="lp-footer-top">
+          <div className="lp-footer-brand">
+            <span className="lp-footer-mark">S</span>
+            <strong>TalentForge</strong>
+            <p>{H.footTag}</p>
+          </div>
+          <div className="lp-footer-cols">
+            <div>
+              <b>{H.footPlatform}</b>
+              <a href="#how-it-works">{H.footHow}</a>
+              <a href="#skill-score">{H.footScore}</a>
+              <a href="#for-recruiters">{H.footRec}</a>
+            </div>
+            <div>
+              <b>{H.footAccount}</b>
+              <button type="button" onClick={() => openAuth("register", "candidate")}>
+                {H.footCreate}
+              </button>
+              <button type="button" onClick={() => openAuth("login")}>
+                {H.footSignin}
+              </button>
+              <a href="#faq">{H.footFaq}</a>
+            </div>
+            <div>
+              <b>{H.footLegal}</b>
+              <a href="#legal">{H.footPrivacy}</a>
+              <a href="#legal">{H.footTerms}</a>
+            </div>
+          </div>
+        </div>
+        <div className="lp-footer-bottom">
+          <span>{H.copyright}</span>
+          <span>{H.motto}</span>
+        </div>
       </footer>
+
+      {authOpen && (
+        <div
+          className="lp-auth-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeAuth();
+          }}
+        >
+          <div className="lp-auth-shell">
+            <button
+              type="button"
+              className="lp-auth-close"
+              onClick={closeAuth}
+              aria-label={L.close || "Close"}
+            >
+              ×
+            </button>
+            <div
+              className="sb-auth-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="lp-auth-title"
+            >
+              <div className="sb-auth-card-top">
+                <span className="sb-auth-mark">S</span>
+                <span className="sb-auth-secure">
+                  <span /> {L.authSecure}
+                </span>
+              </div>
+              <div className="sb-auth-heading">
+                <div className="sb-kicker">
+                  {isRegister ? L.authKickerRegister : L.authKickerLogin}
+                </div>
+                <h2 id="lp-auth-title">
+                  {isRegister ? L.authTitleRegister : L.authTitleLogin}
+                </h2>
+                <p>{isRegister ? L.authSubRegister : L.authSubLogin}</p>
+              </div>
+              <div className="sb-auth-tabs" role="tablist" aria-label="Account access">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isRegister}
+                  className={isRegister ? "active" : ""}
+                  onClick={() => changeMode("register")}
+                >
+                  {L.tabCreate}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={!isRegister}
+                  className={!isRegister ? "active" : ""}
+                  onClick={() => changeMode("login")}
+                >
+                  {L.tabSignin}
+                </button>
+              </div>
+              <form className="sb-auth-form" onSubmit={submit}>
+                {isRegister && (
+                  <>
+                    <div className="sb-field-label">{L.joiningAs}</div>
+                    <div className="sb-role-choices">
+                      <button
+                        type="button"
+                        className={f.role === "candidate" ? "selected" : ""}
+                        onClick={() => setF({ ...f, role: "candidate" })}
+                      >
+                        <span className="sb-role-icon">↗</span>
+                        <span>
+                          <b>{L.roleCandidate}</b>
+                          <small>{L.roleCandidateSub}</small>
+                        </span>
+                        <i>{f.role === "candidate" ? "✓" : ""}</i>
+                      </button>
+                      <button
+                        type="button"
+                        className={f.role === "company" ? "selected" : ""}
+                        onClick={() => setF({ ...f, role: "company" })}
+                      >
+                        <span className="sb-role-icon">⌂</span>
+                        <span>
+                          <b>{L.roleCompany}</b>
+                          <small>{L.roleCompanySub}</small>
+                        </span>
+                        <i>{f.role === "company" ? "✓" : ""}</i>
+                      </button>
+                    </div>
+                    <label>
+                      {L.labelName}
+                      <input
+                        value={f.name}
+                        onChange={set("name")}
+                        required
+                        minLength={2}
+                        autoComplete="name"
+                        placeholder="e.g. Samira Ahmed"
+                      />
+                    </label>
+                  </>
+                )}
+                <label>
+                  {L.labelEmail}
+                  <input
+                    type="email"
+                    value={f.email}
+                    onChange={set("email")}
+                    required
+                    autoComplete="email"
+                    placeholder="you@example.com"
+                  />
+                </label>
+                {!mfaChallenge && (
+                  <label>
+                    {L.labelPassword}
+                    <div className="sb-password-field">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={f.password}
+                        onChange={set("password")}
+                        required
+                        minLength={isRegister ? 8 : 1}
+                        maxLength={128}
+                        autoComplete={isRegister ? "new-password" : "current-password"}
+                        placeholder={isRegister ? "At least 8 characters" : ""}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? L.hide : L.show}
+                      >
+                        {showPassword ? L.hide : L.show}
+                      </button>
+                    </div>
+                    {isRegister && (
+                      <>
+                        <div className={"sb-strength s" + score} aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <small className="sb-hint">{L.passwordHint}</small>
+                      </>
+                    )}
+                  </label>
+                )}
+                {isRegister && !mfaChallenge && (
+                  <label>
+                    {L.confirmPassword}
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={f.confirm}
+                      onChange={set("confirm")}
+                      required
+                      autoComplete="new-password"
+                    />
+                    {confirmMismatch && <small className="err">{L.passwordMismatch}</small>}
+                  </label>
+                )}
+                {mfaChallenge && (
+                  <label>
+                    Authenticator code
+                    <input
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value)}
+                      required
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="123456"
+                    />
+                  </label>
+                )}
+                {notice && (
+                  <p className="sb-notice" role="status">
+                    {notice}
+                  </p>
+                )}
+                <Err e={err} />
+                <button
+                  className="sb-submit"
+                  disabled={busy || Boolean(confirmMismatch)}
+                >
+                  {busy
+                    ? L.submitting
+                    : mfaChallenge
+                      ? "Verify code"
+                      : isRegister
+                        ? L.submitRegister
+                        : L.submitLogin}
+                  <span>→</span>
+                </button>
+              </form>
+              <div className="sb-auth-switch">
+                {isRegister ? L.switchHave : L.switchNew}{" "}
+                <button
+                  type="button"
+                  onClick={() => changeMode(isRegister ? "login" : "register")}
+                >
+                  {isRegister ? L.tabSignin : L.tabCreate}
+                </button>
+              </div>
+              <div className="sb-auth-legal">{L.legal}</div>
+            </div>
+            <div className="sb-auth-note">
+              <span>✦</span> {L.authNote}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -12710,7 +13394,7 @@ function Shell({ lang, setLang }) {
     setView(null);
   };
   const Head = (
-    <header className="top">
+    <header className={"top" + (authed ? "" : " sb-top-landing")}>
       <a className="brand sb-top-brand" href="#top">
         <span className="sb-brand-mark">S</span>
         <span>
@@ -12719,8 +13403,10 @@ function Shell({ lang, setLang }) {
       </a>
       {!authed && (
         <nav className="sb-top-nav">
-          <a href="#how-it-works">How it works</a>
-          <a href="#signup">For candidates & companies</a>
+          <a href="#how-it-works">{t("landing").home.navHow}</a>
+          <a href="#skill-score">{t("landing").home.navScore}</a>
+          <a href="#for-recruiters">{t("landing").home.navRecruiters}</a>
+          <a href="#faq">{t("landing").home.navFaq}</a>
         </nav>
       )}
       <span className="grow" />
@@ -12744,7 +13430,7 @@ function Shell({ lang, setLang }) {
         </button>
       ) : (
         <a className="sb-top-signin" href="#signin">
-          Sign in <span>→</span>
+          {t("landing").tabSignin} <span>→</span>
         </a>
       )}
     </header>
