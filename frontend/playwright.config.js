@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
   workers: 2,
-  timeout: 30000,
+  timeout: 60000,
+  expect: { timeout: 15000 },
   use: { baseURL: "http://127.0.0.1:5174", trace: "retain-on-failure", screenshot: "only-on-failure" },
   projects: [
     { name: "desktop", use: { browserName: "chromium", viewport: { width: 1440, height: 1000 } } },

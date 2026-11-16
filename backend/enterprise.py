@@ -1453,16 +1453,18 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
     item["candidate_skills"] = []
     item["skill_evidence_summary"] = {"verified": 0, "claimed": 0, "missing": 0, "not_shared": 0}
     if item["results_shared"]:
+        import assessment_workflow as workflow
         attempts = allr("SELECT id,result,finished FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC",
                         (item["candidate_id"],))
         for attempt in attempts:
             if not attempt["result"]:
                 continue
-            result = json.loads(attempt["result"])
+            result = workflow.candidate_summary(attempt["id"], json.loads(attempt["result"]))
             item["assessment_history"].append({
                 "attempt_id": attempt["id"], "score": result.get("overall"),
                 "scale": "0–100", "finished": attempt["finished"],
-                "topics": result.get("topics", {}), "result_status": "prototype",
+                "topics": result.get("topics", {}), "result_status": "published" if result.get("finalized") else "awaiting_reviews",
+                "honesty": result.get("honesty") if result.get("finalized") else None,
                 "integrity_summary": "No recruiter-facing integrity evidence is available; human review status is not asserted."
             })
         # Align the company view with the candidate's profile/CV skill journey.
@@ -1475,7 +1477,7 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
         confirmed_row = one("SELECT confirmed FROM profiles WHERE user_id=?", (item["candidate_id"],))
         if confirmed_row and confirmed_row["confirmed"]:
             claimed_ids.update(json.loads(confirmed_row["confirmed"]))
-        latest_topics = json.loads(attempts[0]["result"]).get("topics", {}) if attempts and attempts[0]["result"] else {}
+        latest_topics = workflow.candidate_summary(attempts[0]["id"], json.loads(attempts[0]["result"])).get("topics", {}) if attempts and attempts[0]["result"] else {}
         for required_name in item["required_skills"]:
             ids = G.canonical_skill_ids(str(required_name))
             topic_id = next((skill_id for skill_id in ids if skill_id in latest_topics), None)
@@ -1525,6 +1527,10 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
                 "uplift": payload.get("uplift"),
                 "public_url": f"/#/p/{passport_row['id']}",
             }
+            passport_source = payload.get("attempt_id") or payload.get("assessment", {}).get("attempt_id")
+            release = workflow.current_release(passport_source) if passport_source else None
+            if not release or payload.get("release_id") != release["id"]:
+                item["passport"] = None
     else:
         item["candidate_skills"] = [
             {"required": name, "skill_ids": [], "status": "not_shared", "score": None,
@@ -1898,7 +1904,7 @@ class AdminUserStatusInput(BaseModel):
 
 class EvaluationEditInput(BaseModel):
     question_id: str
-    marks: Optional[float] = None
+    marks: Optional[float] = Field(default=None, allow_inf_nan=False)
     admin_note: str = Field(default="", max_length=2000)
     additional_info: str = Field(default="", max_length=4000)
     status: Literal["pending_approval", "approved", "rejected"] = "approved"
@@ -1906,7 +1912,7 @@ class EvaluationEditInput(BaseModel):
 
 class EvaluationRunInput(BaseModel):
     question_ids: Optional[List[str]] = None
-    use_llm: bool = True
+    use_llm: bool = False
 
 
 class AdminReviewInput(BaseModel):
@@ -2199,9 +2205,11 @@ def admin_honesty_review(attempt_id: str, body: HonestyReviewInput, user=Depends
     admin_only(user, "integrity_review")
     if body.decision not in ("pending", "approved", "rejected"):
         raise HTTPException(422, "Unsupported honesty decision")
-    row = one("SELECT id,result FROM attempts WHERE id=?", (attempt_id,))
+    row = one("SELECT id,result,status FROM attempts WHERE id=?", (attempt_id,))
     if not row:
         raise HTTPException(404, "Assessment attempt not found")
+    if row["status"] != "done":
+        raise HTTPException(409, "Complete the assessment before reviewing honesty")
     try:
         result = json.loads(row["result"]) if row["result"] else {}
     except Exception:
@@ -2233,10 +2241,12 @@ def admin_honesty_review(attempt_id: str, body: HonestyReviewInput, user=Depends
                updated_at=excluded.updated_at""",
         (attempt_id, auto_score, score, decision, reason, reviewer_id, reviewed_at, now))
     audit(user["id"], "exam_honesty_reviewed", f"{attempt_id}:{decision}:{score}:{reason[:200]}")
+    import assessment_workflow as workflow
+    publication = workflow.sync_release(attempt_id)
     return {"attempt_id": attempt_id, "honesty": {
         "auto_score": auto_score, "score": score, "source": "admin",
         "status": decision, "reason": reason,
-        "reviewer_id": reviewer_id, "reviewed_at": reviewed_at}}
+        "reviewer_id": reviewer_id, "reviewed_at": reviewed_at}, **publication}
 
 
 @router.get("/api/admin/assessment-reviews")
@@ -2252,6 +2262,7 @@ def admin_assessment_reviews(user=Depends(current_user)):
                    COALESCE(a.finished,a.started) DESC LIMIT 300""")
     # One query for every evaluation draft avoids an N+1 lookup while building the queue.
     evaluations_by_attempt = {}
+    honesty_by_attempt = {}
     if rows:
         ids = [r["id"] for r in rows]
         placeholders = ",".join("?" for _ in ids)
@@ -2259,6 +2270,8 @@ def admin_assessment_reviews(user=Depends(current_user)):
                 f"SELECT * FROM answer_evaluations WHERE attempt_id IN ({placeholders})", tuple(ids)):
             evaluations_by_attempt.setdefault(evaluation["attempt_id"], []).append(
                 evaluation_view(evaluation))
+        honesty_by_attempt = {review["attempt_id"]: dict(review) for review in allr(
+            f"SELECT * FROM attempt_honesty_reviews WHERE attempt_id IN ({placeholders})", tuple(ids))}
     items=[]
     for row in rows:
         item=dict(row)
@@ -2294,6 +2307,8 @@ def admin_assessment_reviews(user=Depends(current_user)):
                     "automated_correct": (grade.get("review_status") == "correct") if objective else None,
                     "review_status": grade.get("review_status") or ("objective_auto_graded" if objective else "pending_human_review"),
                     "marks": question.get("marks", 1), "time_allocation": question.get("time_allocation"),
+                    "max_marks": question.get("marks", 1), "awarded_marks": grade.get("awarded_marks"),
+                    "objective": objective,
                     "time_seconds": grade.get("time_seconds", 0)
                 })
         else:
@@ -2336,11 +2351,16 @@ def admin_assessment_reviews(user=Depends(current_user)):
         item["answer_evidence"] = evidence
         item["answer_evidence_complete"] = bool(evidence) and all(x["answer_available"] for x in evidence)
         item["manual_review_required"] = bool(item.get("result") and item["result"].get("manual_review_required"))
+        import assessment_workflow as workflow
+        item["publication"] = workflow.review_state(item["id"], attempt=item,
+            academic={"decision": item["review_decision"], "reviewed_at": item["reviewed_at"]} if item["review_decision"] else None,
+            honesty=honesty_by_attempt.get(item["id"]), evaluations=evaluations)
+        item["honesty"] = item["publication"].get("honesty")
         if state.get("graphrag"):
             item["evaluation_method"] = (
                 "MCQs and reference-answer SQL are graded deterministically. Descriptive, scenario, "
-                "coding and analytical answers receive an AI-assisted hybrid draft (keyword coverage, "
-                "reference similarity and an optional LLM opinion) with partial marks. Every draft is "
+                "coding and analytical answers receive a stored-rubric draft (keyword coverage and "
+                "reference similarity) with partial marks. No external model grades the answer. Every draft is "
                 "pending administrator approval and can be edited.")
         else:
             item["evaluation_method"] = (
@@ -2379,6 +2399,8 @@ def admin_run_answer_evaluations(attempt_id: str, body: Optional[EvaluationRunIn
                  JOIN users u ON u.id=a.user_id WHERE a.id=?""", (attempt_id,))
     if not row:
         raise HTTPException(404, "Assessment attempt not found")
+    if row["status"] != "done":
+        raise HTTPException(409, "Assessment must be submitted before evaluation")
     try:
         state = json.loads(row["state"]) if row["state"] else {}
         result = json.loads(row["result"]) if row["result"] else {}
@@ -2388,16 +2410,9 @@ def admin_run_answer_evaluations(attempt_id: str, body: Optional[EvaluationRunIn
         raise HTTPException(409, "Hybrid evaluation is available for GraphRAG assessments only")
 
     wanted = set((body.question_ids if body and body.question_ids else []) or [])
-    use_llm = bool(body.use_llm) if body else True
-    try:
-        import ai_providers as AIP
-        llm_configured = AIP.any_provider_configured()
-    except Exception:
-        AIP, llm_configured = None, False
-    try:
-        max_llm = max(1, int(os.getenv("MAX_LLM_EVALUATIONS_PER_ATTEMPT", "12")))
-    except ValueError:
-        max_llm = 12
+    # Stored-key/rubric drafts are produced by engine.py. External model marks
+    # must not enter grading (AGENTS.md); course explanations are separate.
+    llm_configured = False
 
     existing = {e["question_id"]: e for e in attempt_evaluations(attempt_id)}
     answers = state.get("answers", {}) or {}
@@ -2424,16 +2439,8 @@ def admin_run_answer_evaluations(attempt_id: str, body: Optional[EvaluationRunIn
         redacted, _ = E.redact(answer, [row["candidate_name"] or ""],
                                assume_first_line_name=False)
         llm_opinion = None
-        if use_llm and llm_configured and answer.strip() and llm_calls < max_llm:
-            llm_calls += 1
-            try:
-                llm_opinion = AIP.grade_descriptive_answer(
-                    question=str(question.get("question_text") or ""),
-                    rubric=rubric, reference=reference, answer=redacted, max_marks=max_marks)
-            except Exception as exc:
-                llm_opinion = {"error": type(exc).__name__}
         draft = E.evaluate_descriptive_answer(
-            redacted, reference=reference, rubric=rubric,
+            answer, reference=reference, rubric=rubric,
             question=str(question.get("question_text") or ""), max_marks=max_marks,
             llm=llm_opinion)
         evaluation = upsert_answer_evaluation(attempt_id, qid, draft)
@@ -2471,11 +2478,26 @@ def admin_edit_evaluation(attempt_id: str, question_id: str, body: EvaluationEdi
     attempt = one("SELECT id,result,status FROM attempts WHERE id=?", (attempt_id,))
     if not attempt:
         raise HTTPException(404, "Assessment attempt not found")
+    if attempt["status"] != "done":
+        raise HTTPException(409, "Assessment must be submitted before editing marks")
+    if body.question_id != question_id:
+        raise HTTPException(422, "Question id must match the URL")
     current = one("SELECT * FROM answer_evaluations WHERE attempt_id=? AND question_id=?",
                   (attempt_id, question_id))
     if not current:
-        raise HTTPException(404, "Evaluation not found")
+        result = json.loads(attempt["result"] or "{}")
+        question = next((q for q in result.get("question_results", []) if q.get("question_id") == question_id and q.get("objective")), None)
+        if not question:
+            raise HTTPException(404, "Evaluation not found")
+        if body.marks is None or not 0 <= body.marks <= float(question.get("max_marks") or 1):
+            raise HTTPException(422, "Enter marks within the question's allowed range")
+        if len(body.admin_note.strip()) < 3:
+            raise HTTPException(422, "Explain the objective mark adjustment in an administrator note")
+        upsert_answer_evaluation(attempt_id, question_id, {"max_marks": question.get("max_marks", 1), "ai_marks": question.get("awarded_marks", 0), "method": "objective_admin_review_v1"})
+        current = one("SELECT * FROM answer_evaluations WHERE attempt_id=? AND question_id=?", (attempt_id, question_id))
     max_marks = float(current["max_marks"] or 1)
+    if body.status == "approved" and "missing_stored_rubric" in evaluation_view(current).get("flags", []) and (body.marks is None or len(body.admin_note.strip()) < 3):
+        raise HTTPException(422, "A missing-rubric response requires explicit human marks and a review note")
     if body.marks is not None and not (0 <= float(body.marks) <= max_marks):
         raise HTTPException(422, f"Marks must be between 0 and {max_marks:g}")
     marks = body.marks
@@ -2488,7 +2510,7 @@ def admin_edit_evaluation(attempt_id: str, question_id: str, body: EvaluationEdi
         admin_note=body.admin_note.strip(), additional_info=body.additional_info.strip(),
         reviewer_id=user["id"])
     review = one("SELECT decision FROM admin_attempt_reviews WHERE attempt_id=?", (attempt_id,))
-    if review and review["decision"] == "approved":
+    if attempt["result"]:
         evaluations = attempt_evaluations(attempt_id)
         try:
             result = json.loads(attempt["result"]) if attempt["result"] else {}
@@ -2504,6 +2526,11 @@ def admin_edit_evaluation(attempt_id: str, question_id: str, body: EvaluationEdi
                     question_result["review_status"] = "human_approved"
         result = recompute_attempt_scores(result, evaluations)
         run("UPDATE attempts SET result=? WHERE id=?", (json.dumps(result), attempt_id))
+    if review and review["decision"] == "approved":
+        run("UPDATE admin_attempt_reviews SET decision='needs_more_info',reason=?,reviewer_id=?,reviewed_at=? WHERE attempt_id=?",
+            ("Marks changed; review and approve the revised academic result.", user["id"], time.time(), attempt_id))
+    import assessment_workflow as workflow
+    workflow.sync_release(attempt_id)
     audit(user["id"], "answer_evaluation_edited",
           attempt_id + ":" + question_id + ":" + str(marks) + ":" + body.status)
     return saved
@@ -2514,109 +2541,77 @@ def admin_review_attempt(attempt_id: str, body: AdminReviewInput, user=Depends(c
     admin_only(user, "assessment_review")
     if body.decision not in ("approved", "needs_more_info", "invalidated"):
         raise HTTPException(422, "Unsupported review decision")
-    attempt = one("SELECT id,user_id,result FROM attempts WHERE id=?", (attempt_id,))
+    attempt = one("SELECT id,user_id,result,status FROM attempts WHERE id=?", (attempt_id,))
     if not attempt:
         raise HTTPException(404, "Assessment attempt not found")
-    now = time.time()
-    run("""INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at)
-           VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
-           reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
-        (attempt_id, body.decision, body.reason.strip(), user["id"], now))
-
+    if attempt["status"] != "done" or not attempt["result"]:
+        raise HTTPException(409, "Assessment must be submitted before review")
+    # Validate every submitted override BEFORE writing any decision or mark.
     evaluations = attempt_evaluations(attempt_id)
-    eval_map = {e["question_id"]: e for e in evaluations}
-    # 1) Persist any per-question administrator overrides sent with the decision.
+    validation_map = {e["question_id"]: e for e in evaluations}
+    seen = set()
     for item in body.evaluations:
-        current = eval_map.get(item.question_id)
-        if not current:
-            continue
-        max_marks = float(current.get("max_marks") or 1)
-        if item.marks is not None and not (0 <= float(item.marks) <= max_marks):
-            raise HTTPException(422, f"Marks for {item.question_id} must be between 0 and {max_marks:g}")
-        target_marks = item.marks
-        if target_marks is None:
-            target_marks = current.get("final_marks")
-        if target_marks is None:
-            target_marks = current.get("ai_marks")
-        status = ("approved" if body.decision == "approved"
-                  else "rejected" if body.decision == "invalidated"
-                  else "pending_approval")
-        saved = upsert_answer_evaluation(
-            attempt_id, item.question_id, current, status=status,
-            final_marks=target_marks, admin_note=item.admin_note.strip(),
-            additional_info=item.additional_info.strip(), reviewer_id=user["id"])
-        eval_map[item.question_id] = saved
-    evaluations = attempt_evaluations(attempt_id)
-    eval_map = {e["question_id"]: e for e in evaluations}
-
-    if attempt["result"]:
-        try:
-            result = json.loads(attempt["result"])
-        except Exception:
-            result = None
-        if isinstance(result, dict):
-            # 2) Approval promotes every remaining pending draft to a human-approved
-            # mark (the admin can still edit it later). Invalidating rejects drafts.
-            if body.decision == "approved":
-                for evaluation in evaluations:
-                    if evaluation.get("status") == "pending_approval":
-                        run("""UPDATE answer_evaluations SET status='approved',
-                               final_marks=COALESCE(final_marks, ai_marks),reviewed_by=?,reviewed_at=?
-                               WHERE attempt_id=? AND question_id=?""",
-                            (user["id"], now, attempt_id, evaluation["question_id"]))
-                evaluations = attempt_evaluations(attempt_id)
-                eval_map = {e["question_id"]: e for e in evaluations}
-            elif body.decision == "invalidated":
-                run("""UPDATE answer_evaluations SET status='rejected',reviewed_by=?,reviewed_at=?
-                       WHERE attempt_id=? AND status IN ('pending_approval','approved')""",
-                    (user["id"], now, attempt_id))
-                evaluations = attempt_evaluations(attempt_id)
-                eval_map = {e["question_id"]: e for e in evaluations}
-
-            for question_result in result.get("question_results", []) or []:
-                evaluation = eval_map.get(question_result.get("question_id"))
-                if not evaluation or question_result.get("objective"):
-                    continue
-                question_result["evaluation_status"] = evaluation.get("status")
-                question_result["ai_marks"] = evaluation.get("ai_marks")
-                if evaluation.get("status") == "approved":
-                    question_result["awarded_marks"] = evaluation.get("final_marks")
-                    question_result["review_status"] = "human_approved"
-                elif evaluation.get("status") == "rejected":
-                    question_result["awarded_marks"] = None
-                    question_result["review_status"] = "human_rejected"
-            if evaluations:
-                result = recompute_attempt_scores(result, evaluations)
-            result["review_status"] = body.decision
-            result["human_review_decision"] = body.decision
-            result["human_review_reason"] = body.reason.strip()
-            result["reviewed_at"] = now
-            result["reviewer_id"] = user["id"]
-            if body.decision == "approved":
-                result["manual_review_required"] = any(
-                    e.get("status") == "pending_approval" for e in evaluations)
-            elif body.decision == "needs_more_info":
-                result["manual_review_required"] = True
-            else:
-                result["manual_review_required"] = False
-            run("UPDATE attempts SET result=? WHERE id=?", (json.dumps(result), attempt_id))
-
-    passport_id = None
-    learning_path_updated = False
+        current = validation_map.get(item.question_id)
+        if not current or item.question_id in seen:
+            raise HTTPException(422, "Unknown or duplicate evaluation question id")
+        seen.add(item.question_id)
+        if item.marks is not None and not 0 <= item.marks <= float(current.get("max_marks") or 1):
+            raise HTTPException(422, f"Marks for {item.question_id} are out of range")
+    explicit_overrides = {item.question_id: item for item in body.evaluations}
     if body.decision == "approved":
-        from main import create_passport_for_attempt
-        passport_id = create_passport_for_attempt(attempt["user_id"], attempt_id)
-        learning_path_updated = True
-    else:
-        # A result that is no longer approved must not keep verified evidence.
-        run("UPDATE passports SET revoked=1 WHERE user_id=? AND source_attempt=? AND revoked=0",
-            (attempt["user_id"], attempt_id))
+        for evaluation in evaluations:
+            if "missing_stored_rubric" not in evaluation.get("flags", []) or evaluation["status"] == "approved":
+                continue
+            override = explicit_overrides.get(evaluation["question_id"])
+            if not override or override.marks is None or len(override.admin_note.strip()) < 3:
+                raise HTTPException(409, "A response has no stored rubric. Enter explicit human marks and a review note before approving it.")
+    result_for_validation = json.loads(attempt["result"])
+    missing = [q["question_id"] for q in result_for_validation.get("question_results", []) if not q.get("objective", True) and q["question_id"] not in validation_map]
+    if body.decision == "approved" and missing:
+        raise HTTPException(409, "Some responses have no evaluation draft. Run the evaluator before approving.")
+    now = time.time()
+    # Commit the marks, recomputed result and academic decision as one unit.
+    # A concurrent honesty review cannot observe half-approved marks.
+    with db() as conn:
+        conn.execute("BEGIN" if DATABASE_URL else "BEGIN IMMEDIATE")
+        locked = conn.execute("SELECT result FROM attempts WHERE id=?" + (" FOR UPDATE" if DATABASE_URL else ""), (attempt_id,)).fetchone()
+        result = json.loads(locked["result"])
+        current_evaluations = {e["question_id"]: dict(e) for e in conn.execute("SELECT * FROM answer_evaluations WHERE attempt_id=?", (attempt_id,)).fetchall()}
+        for item in body.evaluations:
+            current = current_evaluations[item.question_id]
+            target_marks = item.marks if item.marks is not None else current["final_marks"] if current["final_marks"] is not None else current["ai_marks"]
+            target_status = "approved" if body.decision == "approved" else "rejected" if body.decision == "invalidated" else "pending_approval"
+            conn.execute("""UPDATE answer_evaluations SET status=?,final_marks=?,admin_note=?,additional_info=?,reviewed_by=?,reviewed_at=?
+                            WHERE attempt_id=? AND question_id=?""",
+                         (target_status, target_marks, item.admin_note.strip(), item.additional_info.strip(), user["id"], now, attempt_id, item.question_id))
+        if body.decision == "approved":
+            conn.execute("""UPDATE answer_evaluations SET status='approved',final_marks=COALESCE(final_marks,ai_marks),reviewed_by=?,reviewed_at=?
+                            WHERE attempt_id=? AND status='pending_approval'""", (user["id"], now, attempt_id))
+        elif body.decision == "invalidated":
+            conn.execute("UPDATE answer_evaluations SET status='rejected',reviewed_by=?,reviewed_at=? WHERE attempt_id=?", (user["id"], now, attempt_id))
+        evaluations = [evaluation_view(e) for e in conn.execute("SELECT * FROM answer_evaluations WHERE attempt_id=?", (attempt_id,)).fetchall()]
+        if result.get("question_results"):
+            result = recompute_attempt_scores(result, evaluations)
+        result.update({"review_status": body.decision, "human_review_decision": body.decision,
+                       "human_review_reason": body.reason.strip(), "reviewed_at": now, "reviewer_id": user["id"],
+                       "manual_review_required": body.decision == "needs_more_info" or any(e["status"] == "pending_approval" for e in evaluations)})
+        conn.execute("UPDATE attempts SET result=? WHERE id=?", (json.dumps(result), attempt_id))
+        conn.execute("""INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at)
+                        VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
+                        reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
+                     (attempt_id, body.decision, body.reason.strip(), user["id"], now))
+
+    import assessment_workflow as workflow
+    publication = workflow.sync_release(attempt_id)
+    passport_id = publication["passport_id"]
+    learning_path_updated = publication["publication"]["ready"]
 
     audit(user["id"], "assessment_result_reviewed", attempt_id + ":" + body.decision + ":" + body.reason.strip())
     return {"attempt_id": attempt_id, "decision": body.decision,
             "review_status": body.decision,
             "passport_id": passport_id,
             "learning_path_updated": learning_path_updated,
+            "publication": publication["publication"], "release_id": publication["release_id"],
             "note": ("The original answer record is preserved. Only administrator-approved "
                      "descriptive marks are counted; AI drafts never change a score by themselves.")}
 
@@ -3504,6 +3499,7 @@ class LearningResourceInput(BaseModel):
 @router.get("/api/learning/dashboard")
 def candidate_learning_dashboard(user=Depends(current_user)):
     require_role(user, "candidate")
+    import assessment_workflow as workflow
     # One current result for the candidate: the latest completed attempt. Its
     # human-review decision is the only thing that changes between provisional
     # and verified. Keeping this single source avoids the Verify / Gap / Learn
@@ -3513,8 +3509,14 @@ def candidate_learning_dashboard(user=Depends(current_user)):
                     ORDER BY finished DESC LIMIT 1""", (user["id"],))
     review = one("""SELECT decision,reason,reviewed_at FROM admin_attempt_reviews
                     WHERE attempt_id=?""", (latest["id"],)) if latest else None
-    approved = bool(review and review["decision"] == "approved")
-    result = json.loads(latest["result"]) if latest and latest["result"] else {}
+    result = workflow.candidate_summary(latest["id"], json.loads(latest["result"])) if latest and latest["result"] else {}
+    approved = bool(result.get("finalized"))
+    publication = result.get("publication")
+    release = workflow.current_release(latest["id"]) if approved else None
+    if approved and not release:
+        workflow.sync_release(latest["id"])
+        release = workflow.current_release(latest["id"])
+    plan = workflow.ensure_learning_plan(release["id"]) if release else None
     topics = result.get("topics", {}) if isinstance(result, dict) else {}
     review_status = (review["decision"] if review else
                      ((result.get("review_status") if isinstance(result, dict) else None) or "pending_review"))
@@ -3554,7 +3556,7 @@ def candidate_learning_dashboard(user=Depends(current_user)):
                  or skill_id.replace("_", " ").title())
         if score is None:
             status = "pending_review" if skill_id in topics else "not_assessed"
-            is_gap = True
+            is_gap = False
         elif float(score) < 60:
             status = "below"
             is_gap = True
@@ -3571,16 +3573,19 @@ def candidate_learning_dashboard(user=Depends(current_user)):
             gaps.append(skill_id)
     gap_details = [item for item in performance if item["is_gap"]]
 
+    resource_ids = [r["id"] for r in plan["resources"]] if plan else []
     resources = allr("""SELECT r.*,p.status AS progress_status,p.started_at,p.completed_at
-                        FROM learning_resources r LEFT JOIN learning_progress p
-                        ON p.resource_id=r.id AND p.user_id=?
-                        WHERE r.verification_status='verified' AND r.topic IN (%s)
-                        ORDER BY r.topic,r.level,r.title""" % (",".join("?" for _ in gaps) if gaps else "''"), (user["id"], *gaps))
+                         FROM learning_resources r LEFT JOIN learning_progress p
+                         ON p.resource_id=r.id AND p.user_id=?
+                         WHERE r.verification_status='verified' AND r.id IN (%s)
+                         ORDER BY r.topic,r.level,r.title""" % (",".join("?" for _ in resource_ids) if resource_ids else "''"), (user["id"], *resource_ids))
+    source_map = {r["id"]: r for r in plan["resources"]} if plan else {}
+    resource_items = [{**dict(r), "reason": source_map[r["id"]]["reason"], "citation_id": str(r["id"])} for r in resources]
     attempts = allr("SELECT id,kind,status,started,finished,result FROM attempts WHERE user_id=? ORDER BY started DESC LIMIT 30", (user["id"],))
     policy = _retake_policy()
     recent = [a for a in attempts if a["status"] == "done" and a["finished"] and a["finished"] > time.time()-90*86400]
     last = latest
-    awaiting_review = bool(last and not review)
+    awaiting_review = bool(last and not approved and (not review or review["decision"] != "invalidated"))
     cooldown_until = (last["finished"] + int(policy["cooldown_hours"])*3600) if last else None
     balance = _learning_balance(user["id"])
     cost = int(policy["credits_per_attempt"])
@@ -3591,7 +3596,7 @@ def candidate_learning_dashboard(user=Depends(current_user)):
     progress_counts = {r["status"]: r["count"] for r in progress}
     history = []
     for a in attempts:
-        attempt_result = json.loads(a["result"]) if a["result"] else {}
+        attempt_result = workflow.candidate_summary(a["id"], json.loads(a["result"])) if a["result"] else {}
         ledger = one("SELECT delta,created FROM billing_credit_ledger WHERE user_id=? AND source_ref=? AND entry_type='retake_consumption' LIMIT 1", (user["id"], a["id"]))
         history.append({"id":a["id"],"kind":a["kind"],"status":a["status"],"started":a["started"],"finished":a["finished"],
                         "score":attempt_result.get("overall"),"credit_consumed":abs(int(ledger["delta"])) if ledger else 0,
@@ -3608,14 +3613,20 @@ def candidate_learning_dashboard(user=Depends(current_user)):
             "approved": approved, "reviewed_at": review["reviewed_at"] if review else None,
             "review_reason": review["reason"] if review else None,
             "section_scores": result.get("section_scores"),
-            "scoring_version": result.get("scoring_version"),
+             "scoring_version": result.get("scoring_version"),
+            "publication": publication, "honesty": result.get("honesty"),
+            "objective_summary": result.get("objective_summary"),
         }
     return {"based_on":latest["id"] if latest else None,"gaps":gaps,
             "gap_labels":{skill_id: TAXONOMY.get(skill_id, {}).get("name", skill_id.replace("_", " ").title()) for skill_id in gaps},
             "gap_details": gap_details,
             "performance": performance,
             "profile_skills":[{"id":skill_id,"name":TAXONOMY.get(skill_id,{}).get("name",skill_id)} for skill_id in dict.fromkeys(profile_ids)],
-            "resources":[dict(r) for r in resources],
+            "resources": resource_items,
+            "publication": publication, "learning_plan": {k: v for k, v in (plan or {}).items() if k != "resources"} if plan else None,
+            "release_history": [{"id": row["id"], "attempt_id": row["attempt_id"], "created": row["created"],
+                                 "overall": json.loads(row["result_json"]).get("overall"), "honesty_score": json.loads(row["honesty_json"]).get("score")}
+                                for row in allr("SELECT id,attempt_id,created,result_json,honesty_json FROM assessment_releases WHERE user_id=? ORDER BY created DESC LIMIT 30", (user["id"],))],
             "result_summary": result_summary,
             "approved": approved,
             "review_status": review_status,
@@ -3635,6 +3646,43 @@ class LearningProgressInput(BaseModel):
     status: str
     helpful: Optional[bool] = None
     comment: str = Field(default="", max_length=1000)
+
+
+@router.post("/api/learning/plan/explain")
+def explain_candidate_learning_plan(user=Depends(current_user)):
+    require_role(user, "candidate")
+    import assessment_workflow as workflow
+    import ai_providers as AIP
+    latest = one("SELECT id FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC LIMIT 1", (user["id"],))
+    release = workflow.current_release(latest["id"]) if latest else None
+    if not release:
+        raise HTTPException(409, "learning_requires_academic_and_honesty_approval")
+    plan = workflow.ensure_learning_plan(release["id"])
+    if plan.get("ai_advice"):
+        return {"status": "available", "advice": plan["ai_advice"], "plan_id": plan["id"]}
+    if not AIP.any_provider_configured():
+        return {"status": "not_configured", "message": "AI study explanations are not configured. Your reviewed, retrieval-grounded courses are still available."}
+    active_ids = {row["id"] for row in allr("SELECT id FROM learning_resources WHERE verification_status='verified'")}
+    resources = [{key: resource.get(key) for key in ("id", "topic", "title", "provider", "level")} for resource in plan["resources"] if resource["id"] in active_ids][:9]
+    if not resources:
+        return {"status": "no_resources", "message": "No approved courses were retrieved for this plan."}
+    recent_requests = one("SELECT COUNT(*) AS n FROM audit WHERE actor=? AND action='learning_advice_requested' AND ts>?", (user["id"], time.time() - 1800))
+    if recent_requests["n"] >= 3:
+        raise HTTPException(429, "Please wait before requesting more AI explanations. The reviewed course recommendations remain available.")
+    audit(user["id"], "learning_advice_requested", plan["id"])
+    try:
+        advice = AIP.explain_learning_resources({"gaps": [{"topic": gap["skill"], "score": gap["score"]} for gap in plan["gaps"]], "resources": resources})
+    except AIP.AIExtractionError as exc:
+        return {"status": "unavailable", "message": str(exc)}
+    # Never attach a late provider response to a changed/withdrawn result.
+    current = workflow.current_release(latest["id"])
+    if not current or current["id"] != release["id"]:
+        raise HTTPException(409, "The result changed while advice was being prepared. Refresh the learning plan.")
+    payload = {key: value for key, value in plan.items() if key != "id"}
+    payload["ai_advice"] = {**advice, "created": time.time(), "advisory": True}
+    run("UPDATE assessment_learning_plans SET payload=? WHERE id=? AND user_id=?", (json.dumps(payload), plan["id"], user["id"]))
+    audit(user["id"], "learning_advice_generated", plan["id"])
+    return {"status": "available", "advice": payload["ai_advice"], "plan_id": plan["id"]}
 
 class LearningFeedbackInput(BaseModel):
     helpful: bool

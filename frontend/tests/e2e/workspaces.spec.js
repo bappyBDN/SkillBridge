@@ -174,3 +174,39 @@ test("failed admin CV load displays an actionable error", async ({ page }) => {
   await expect(page.getByRole("alert")).toContainText("CV temporarily unavailable");
   await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
 });
+
+test("admin can edit draft marks and approve academics without prematurely publishing", async ({ page }) => {
+  const { errors } = await workspace(page, "admin");
+  const evaluation = { question_id: "explain-1", status: "pending_approval", max_marks: 2, ai_marks: 1, confidence: 0.6, method: "stored-rubric", components: {}, keywords: {}, flags: [], rationale: "Reference evidence requires human review." };
+  const report = { id: "review-1", candidate_name: "Sadia Rahman", email: "sadia@example.test", kind: "pre", result: { overall: 50, topics: { python: { score: 50, level: "Intermediate", n: 1 } } },
+    publication: { stage: "evaluation_pending", ready: false, pending_evaluations: 1, academic_status: "pending", honesty_status: "pending" },
+    evaluation_summary: { pending_admin_approval: 1 }, evaluations: [evaluation], answer_evidence_complete: true,
+    answer_evidence: [{ number: 1, question_id: "explain-1", question: "Explain input validation.", topic: "Python", type: "Explanation", candidate_answer: "Validate input types.", max_marks: 2, evaluation }] };
+  let savedMark = null;
+  let approved = null;
+  await page.route("**/api/admin/assessment-reviews", (route) => route.fulfill({ json: { items: [report] } }));
+  await page.route("**/api/admin/attempts/review-1/evaluations/explain-1", (route) => {
+    savedMark = route.request().postDataJSON();
+    Object.assign(evaluation, savedMark, { final_marks: savedMark.marks });
+    report.result.overall = 75;
+    return route.fulfill({ json: evaluation });
+  });
+  await page.route("**/api/admin/attempts/review-1/review", (route) => {
+    approved = route.request().postDataJSON();
+    return route.fulfill({ json: { decision: "approved", publication: { stage: "honesty_review", ready: false }, passport_id: null, learning_path_updated: false } });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Assessment reviews", exact: true }).click();
+  await page.getByRole("button", { name: "View report", exact: true }).click();
+  const modal = page.locator(".ad-report-modal");
+  await modal.getByLabel(/Approved marks/).fill("1.5");
+  await modal.getByLabel("Administrator note (reason for the mark)").fill("Human reviewed partial credit.");
+  await modal.getByRole("button", { name: "Save & approve this mark", exact: true }).click();
+  await expect.poll(() => savedMark?.marks).toBe(1.5);
+  await modal.getByRole("button", { name: "Approve academic marks", exact: true }).click();
+  await page.getByLabel("Decision reason").fill("All academic evidence reviewed and approved.");
+  await page.getByRole("button", { name: "Confirm decision", exact: true }).click();
+  await expect.poll(() => approved?.evaluations?.[0]?.marks).toBe(1.5);
+  await expect(page.getByText("Academic marks approved. Learning and the passport remain locked until honesty approval.")).toBeVisible();
+  expect(errors).toEqual([]);
+});

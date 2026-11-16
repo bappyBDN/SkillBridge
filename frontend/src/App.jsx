@@ -7,6 +7,8 @@ import SecurityPanel from "./SecurityPanel.jsx";
 import { useConsoleT } from "./consoleI18n.js";
 import { CvPreview, WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./WorkspaceUI.jsx";
 import TeamInvitations from "./TeamInvitations.jsx";
+import AssessmentStatus from "./AssessmentStatus.jsx";
+import SkillCredential from "./SkillCredential.jsx";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
@@ -1448,6 +1450,7 @@ function Gap({ st, onStart, refreshKey, actionLabel }) {
   return (
     <section>
       <h2>{t("gapTitle")}</h2>
+      <AssessmentStatus publication={journey?.latest_result?.publication} objective={journey?.latest_result?.objective_summary} />
       {journey?.latest_result && (
         <div
           className={
@@ -1466,7 +1469,7 @@ function Gap({ st, onStart, refreshKey, actionLabel }) {
             <p>
               {journey.approved
                 ? "Your learning path is verified and your Skill Passport was created automatically."
-                : "Start learning now. The verified path and Skill Passport update automatically after a reviewer approves the result."}
+                : "Personalized learning and the Skill Passport unlock after the response marks and honesty report are both approved."}
             </p>
             {journey.latest_result.section_scores && (
               <small className="learn-note">
@@ -3036,6 +3039,12 @@ function Result({ aid, next, nextLabel }) {
   useEffect(() => {
     api(`/attempts/${aid}/result`).then(setR).catch(setErr);
   }, [aid]);
+  const waitingForResultReview = Boolean(r && !r.publication?.ready && r.publication?.stage !== "invalidated");
+  useEffect(() => {
+    if (!waitingForResultReview) return;
+    const timer = setInterval(() => api(`/attempts/${aid}/result`).then(setR).catch(setErr), 15000);
+    return () => clearInterval(timer);
+  }, [aid, waitingForResultReview]);
   if (err) return <Err e={err} />;
   if (!r) return <p>{t("loading")}</p>;
   const sendAppeal = async () => {
@@ -3049,6 +3058,7 @@ function Result({ aid, next, nextLabel }) {
   return (
     <section>
       <h2>{t("resultTitle")}</h2>
+      <AssessmentStatus publication={r.publication} objective={r.objective_summary} onRefresh={() => api(`/attempts/${aid}/result`).then(setR).catch(setErr)} />
       <div className="card result">
         <div className="bignum">
           <span>{r.overall == null ? "Pending" : r.overall}</span>
@@ -3101,7 +3111,7 @@ function Result({ aid, next, nextLabel }) {
           receive the 60% fundamentals / 40% CV development scorecard.
         </p>
       )}
-      {r.review_status === "approved" && (
+      {r.publication?.ready && (
         <p className="success-note">
           Human-reviewed and approved. Your verified learning path is updated
           and a Skill Passport has been issued automatically.
@@ -3121,8 +3131,8 @@ function Result({ aid, next, nextLabel }) {
       )}
       {r.manual_review_required && (
         <p className="note">
-          This result is awaiting human review. You can start learning now; the
-          verified path and Skill Passport update automatically after approval.
+          Explanation, coding and scenario responses have stored-rubric drafts for human review.
+          Courses and the Skill Passport remain locked until academic and honesty approval are complete.
         </p>
       )}
       <div className="card">
@@ -3217,7 +3227,7 @@ function Result({ aid, next, nextLabel }) {
       )}
       <div className="card quiet">
         <p>{t("trustNote")}</p>
-        {r.trust_reasons.length > 0 && (
+        {(r.trust_reasons || []).length > 0 && (
           <ul>
             {r.trust_reasons.map((x) => (
               <li key={x.key}>
@@ -3383,7 +3393,7 @@ function AssessmentRecords({ attempts, onRefresh }) {
         </button>)}
       </nav>
       {!visibleRecords.length ? <div className="assessment-record-empty"><span aria-hidden="true">◷</span><h2>{records.length ? t("noMatchingAssessments") : t("noAssessmentRecords")}</h2><p>{records.length ? t("changeAssessmentFilter") : t("assessmentRecordsHelp")}</p></div> : visibleRecords.map((attempt) => {
-        const status = attempt.review_decision || "pending";
+        const status = attempt.review_decision === "approved" && !attempt.finalized ? "pending" : attempt.review_decision || "pending";
         const label = status === "pending" ? t("assessmentReview_pending") : t(`assessmentReview_${status}`);
         return (
           <article className={`assessment-record-card assessment-record-${status}`} key={attempt.id}>
@@ -4400,6 +4410,7 @@ function Learn({ onNext }) {
   const [data, setData] = useState(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState("");
+  const [adviceStatus, setAdviceStatus] = useState("");
   const load = async () => {
     try {
       setData(await api("/learning/dashboard"));
@@ -4411,6 +4422,21 @@ function Learn({ onNext }) {
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    if (!data?.based_on || data.approved || data.publication?.stage === "invalidated") return;
+    const timer = setInterval(load, 15000);
+    return () => clearInterval(timer);
+  }, [data?.based_on, data?.approved, data?.publication?.stage]);
+  const explainPlan = async () => {
+    setBusy("advice");
+    setAdviceStatus("");
+    try {
+      const response = await api("/learning/plan/explain", { method: "POST" });
+      setAdviceStatus(response.message || "AI study guidance saved. Course sources and approved scores have not changed.");
+      if (response.status === "available") await load();
+    } catch (e) { setAdviceStatus(e.message || "Could not prepare study guidance."); }
+    finally { setBusy(""); }
+  };
   const update = async (resource, status) => {
     setBusy(resource.id);
     try {
@@ -4455,14 +4481,13 @@ function Learn({ onNext }) {
           <span className="learn-kicker">YOUR PERSONAL DEVELOPMENT PLAN</span>
           <h2>Turn skill gaps into progress.</h2>
           <p>
-            Your learning path is built from your latest exam performance,
-            including fundamental and CV-based skills. When a reviewer approves
-            the result, the path is marked verified and a Skill Passport is
-            issued automatically.
+            Your learning path retrieves reviewed courses from your approved topic scores.
+            Academic and honesty approval are both required. Every plan is saved against a result revision.
           </p>
         </div>
         <div className="learn-hero-mark">↗</div>
       </div>
+      <AssessmentStatus publication={data.publication} objective={data.result_summary?.objective_summary} onRefresh={load} />
       {error && (
         <div className="learn-alert" role="alert">
           {error}
@@ -4486,7 +4511,7 @@ function Learn({ onNext }) {
             <p>
               {data.approved
                 ? "The learning path below is now verified and your Skill Passport was created automatically."
-                : "You can start learning immediately. The verified path and Skill Passport update automatically after a reviewer approves the result."}
+                : "MCQ-only feedback is provisional. Recommendations appear after all academic marks and the honesty report are approved."}
             </p>
             {data.result_summary.section_scores && (
               <small className="learn-note">
@@ -4537,7 +4562,7 @@ function Learn({ onNext }) {
       <div className="learn-stats">
         <article>
           <small>Topics to strengthen</small>
-          <strong>{data.gaps.length}</strong>
+          <strong>{data.based_on && !data.approved ? "Pending" : data.gaps.length}</strong>
           <span>
             {data.result_summary?.overall == null
               ? "From your latest result"
@@ -4575,16 +4600,19 @@ function Learn({ onNext }) {
         <button className="btn ghost sm" onClick={load}>
           Refresh path
         </button>
+        {data.approved && data.resources.length > 0 && <button type="button" className="btn sm" onClick={explainPlan} disabled={Boolean(busy)}>{busy === "advice" ? "Preparing guidance…" : "Explain my study plan with AI"}</button>}
       </div>
+      {adviceStatus && <p className="note" role="status">{adviceStatus}</p>}
+      {data.learning_plan?.ai_advice && <section className="card learning-ai-advice"><h3>Source-grounded study guidance</h3><p className="muted">AI explanation · {data.learning_plan.ai_advice.provider}/{data.learning_plan.ai_advice.model} · does not change scores or course sources.</p>{data.learning_plan.ai_advice.recommendations.map((item) => { const source = data.resources.find((resource) => String(resource.id) === item.resource_id); return source ? <p key={item.resource_id}><strong>{source.title}</strong> — {item.reason} <a href={source.url} target="_blank" rel="noreferrer">[Source {item.resource_id}]</a></p> : null; })}</section>}
       {!topics.length ? (
         <div className="learn-empty">
           <b>
-            {data.based_on
+            {data.based_on && !data.approved ? "Your personalized plan is awaiting both approvals." : data.based_on
               ? "Your current skill gaps are covered."
               : "Start with a skill assessment."}
           </b>
           <p>
-            {data.gaps.length
+            {data.based_on && !data.approved ? "The system will not recommend courses from an incomplete or unapproved score. Use Refresh status to check the academic and honesty reviews." : data.gaps.length
               ? "There are skill gaps, but no curator-verified resources are currently available for them. Check back after the catalogue is reviewed."
               : data.based_on
                 ? "Your latest result did not identify any priority gaps."
@@ -4619,6 +4647,7 @@ function Learn({ onNext }) {
                     <p>
                       {r.provider} · {r.language.toUpperCase()}
                     </p>
+                    {r.reason && <p className="learn-note">{r.reason}</p>}
                     <div className="learn-resource-meta">
                       <span>◷ {r.estimated_minutes} min</span>
                       <span>✓ Verified</span>
@@ -4816,6 +4845,7 @@ function Learn({ onNext }) {
           </p>
         )}
       </section>
+      {data.release_history?.length > 0 && <section className="learning-release-history"><h3>Published result revisions</h3><p className="muted">Previous approved scores remain in the record when an administrator publishes a revised result.</p><ul>{data.release_history.map((release) => <li key={release.id}><span>{fmt(release.created)} · revision {release.id.slice(0, 8)}</span><strong>Technical {release.overall ?? "—"}% · honesty {release.honesty_score ?? "—"}/100</strong></li>)}</ul></section>}
     </section>
   );
 }
@@ -4823,7 +4853,7 @@ function Learn({ onNext }) {
 /* ---------- passport ---------- */
 function Passport({ st, refresh }) {
   const t = useT();
-  const eligible = st.attempts.filter((attempt) => attempt.status === "done" && attempt.review_decision === "approved")
+  const eligible = st.attempts.filter((attempt) => attempt.status === "done" && attempt.finalized === true)
     .sort((a, b) => (b.reviewed_at || 0) - (a.reviewed_at || 0));
   const [selectedId, setSelectedId] = useState(eligible[0]?.id || "");
   const [name, setName] = useState(false);
@@ -4854,16 +4884,17 @@ function Passport({ st, refresh }) {
   return (
     <section>
       <h2>{t("passportTitle")}</h2>
+      <AssessmentStatus publication={journey?.latest_result?.publication} objective={journey?.latest_result?.objective_summary} onRefresh={refresh} />
       {autoPassports.length > 0 && (
         <p className="success-note">
           A verified Skill Passport was created automatically when a reviewer
-          approved your assessment result. You can share or revoke it below.
+          approved your assessment marks and honesty report. You can share or revoke it below.
         </p>
       )}
       {journey?.latest_result && !journey.approved && (
         <p className="note">
           Your latest result is awaiting human review. A verified Skill Passport
-          will be created automatically after the result is approved.
+          will be created after both academic and honesty approval.
         </p>
       )}
       <div className="card">
@@ -4880,6 +4911,7 @@ function Passport({ st, refresh }) {
             <div className="passport-reviewed-summary"><span>{t("reviewedResult")}</span><strong>{selected.overall ?? "—"}<small> / 100</small></strong></div>
             <p>{t("assessmentReview_approved")}{selected.reviewed_at ? ` · ${new Date(Number(selected.reviewed_at) * 1000).toLocaleDateString()}` : ""}</p>
           </div>}
+          {selected?.honesty && <p className="note">Approved honesty score: <strong>{selected.honesty.score}/100</strong> · advisory and separate from technical marks.</p>}
           <p className="passport-skill-note">{t("allReviewedSkillsIncluded")}</p>
           <ul className="gaps passport-skills">{Object.entries(topics).map(([key, topic]) => (
             <li key={key}>
@@ -4971,50 +5003,13 @@ function PublicPassport({ id }) {
   if (!d) return <main className="wrap"><p>{t("loading")}</p></main>;
   if (d.review_required) return <main className="wrap"><p className="note">{t("publicPassportReviewRequired")}</p></main>;
   if (d.revoked) return <main className="wrap"><p className="note">{t("passRevoked")}</p></main>;
-  const p = d.passport;
-  const totalQuestions = p.skills.reduce((total, skill) => total + (skill.questions || 0), 0);
-  return (
-    <main className="wrap public-passport-page">
-      <article className="card passport public-passport">
-        <header className="public-passport-header">
-          <div className="public-passport-brand"><span className="public-passport-mark">S</span><span>{t("brand")}<small>{t("passportCredential")}</small></span></div>
-          <span className={"passport-signature " + (d.signature_valid ? "valid" : "invalid")}><span aria-hidden="true">{d.signature_valid ? "✓" : "!"}</span>{d.signature_valid ? t("sigOk") : t("sigBad")}</span>
-        </header>
-        {d.expired && <p className="err">{t("passExpired")}</p>}
-        <section className="public-passport-hero">
-          <div><span className="public-passport-kicker">{t("reviewedCredential")}</span><h1>{p.holder}</h1><p>{t("assessmentReview_approved")}{p.assessment?.reviewed_at ? ` · ${new Date(Number(p.assessment.reviewed_at) * 1000).toLocaleDateString()}` : ""}</p></div>
-          {p.assessment && <div className="public-passport-overall"><span>{t("overall")}</span><strong>{p.assessment.overall}<small>/100</small></strong><span>{t("overallReviewedScore")}</span></div>}
-        </section>
-        <div className="public-passport-meta">
-          <div><span>{t("issued")}</span><strong>{p.issued}</strong></div>
-          <div><span>{t("expires")}</span><strong>{p.expires}</strong></div>
-          <div><span>{t("assessedSkills")}</span><strong>{p.skills.length}</strong></div>
-          <div><span>{t("questionsAssessed")}</span><strong>{totalQuestions}</strong></div>
-        </div>
-        <section className="public-passport-skills">
-          <div className="public-passport-section-heading"><div><h2>{t("verified")}</h2><p>{t("individualSkillsReviewed")}</p></div><span>{p.skills.length} {t("skillsLabel")}</span></div>
-          <ul className="gaps">
-          {p.skills.map((s) => (
-            <li key={s.skill} className="public-skill-card">
-              <div className="public-skill-card-heading"><span className="public-skill-icon" aria-hidden="true">{s.name.slice(0, 1).toUpperCase()}</span><div className="public-skill-title"><strong>{s.name}</strong><span>{t("levels")[s.level]}</span></div><span className="public-skill-assessed"><span aria-hidden="true">✓</span>{t("skillReviewed")}</span></div>
-              <div className="public-skill-score"><strong>{s.score}<small>%</small></strong><span>{s.questions} {t("questionsAssessed")}</span></div>
-              <Bar score={s.score} />
-              <div className="public-skill-card-footer"><span>{t("date")}: {s.date}</span></div>
-            </li>
-          ))}
-          </ul>
-        </section>
-        {p.uplift && <p className="note">{t("upliftTitle")}: {p.uplift.pre}% → {p.uplift.post}% ({p.uplift.delta >= 0 ? "+" : ""}{p.uplift.delta})</p>}
-        <footer className="public-passport-footer"><span>{p.issuer} · {t("mockLabel")}</span><a href="#/" className="link">{t("brand")}</a></footer>
-      </article>
-    </main>
-  );
+  return <main className="credential-page"><SkillCredential passport={d.passport} verification={d} /></main>;
 }
 
 function CandidateAssessmentResults({ attempts }) {
   const done = (attempts || []).filter((a) => a.status === "done");
   const approved = done
-    .filter((a) => a.review_decision === "approved")
+    .filter((a) => a.finalized === true)
     .sort((a, b) => (b.finished || 0) - (a.finished || 0));
   const latest = approved[0];
   const other = done
@@ -5031,7 +5026,7 @@ function CandidateAssessmentResults({ attempts }) {
   const label = (a) =>
     a.kind === "pre" ? "Initial assessment" : a.kind === "post" ? "Reassessment" : "Assessment";
   const status = (a) =>
-    a.review_decision === "approved"
+    a.finalized === true
       ? "Valid exam"
       : a.review_decision === "invalidated"
         ? "Invalidated"
@@ -5042,7 +5037,7 @@ function CandidateAssessmentResults({ attempts }) {
         <div>
           <span className="eyebrow">VERIFIED ASSESSMENT RESULTS</span>
           <h2>Assessment results</h2>
-          <p>Only an administrator-approved assessment is treated as valid.</p>
+          <p>Academic marks and the honesty report must both be approved before a result is verified.</p>
         </div>
       </div>
       {latest ? (
@@ -5614,6 +5609,13 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   const t = useT();
   const done = (st?.attempts || []).filter((a) => a.status === "done");
   const activeAttempt = (st?.attempts || []).find((a) => a.status === "active");
+  const awaitingPublication = (st?.attempts || []).some((attempt) => attempt.status === "done" && attempt.finalized === false && attempt.review_decision !== "invalidated");
+  const hasActiveAttempt = Boolean(activeAttempt);
+  useEffect(() => {
+    if (!awaitingPublication || hasActiveAttempt) return;
+    const timer = setInterval(() => { if (!document.body.classList.contains("exam-live")) refresh(); }, 20000);
+    return () => clearInterval(timer);
+  }, [awaitingPublication, hasActiveAttempt, refresh]);
   const latest = done[0];
   const hasSkills = Boolean(st.confirmed?.length);
 
@@ -6594,14 +6596,14 @@ function AdminConsole({ onLogout }) {
   const syncEvaluationEdits = (report) => {
     const next = {};
     (report?.answer_evidence || []).forEach((q) => {
-      if (!q.evaluation) return;
+      if (!q.evaluation && !q.objective) return;
       next[q.question_id] = {
         marks:
-          q.evaluation.final_marks != null
+          !q.evaluation ? (q.awarded_marks ?? 0) : q.evaluation.final_marks != null
             ? q.evaluation.final_marks
             : q.evaluation.ai_marks,
-        admin_note: q.evaluation.admin_note || "",
-        additional_info: q.evaluation.additional_info || "",
+        admin_note: q.evaluation?.admin_note || "",
+        additional_info: q.evaluation?.additional_info || "",
       };
     });
     setReportEvaluations(next);
@@ -6655,21 +6657,6 @@ function AdminConsole({ onLogout }) {
     setSelectedReport(report);
     setEvaluationError("");
     syncEvaluationEdits(report);
-    const hasSubjective = (report.answer_evidence || []).some(
-      (q) => !["mcq", "multiple choice"].includes(String(q.type).toLowerCase()),
-    );
-    const alreadyEnriched = (report.evaluations || []).some(
-      (e) => e.llm_provider,
-    );
-    if (
-      hasSubjective &&
-      !alreadyEnriched &&
-      ["pending_human_review", "auto_graded", undefined].includes(
-        report.result?.review_status,
-      )
-    ) {
-      runEvaluation(report);
-    }
   };
   const saveEvaluation = async (report, questionId) => {
     const edit = reportEvaluations[questionId];
@@ -6710,9 +6697,11 @@ function AdminConsole({ onLogout }) {
           e.question_id === questionId ? saved : e,
         ),
       };
-      setSelectedReport(merged);
-      syncEvaluationEdits(merged);
-      flash("Evaluation mark saved and approved for this answer.");
+      const queue = await api("/admin/assessment-reviews");
+      const currentReport = queue.items.find((item) => item.id === report.id) || merged;
+      setSelectedReport(currentReport);
+      syncEvaluationEdits(currentReport);
+      flash("Mark saved. Approve the revised academic result to publish it; previous credentials are withdrawn when marks change.");
       await load();
     } catch (x) {
       setEvaluationError(x.message || "Could not save this evaluation.");
@@ -6762,7 +6751,7 @@ function AdminConsole({ onLogout }) {
         },
       );
       setIntegrityDetail((current) =>
-        current ? { ...current, honesty: next.honesty } : current,
+        current ? { ...current, honesty: next.honesty, publication: next.publication } : current,
       );
       setHonestyDraft({
         score: String(next.honesty.score),
@@ -6807,8 +6796,9 @@ function AdminConsole({ onLogout }) {
       }
       if (action.kind === "assessment") {
         body.decision = action.decision;
+        if (action.evaluations) body.evaluations = action.evaluations;
         if (selectedReport?.id === action.id) {
-          body.evaluations = Object.entries(reportEvaluations).map(
+          body.evaluations = Object.entries(reportEvaluations).filter(([questionId]) => selectedReport.evaluations?.some((evaluation) => evaluation.question_id === questionId)).map(
             ([question_id, edit]) => ({
               question_id,
               marks: edit.marks === "" ? null : Number(edit.marks),
@@ -6850,7 +6840,7 @@ function AdminConsole({ onLogout }) {
           ? "Result approved. The learning path is now verified and a Skill Passport was created automatically."
           : actionResult?.learning_path_updated
             ? "Result approved. The candidate learning path has been updated."
-            : "Decision saved and recorded in the audit trail.",
+             : actionResult?.publication?.stage === "honesty_review" ? "Academic marks approved. Learning and the passport remain locked until honesty approval." : "Decision saved and recorded in the audit trail.",
       );
       await load();
     } catch (x) {
@@ -8040,11 +8030,11 @@ function AdminConsole({ onLogout }) {
               <div className="ad-info-banner">
                 MCQs and reference-answer SQL are graded deterministically.
                 Descriptive, scenario, coding and analytical answers receive an
-                AI-assisted hybrid draft (keyword coverage + reference similarity
-                + optional LLM opinion) with partial marks. Every draft waits for
+                stored-rubric draft (keyword coverage + reference similarity)
+                with partial marks. Every draft waits for
                 your approval and can be edited before it affects the score.
-                Approving a result updates the candidate's verified learning path
-                and issues a Skill Passport automatically. Invalidating or
+                Academic and honesty approval together publish the candidate's learning path
+                and Skill Passport. Invalidating or
                 requesting more information revokes that passport. Older attempts
                 may not contain saved raw answers.
               </div>
@@ -8083,7 +8073,7 @@ function AdminConsole({ onLogout }) {
                         <small>/ 100</small>
                       </strong>
                     </td>
-                    <td>{pill(x.review_decision || "pending_review")}</td>
+                    <td>{pill(x.publication?.stage || x.review_decision || "pending_review")}</td>
                     <td>
                       <div className="ad-row-actions">
                         <button onClick={() => openReport(x)}>
@@ -8095,7 +8085,7 @@ function AdminConsole({ onLogout }) {
                             openAction("assessment", x.id, "approved")
                           }
                         >
-                          Confirm valid
+                          Approve academic marks
                         </button>
                         <button
                           onClick={() =>
@@ -10313,7 +10303,7 @@ function AdminConsole({ onLogout }) {
             </header>
             <div className="ad-report-summary">
               <div>
-                <small>Overall score</small>
+                <small>Current academic score · provisional until release</small>
                 <strong>
                   {selectedReport.result?.overall ?? "—"}
                   <small>/100</small>
@@ -10328,13 +10318,14 @@ function AdminConsole({ onLogout }) {
                 <strong>{selectedReport.result?.trust ?? "—"}</strong>
               </div>
             </div>
+            <AssessmentStatus publication={selectedReport.publication} objective={selectedReport.result?.objective_summary} />
+            <button type="button" className="btn ghost sm" onClick={() => { const id = selectedReport.id; setSelectedReport(null); openIntegrityDetail(id); }}>Review honesty report and score →</button>
             <div className="ad-info-banner">
               {selectedReport.evaluation_method ||
                 "Automated evaluation method unavailable."}{" "}
-              AI-assisted drafts are advisory evidence. The score changes only
+              Stored-rubric drafts are advisory evidence. The score changes only
               after you approve or edit each mark.
-              {selectedReport.evaluation_summary?.llm_configured === false &&
-                " No LLM provider is configured, so the draft uses keyword coverage and reference similarity only."}
+              {" External AI scoring is disabled by project policy."}
             </div>
             <div className="ad-eval-toolbar">
               <button
@@ -10344,8 +10335,8 @@ function AdminConsole({ onLogout }) {
                 disabled={evaluationBusy}
               >
                 {evaluationBusy
-                  ? "Running hybrid evaluation…"
-                  : "Re-run keyword + similarity + LLM evaluation"}
+                  ? "Preparing stored-rubric drafts…"
+                  : "Re-run stored-rubric evaluation"}
               </button>
               <span>
                 {selectedReport.evaluation_summary?.pending_admin_approval ?? 0}{" "}
@@ -10421,7 +10412,7 @@ function AdminConsole({ onLogout }) {
                   {q.evaluation ? (
                     <div className="ad-eval-card">
                       <div className="ad-eval-head">
-                        <b>AI-assisted evaluation draft</b>
+                        <b>Stored-rubric evaluation draft</b>
                         <span
                           className={
                             "ad-eval-status " +
@@ -10446,14 +10437,13 @@ function AdminConsole({ onLogout }) {
                           confidence · {q.evaluation.method}
                           {q.evaluation.llm_model
                             ? ` · ${q.evaluation.llm_provider}/${q.evaluation.llm_model}`
-                            : " · LLM opinion unavailable"}
+                            : " · deterministic draft"}
                         </span>
                       </div>
                       <div className="ad-eval-bars">
                         {[
                           ["Keyword coverage", q.evaluation.components?.keyword],
                           ["Reference similarity", q.evaluation.components?.similarity],
-                          ["LLM judgement", q.evaluation.components?.llm],
                         ].map(([label, component]) => (
                           <div key={label}>
                             <span>{label}</span>
@@ -10563,6 +10553,8 @@ function AdminConsole({ onLogout }) {
                         </button>
                       </div>
                     </div>
+                  ) : q.objective ? (
+                    <div className="ad-eval-card"><p>Objective answer-key result: <strong>{q.awarded_marks ?? 0}/{q.max_marks ?? q.marks ?? 1}</strong>. An administrator may adjust marks within the allowed range with a recorded reason.</p><div className="ad-eval-edit"><label>Adjusted marks<input type="number" min="0" max={q.max_marks ?? q.marks ?? 1} step="0.25" value={reportEvaluations[q.question_id]?.marks ?? ""} onChange={(event) => setReportEvaluations((previous) => ({ ...previous, [q.question_id]: { ...previous[q.question_id], marks: event.target.value } }))} /></label><label>Reason for adjustment<textarea rows="2" value={reportEvaluations[q.question_id]?.admin_note || ""} onChange={(event) => setReportEvaluations((previous) => ({ ...previous, [q.question_id]: { ...previous[q.question_id], admin_note: event.target.value } }))} /></label><button type="button" className="ad-mini-primary" disabled={evaluationBusy} onClick={() => saveEvaluation(selectedReport, q.question_id)}>Save adjusted mark</button></div></div>
                   ) : (
                     <div className="ad-report-qmeta">
                       Evaluation:{" "}
@@ -10583,6 +10575,12 @@ function AdminConsole({ onLogout }) {
                 Use browser print dialog and choose “Save as PDF” for a
                 downloadable report.
               </span>
+              <button type="button" className="ad-mini-primary" disabled={evaluationBusy} onClick={() => {
+                const evaluations = Object.entries(reportEvaluations).filter(([questionId]) => selectedReport.evaluations?.some((evaluation) => evaluation.question_id === questionId)).map(([question_id, edit]) => ({ question_id, marks: edit.marks === "" ? null : Number(edit.marks), admin_note: edit.admin_note || "", additional_info: edit.additional_info || "", status: "approved" }));
+                setAction({ kind: "assessment", id: selectedReport.id, decision: "approved", evaluations });
+                setReason("");
+                setSelectedReport(null);
+              }}>Approve academic marks</button>
               <button
                 className="ad-mini-primary"
                 onClick={() => printAssessmentReport(selectedReport)}

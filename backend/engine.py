@@ -548,6 +548,8 @@ def evaluate_descriptive_answer(answer, *, reference="", rubric="", question="",
     llm_view = _validate_llm_grading(llm, max_marks)
 
     flags = []
+    if not reference.strip() and not rubric.strip():
+        flags.append("missing_stored_rubric")
     if not answer.strip():
         flags.append("empty_answer")
     elif len(answer.split()) < 5:
@@ -645,16 +647,19 @@ def compute_result_scores(rows, fundamental_weight=0.6):
     cv_earned = cv_possible = 0.0
     for row in rows or []:
         awarded = row.get("awarded_marks")
-        if awarded is None:
-            continue
         marks = float(row.get("marks") or 1)
-        awarded = max(0.0, min(marks, float(awarded)))
         topic = row.get("topic_key") or "general"
         metric = topics.setdefault(topic, {
             "earned": 0.0, "possible": 0.0, "n": 0,
+            "pending": 0, "total_questions": 0,
             "label": row.get("topic") or topic,
             "section": "fundamental" if row.get("section") == "fundamental" else "cv",
         })
+        metric["total_questions"] += 1
+        if awarded is None:
+            metric["pending"] += 1
+            continue
+        awarded = max(0.0, min(marks, float(awarded)))
         metric["earned"] += awarded
         metric["possible"] += marks
         metric["n"] += 1
@@ -668,7 +673,9 @@ def compute_result_scores(rows, fundamental_weight=0.6):
     for topic, metric in topics.items():
         pct = round(100 * metric["earned"] / metric["possible"]) if metric["possible"] else None
         topic_scores[topic] = {
-            "score": pct, "level": level_of(pct or 0), "n": metric["n"],
+            "score": pct, "level": level_of(pct or 0) if pct is not None else None, "n": metric["n"],
+            "pending": metric["pending"], "total_questions": metric["total_questions"],
+            "complete": metric["pending"] == 0,
             "label": metric.get("label", topic), "section": metric.get("section", "cv"),
         }
     fundamental_pct = round(100 * fundamental_earned / fundamental_possible) if fundamental_possible else None
@@ -693,6 +700,23 @@ def compute_result_scores(rows, fundamental_weight=0.6):
     }
 
 # ---------- gap map + learning path ----------
+def retrieve_learning_plan(topic_scores, catalogue):
+    """Retrieve reviewed courses using approved topic scores, never invented URLs."""
+    resources, gaps = [], []
+    for topic, entry in sorted((topic_scores or {}).items()):
+        score = entry.get("score") if isinstance(entry, dict) else None
+        if score is None or not entry.get("complete", True) or score >= 60:
+            continue
+        target_level = 1 if score < 40 else 2
+        candidates = [r for r in catalogue if r.get("topic") == topic and r.get("verification_status") == "verified"]
+        candidates.sort(key=lambda r: (abs(int(r.get("level", 1)) - target_level), str(r.get("title", "")), str(r["id"])))
+        gaps.append({"skill": topic, "score": score, "name": entry.get("label") or TAXONOMY.get(topic, {}).get("name", topic.replace("_", " ").title()), "resource_count": min(3, len(candidates))})
+        for resource in candidates[:3]:
+            resources.append({**resource, "reason": f"Your approved {topic.replace('_', ' ')} score is {score}%. This reviewed resource matches the topic and recommended practice level.",
+                              "citation_id": str(resource["id"]), "based_on_score": score})
+    return {"gaps": gaps, "resources": resources,
+            "note": "Recommendations are retrieved from the human-reviewed catalogue. Missing coverage is reported, not fabricated."}
+
 def gap_map(topic_scores):
     rows = []
     for r in JOB["required"]:

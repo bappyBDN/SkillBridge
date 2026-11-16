@@ -163,11 +163,21 @@ def test_cv_pdf_is_stored_in_the_database_and_served_to_admin_and_company():
     assert client.get("/api/company/applications/cv-app-a", headers=other_headers).status_code == 404
     assert client.get("/api/company/applications/cv-app-a/cv", headers=other_headers).status_code == 404
 
-    # Once the candidate shares results, the same company also sees the score and passport.
+    # Sharing alone cannot publish an unreviewed result or a legacy unsigned passport.
     main.run("UPDATE applications SET results_shared=1 WHERE id=?", ("cv-app-a",))
     shared = client.get("/api/company/applications/cv-app-a", headers=applied_headers).json()
+    assert shared["assessment_history"][0]["score"] is None
+    assert shared["passport"] is None
+    approved = client.post("/api/admin/attempts/cv-share-attempt/review", headers=admin_headers,
+                           json={"decision": "approved", "reason": "Academic answer evidence reviewed."})
+    assert approved.status_code == 200, approved.text
+    honesty = client.post("/api/admin/integrity/attempts/cv-share-attempt/honesty", headers=admin_headers,
+                          json={"decision": "approved", "score": 91, "reason": "Integrity timeline reviewed by a human."})
+    assert honesty.status_code == 200, honesty.text
+    shared = client.get("/api/company/applications/cv-app-a", headers=applied_headers).json()
     assert shared["assessment_history"][0]["score"] == 82
-    assert shared["passport"]["pid"] == "cv-share-passport"
+    assert shared["assessment_history"][0]["honesty"]["score"] == 91
+    assert shared["passport"]["pid"] == honesty.json()["passport_id"]
 
 
 def test_admin_candidate_endpoint_requires_admin():

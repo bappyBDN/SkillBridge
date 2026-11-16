@@ -334,6 +334,8 @@ def init_db():
         run("ALTER TABLE passports ADD COLUMN source_attempt TEXT")
     import cv_store  # CV document + extraction-draft tables (imported here to avoid a circular import)
     cv_store.ensure_schema()
+    import assessment_workflow
+    assessment_workflow.ensure_schema()
 
 
 def one(sql, args=()):
@@ -928,6 +930,8 @@ USER_DATA_REGISTRY = (
     ("admin_staff_roles", "user_id", "admin_roles"),
     ("learning_progress", "user_id", "learning_progress"),
     ("learning_feedback", "user_id", "learning_feedback"),
+    ("assessment_releases", "user_id", "assessment_releases"),
+    ("assessment_learning_plans", "user_id", "assessment_learning_plans"),
     ("billing_credit_ledger", "user_id", "billing_credits"),
     ("company_members", "user_id", "company_membership"),
     ("applications", "candidate_id", "applications"),
@@ -1220,6 +1224,7 @@ def avatar_metadata(user_id):
 
 @app.get("/api/state")
 def state(u=Depends(current_user)):
+    import assessment_workflow as workflow
     prof = one("SELECT * FROM profiles WHERE user_id=?", (u["id"],))
     candidate_profile = one(
         "SELECT skills FROM candidate_profiles WHERE user_id=?", (u["id"],)
@@ -1241,10 +1246,13 @@ def state(u=Depends(current_user)):
             result = json.loads(a["result"]) if a["result"] else {}
         except Exception:
             result = {}
+        result = workflow.candidate_summary(a["id"], result)
         attempt_items.append({
             "id": a["id"], "kind": a["kind"], "status": a["status"],
             "overall": result.get("overall"), "level": result.get("level"),
             "trust": result.get("trust"), "date": result.get("date"),
+            "publication": result.get("publication"), "honesty": result.get("honesty"),
+            "finalized": result.get("finalized", False), "objective_summary": result.get("objective_summary"),
             "finished": a["finished"],
             "started": a["started"],
             "topics": result.get("topics", {}),
@@ -1253,21 +1261,16 @@ def state(u=Depends(current_user)):
             "appeal_decision": a["appeal_decision"], "appeal_reason": a["appeal_reason"],
             "appeal_decided_at": a["appeal_decided_at"],
         })
-    approved_attempt_ids = {
-        row["attempt_id"] for row in allr(
-            """SELECT r.attempt_id FROM attempts a
-               JOIN admin_attempt_reviews r ON r.attempt_id=a.id
-               WHERE a.user_id=? AND a.status='done' AND r.decision='approved'""",
-            (u["id"],),
-        )
-    }
+    approved_attempt_ids = {a["id"] for a in attempt_items if a["finalized"]}
     passport_items = []
     for p in pp:
         payload = json.loads(p["payload"])
         attempt_id = p["source_attempt"] or payload.get("assessment", {}).get("attempt_id") or payload.get("attempt_id")
         reviewed = bool(attempt_id and attempt_id in approved_attempt_ids)
+        release = workflow.current_release(attempt_id) if reviewed else None
+        reviewed = bool(release and payload.get("release_id") == release["id"])
         passport_items.append({
-            "id": p["id"], "created": p["created"], "revoked": bool(p["revoked"]),
+            "id": p["id"], "created": p["created"], "revoked": bool(p["revoked"]) or not reviewed,
             "reviewed": reviewed,
             "source_attempt": p["source_attempt"],
             "auto": bool(p["source_attempt"]),
@@ -3319,7 +3322,10 @@ def get_assessment_blueprint(blueprint_id: str, u=Depends(current_user)):
 # ------------------------------------------------------------------ job + gap
 def topic_scores(uid):
     a = latest_done(uid)
-    return json.loads(a["result"])["topics"] if a else {}
+    if not a:
+        return {}
+    import assessment_workflow as workflow
+    return workflow.candidate_summary(a["id"], json.loads(a["result"])).get("topics", {})
 
 
 def _score_for_topic(topics, skill_id):
@@ -3362,13 +3368,14 @@ def skill_journey(u=Depends(current_user)):
                 "taxonomy_ids": [skill_id],
             })
     attempts = latest_done(u["id"])
-    topics = json.loads(attempts["result"]).get("topics", {}) if attempts and attempts["result"] else {}
+    import assessment_workflow as workflow
+    result_data = workflow.candidate_summary(attempts["id"], json.loads(attempts["result"])) if attempts and attempts["result"] else {}
+    topics = result_data.get("topics", {})
     review = one("SELECT decision,reason,reviewed_at FROM admin_attempt_reviews WHERE attempt_id=?",
                  (attempts["id"],)) if attempts else None
-    approved = bool(review and review["decision"] == "approved")
+    approved = bool(result_data.get("finalized"))
     latest_result = None
     if attempts:
-        result_data = json.loads(attempts["result"]) if attempts["result"] else {}
         if not isinstance(result_data, dict):
             result_data = {}
         latest_result = {
@@ -3385,6 +3392,8 @@ def skill_journey(u=Depends(current_user)):
             "review_reason": review["reason"] if review else None,
             "section_scores": result_data.get("section_scores"),
             "scoring_version": result_data.get("scoring_version"),
+            "publication": result_data.get("publication"), "honesty": result_data.get("honesty"),
+            "objective_summary": result_data.get("objective_summary"),
         }
 
     import enterprise as admin_data
@@ -3489,7 +3498,8 @@ def job(u=Depends(current_user)):
     claimed = set(json.loads(prof["confirmed"])) if prof and prof["confirmed"] else set()
     latest = latest_done(u["id"])
     review = one("SELECT decision FROM admin_attempt_reviews WHERE attempt_id=?", (latest["id"],)) if latest else None
-    verified = bool(review and review["decision"] == "approved")
+    import assessment_workflow as workflow
+    verified = bool(latest and workflow.review_state(latest["id"])["ready"])
     review_status = review["decision"] if review else "pending_review"
     import enterprise as admin_data
     import graphrag as G
@@ -3798,7 +3808,9 @@ def recompute_attempt_scores(result, evaluations):
         if objective is None:
             objective = _question_is_objective(question_result)
         if objective:
-            awarded = question_result.get("awarded_marks")
+            evaluation = eval_map.get(qid) or {}
+            awarded = (evaluation["final_marks"] if evaluation.get("status") == "approved" and evaluation.get("final_marks") is not None
+                       else question_result.get("awarded_marks"))
             if awarded is None:
                 status = str(question_result.get("review_status", "")).lower()
                 awarded = marks if status == "correct" else 0.0 if status == "incorrect" else None
@@ -3809,6 +3821,10 @@ def recompute_attempt_scores(result, evaluations):
             else:
                 awarded = None
                 pending += 1
+        question_result["awarded_marks"] = awarded
+        if evaluation.get("status") == "approved":
+            question_result["evaluation_status"] = "approved"
+            question_result["review_status"] = "human_approved"
         rows.append({
             "topic_key": question_result.get("topic_key"),
             "topic": question_result.get("topic"),
@@ -3819,9 +3835,14 @@ def recompute_attempt_scores(result, evaluations):
     existing_summary = result.get("evaluation_summary") if isinstance(result.get("evaluation_summary"), dict) else {}
     scored = E.compute_result_scores(rows)
     result.update(scored)
+    objective_rows = [row for row, question in zip(rows, result.get("question_results", [])) if question.get("objective", _question_is_objective(question))]
+    mcq_rows = [row for row, question in zip(rows, result.get("question_results", [])) if str(question.get("question_type", "")).lower() in ("mcq", "multiple choice")]
+    result["objective_summary"] = {"score": E.compute_result_scores(objective_rows)["overall"], "questions": len(objective_rows),
+                                   "mcq_score": E.compute_result_scores(mcq_rows)["overall"], "mcq_questions": len(mcq_rows),
+                                   "provisional": True, "note": "Objective questions only. Not a final skill score."}
     result["manual_review_required"] = pending > 0
     result["evaluation_summary"] = {
-        "subjective_questions": len(eval_map),
+        "subjective_questions": sum(1 for q in result.get("question_results", []) if not q.get("objective", _question_is_objective(q))),
         "pending_admin_approval": pending,
         "approved_evaluations": sum(1 for e in (evaluations or []) if e.get("status") == "approved"),
         "proposed_marks": round(sum(float(e.get("ai_marks") or 0) for e in (evaluations or [])), 2),
@@ -3871,11 +3892,7 @@ def finalize(att, st):
         answers = st.get("answers", {})
         review_rows, trust_answers = [], []
         evaluations = []
-        try:
-            import ai_providers as AIP
-            llm_ready = AIP.any_provider_configured()
-        except Exception:
-            llm_ready = False
+        llm_ready = False  # External model scoring is disabled by project policy.
         for q in st["selected_questions"]:
             raw_answer = answers.get(q["id"], "")
             qtype = str(q.get("question_type", "")).lower()
@@ -3899,7 +3916,7 @@ def finalize(att, st):
             marks = float(q.get("marks") or 1)
             row = {"question_id": q["id"], "topic": topic_label, "topic_key": topic,
                 "section": "fundamental" if in_fundamental else "cv",
-                "question_type": q.get("question_type"), "answer": raw_answer,
+                "question_type": q.get("question_type"), "question": str(q.get("question_text") or ""), "answer": raw_answer,
                 "objective": objective, "max_marks": marks,
                 "correct_answer": (q.get("correct_answer") if is_mcq else q.get("reference_answer")) if objective else None,
                 "explanation": q.get("explanation") if objective else None,
@@ -4045,6 +4062,9 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
             ).fetchone()
             if not latest_review:
                 raise HTTPException(409, "result_awaiting_review")
+            import assessment_workflow as workflow
+            if latest_review["decision"] == "approved" and not workflow.review_state(done[0]["id"])["ready"]:
+                raise HTTPException(409, "result_awaiting_honesty_review")
         kind = "post" if done else "pre"
         policy = conn.execute("SELECT cooldown_hours,max_attempts_90d,credits_per_attempt FROM learning_retake_policy WHERE id=1").fetchone()
         cooldown_hours = int(policy["cooldown_hours"]) if policy else int(COOLDOWN_HOURS)
@@ -4441,7 +4461,8 @@ def heartbeat(aid: str, b: Heartbeat, request: Request, u=Depends(current_user))
 def result(aid: str, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     if att["status"] != "done": raise HTTPException(409, "Attempt not finished")
-    r = candidate_result(json.loads(att["result"]))
+    import assessment_workflow as workflow
+    r = workflow.candidate_summary(aid, candidate_result(json.loads(att["result"])))
     review = one("SELECT decision,reason,reviewed_at FROM admin_attempt_reviews WHERE attempt_id=?", (aid,))
     appeal_review = one("SELECT decision,reason,decided_at FROM admin_appeal_decisions WHERE attempt_id=?", (aid,))
     r.update({
@@ -4479,7 +4500,12 @@ def appeal(aid: str, b: Appeal, u=Depends(current_user)):
 def learning_path(u=Depends(current_user)):
     a = latest_done(u["id"])
     if not a: raise HTTPException(409, "Take the assessment first")
-    return {"based_on": a["id"], **E.build_path(json.loads(a["result"])["topics"])}
+    import assessment_workflow as workflow
+    release = workflow.current_release(a["id"])
+    if not release:
+        raise HTTPException(409, "learning_requires_academic_and_honesty_approval")
+    plan = workflow.ensure_learning_plan(release["id"])
+    return {"based_on": a["id"], "release_id": release["id"], "gaps": [gap["skill"] for gap in plan["gaps"]], "items": plan["resources"]}
 
 
 @app.get("/api/uplift")
@@ -4487,6 +4513,10 @@ def uplift(u=Depends(current_user)):
     pre = one("SELECT result FROM attempts WHERE user_id=? AND status='done' AND kind='pre' ORDER BY finished LIMIT 1", (u["id"],))
     post = latest_done(u["id"], "post")
     if not pre or not post: return {"available": False}
+    import assessment_workflow as workflow
+    approved_pre = one("SELECT id FROM attempts WHERE user_id=? AND status='done' AND kind='pre' ORDER BY finished LIMIT 1", (u["id"],))
+    if not workflow.review_state(approved_pre["id"])["ready"] or not workflow.review_state(post["id"])["ready"]:
+        return {"available": False, "reason": "Both assessments require academic and honesty approval."}
     a, b = json.loads(pre["result"]), json.loads(post["result"])
     def _num(value):
         return value if isinstance(value, (int, float)) else None
@@ -4511,13 +4541,18 @@ def uplift(u=Depends(current_user)):
 
 
 # ------------------------------------------------------------------ Skill Passport
-def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approved"):
+def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approved", release_id=None):
     """Create (or reuse) a passport for a human-approved assessment attempt.
 
     The score is copied from the stored deterministic result; this helper never
     changes marks. It is idempotent so re-approving a result does not duplicate
     the passport.
     """
+    import assessment_workflow as workflow
+    release = workflow.current_release(attempt_id)
+    if not release or (release_id and release["id"] != release_id):
+        return None
+    release_id = release["id"]
     row = one("""SELECT a.result,a.finished,a.kind,u.name
                  FROM attempts a JOIN users u ON u.id=a.user_id
                  WHERE a.id=? AND a.user_id=? AND a.status='done'""",
@@ -4535,16 +4570,19 @@ def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approve
             "name": TAXONOMY.get(topic, {}).get("name", entry.get("label") or topic.replace("_", " ").title()),
             "score": entry["score"],
             "level": entry.get("level"),
+            "questions": entry.get("total_questions", entry.get("n", 0)),
+            "section": entry.get("section"),
             "trust": result.get("trust"),
             "date": result.get("date"),
         })
     if not skills:
         return None
-    existing = one("""SELECT id FROM passports
-                      WHERE user_id=? AND source_attempt=? AND revoked=0
-                      ORDER BY created DESC LIMIT 1""", (user_id, attempt_id))
-    if existing:
-        return existing["id"]
+    for existing in allr("SELECT id,payload,revoked FROM passports WHERE user_id=? AND source_attempt=? ORDER BY revoked,created DESC", (user_id, attempt_id)):
+        if _json_field(existing["payload"], {}).get("release_id") == release_id:
+            if not existing["revoked"]:
+                return existing["id"]
+            if existing["revoked"] == 1:
+                return None  # Respect a holder's deliberate revocation.
     pid = secrets.token_urlsafe(9)
     now = time.time()
     payload = {
@@ -4559,6 +4597,10 @@ def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approve
         "section_scores": result.get("section_scores"),
         "scoring_version": result.get("scoring_version"),
         "attempt_id": attempt_id,
+        "release_id": release_id, "credential_version": "skill-passport-v2",
+        "honesty": workflow.review_state(attempt_id)["honesty"],
+        "assessment": {"overall": result.get("overall"), "review_decision": "approved",
+                       "reviewed_at": workflow.review_state(attempt_id)["academic_reviewed_at"], "kind": row["kind"]},
         "verification": issued_by,
         "verified_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
         "issuer": "TalentForge Global R0 prototype",
@@ -4579,6 +4621,10 @@ class PassBody(BaseModel):
 @app.post("/api/passport")
 def make_passport(b: PassBody, u=Depends(current_user)):
     need_consent(u)
+    import assessment_workflow as workflow
+    release = workflow.current_release(b.attempt_id)
+    if not release or release["user_id"] != u["id"]:
+        raise HTTPException(409, "passport_requires_academic_and_honesty_approval")
     a = one("""SELECT a.*,r.reviewed_at FROM attempts a JOIN admin_attempt_reviews r ON r.attempt_id=a.id
                WHERE a.id=? AND a.user_id=? AND a.status='done' AND r.decision='approved'""",
             (b.attempt_id, u["id"]))
@@ -4586,14 +4632,17 @@ def make_passport(b: PassBody, u=Depends(current_user)):
         raise HTTPException(409, "passport_requires_approved_reviewed_assessment")
     r = json.loads(a["result"])
     topic_keys = list(b.topics) if b.topics else list((r.get("topics") or {}).keys())
-    skills = [{"skill": t, "name": TAXONOMY.get(t, {}).get("name", t.replace("_", " ").title()), "score": r["topics"][t]["score"], "level": r["topics"][t]["level"], "trust": r["trust"], "date": r["date"]}
-              for t in topic_keys if t in (r.get("topics") or {})]
+    skills = [{"skill": t, "name": TAXONOMY.get(t, {}).get("name", t.replace("_", " ").title()), "score": r["topics"][t]["score"], "level": r["topics"][t]["level"], "trust": r.get("trust"), "date": r.get("date"),
+               "questions": r["topics"][t].get("total_questions", r["topics"][t].get("n", 0)), "section": r["topics"][t].get("section")}
+              for t in topic_keys if t in (r.get("topics") or {}) and r["topics"][t].get("score") is not None]
     if not skills: raise HTTPException(422, "Choose at least one verified skill")
     up = uplift(u)
     pid = secrets.token_urlsafe(9)
     payload = {"pid": pid, "issued": time.strftime("%Y-%m-%d"), "expires": time.strftime("%Y-%m-%d", time.localtime(time.time() + 365 * 86400)),
                "holder": u["name"] if b.show_name else "Anonymous candidate", "skills": skills,
                "attempt_id": a["id"], "verification": "candidate_selected",
+               "release_id": release["id"], "credential_version": "skill-passport-v2",
+               "honesty": workflow.review_state(a["id"])["honesty"], "section_scores": r.get("section_scores"),
                "assessment": {"attempt_id": a["id"], "overall": r.get("overall"), "review_decision": "approved",
                               "reviewed_at": a["reviewed_at"], "kind": a["kind"]},
                "uplift": up["overall"] if up["available"] else None, "issuer": "TalentForge Global R0 prototype"}
@@ -4618,13 +4667,17 @@ def public_passport(pid: str):
     if not p: raise HTTPException(404, "Passport not found")
     payload = json.loads(p["payload"])
     valid = hmac.compare_digest(p["signature"], E.sign_payload(payload, SECRET))
-    if p["revoked"]: return {"revoked": True, "signature_valid": valid}
+    if p["revoked"]: return {"revoked": True, "review_required": p["revoked"] == 2, "signature_valid": valid}
     assessment = payload.get("assessment", {})
     attempt_id = assessment.get("attempt_id") or payload.get("attempt_id") or p.get("source_attempt")
     current_review = one("""SELECT 1 FROM attempts a JOIN admin_attempt_reviews r ON r.attempt_id=a.id
                             WHERE a.id=? AND a.user_id=? AND a.status='done' AND r.decision='approved'""",
                          (attempt_id, p["user_id"])) if attempt_id else None
     if not current_review:
+        return {"revoked": True, "review_required": True, "signature_valid": valid}
+    import assessment_workflow as workflow
+    release = workflow.current_release(attempt_id)
+    if not release or payload.get("release_id") != release["id"]:
         return {"revoked": True, "review_required": True, "signature_valid": valid}
     public_payload = payload
     if isinstance(assessment, dict):

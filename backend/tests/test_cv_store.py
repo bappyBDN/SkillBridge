@@ -775,8 +775,8 @@ def test_company_and_admin_views_share_the_candidate_skill_alignment():
     assert detail.status_code == 200, detail.text
     detail = detail.json()
     statuses = {skill["required"]: skill["status"] for skill in detail["candidate_skills"]}
-    assert statuses == {"Python": "verified", "Docker": "claimed", "SQL": "missing"}
-    assert detail["skill_evidence_summary"] == {"verified": 1, "claimed": 1, "missing": 1, "not_shared": 0}
+    assert statuses == {"Python": "claimed", "Docker": "claimed", "SQL": "missing"}
+    assert detail["skill_evidence_summary"] == {"verified": 0, "claimed": 2, "missing": 1, "not_shared": 0}
 
     admin_reg = client.post(
         "/api/auth/register",
@@ -787,6 +787,12 @@ def test_company_and_admin_views_share_the_candidate_skill_alignment():
     main.run("UPDATE user_roles SET role='admin' WHERE user_id=?", (admin_uid,))
     main.run("INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at) VALUES (?,?,?,?)",
              (admin_uid, "super_admin", admin_uid, 0))
+    assert client.post("/api/admin/attempts/company-align-attempt/review", headers=admin_headers,
+                       json={"decision": "approved", "reason": "Academic evidence reviewed."}).status_code == 200
+    assert client.post("/api/admin/integrity/attempts/company-align-attempt/honesty", headers=admin_headers,
+                       json={"decision": "approved", "score": 94, "reason": "Integrity evidence reviewed."}).status_code == 200
+    approved_detail = client.get("/api/company/applications/app-align", headers=company_headers).json()
+    assert {skill["required"]: skill["status"] for skill in approved_detail["candidate_skills"]} == {"Python": "verified", "Docker": "claimed", "SQL": "missing"}
     coverage = client.get("/api/admin/assessment/graphrag/status", headers=admin_headers)
     assert coverage.status_code == 200, coverage.text
     coverage = coverage.json()
@@ -823,8 +829,9 @@ def test_admin_approval_updates_learning_path_and_creates_passport():
     before = before.json()
     assert before["approved"] is False
     assert before["passport"] is None
-    assert "python" in before["gaps"]
-    assert any(r["topic"] == "python" for r in before["resources"])
+    assert before["gaps"] == []
+    assert before["resources"] == []
+    assert before["result_summary"]["overall"] is None
 
     admin_reg = client.post(
         "/api/auth/register",
@@ -843,8 +850,15 @@ def test_admin_approval_updates_learning_path_and_creates_passport():
     )
     assert approved.status_code == 200, approved.text
     approved = approved.json()
-    assert approved["learning_path_updated"] is True
-    assert approved["passport_id"], approved
+    assert approved["learning_path_updated"] is False
+    assert approved["passport_id"] is None
+    assert approved["publication"]["stage"] == "honesty_review"
+    honesty = client.post("/api/admin/integrity/attempts/approval-flow-attempt/honesty",
+                          json={"decision": "approved", "score": 90, "reason": "Honesty evidence reviewed."}, headers=admin_headers)
+    assert honesty.status_code == 200, honesty.text
+    approved = honesty.json()
+    assert approved["publication"]["ready"] is True
+    assert approved["passport_id"]
 
     after = client.get("/api/learning/dashboard", headers=headers).json()
     assert after["approved"] is True
