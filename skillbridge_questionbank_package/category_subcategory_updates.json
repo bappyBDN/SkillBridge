@@ -1,0 +1,17 @@
+{
+  "note": "Proposed additions to existing question_categories.subcategories; review and merge with live JSON arrays rather than overwrite them.",
+  "updates": {
+    "CAT-03": [
+      "Programming Fundamentals",
+      "C Programming",
+      "JavaScript"
+    ],
+    "CAT-08": [
+      "OOP Concepts",
+      "DBMS",
+      "Computer Networks",
+      "Operating Systems",
+      "Software Engineering"
+    ]
+  }
+}

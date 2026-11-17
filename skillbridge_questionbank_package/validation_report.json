@@ -1,0 +1,835 @@
+{
+  "report": {
+    "source_pdf": "Bangladesh Software Engineer Interview Master Handbook - Book.pdf",
+    "source_pdf_pages": 455,
+    "expected_question_numbers": "Q1-Q1090",
+    "unique_numbered_questions_found_in_pdf": 1070,
+    "successfully_parsed_questions": 1070,
+    "missing_numbered_questions": 20,
+    "parse_errors": [],
+    "difficulty_counts": {
+      "Easy": 843,
+      "Medium": 186,
+      "Hard": 41
+    },
+    "difficulty_provenance_counts": {
+      "source_explicit": 254,
+      "source_stars_only": 10,
+      "model_inferred_conservative": 787,
+      "source_section_note_mapped_to_medium": 19
+    },
+    "question_type_counts": {
+      "MCQ": 1070
+    },
+    "category_counts": {
+      "CAT-03": 280,
+      "CAT-08": 435,
+      "CAT-02": 120,
+      "CAT-01": 75,
+      "CAT-09": 80,
+      "CAT-07": 80
+    },
+    "missing_answer_keys": 0,
+    "missing_options": 0,
+    "missing_explanations": 158,
+    "missing_explanation_question_numbers": [
+      237,
+      242,
+      244,
+      251,
+      263,
+      268,
+      270,
+      271,
+      274,
+      278,
+      297,
+      320,
+      323,
+      326,
+      336,
+      340,
+      342,
+      343,
+      345,
+      347,
+      348,
+      351,
+      367,
+      368,
+      386,
+      392,
+      393,
+      397,
+      408,
+      409,
+      412,
+      413,
+      414,
+      416,
+      419,
+      421,
+      422,
+      424,
+      429,
+      431,
+      435,
+      438,
+      441,
+      443,
+      446,
+      448,
+      452,
+      453,
+      454,
+      457,
+      461,
+      464,
+      467,
+      469,
+      471,
+      472,
+      473,
+      485,
+      488,
+      492,
+      493,
+      498,
+      510,
+      512,
+      516,
+      519,
+      521,
+      522,
+      523,
+      528,
+      530,
+      532,
+      536,
+      538,
+      541,
+      543,
+      549,
+      564,
+      566,
+      569,
+      571,
+      573,
+      578,
+      579,
+      588,
+      589,
+      592,
+      595,
+      596,
+      597,
+      600,
+      604,
+      606,
+      613,
+      616,
+      617,
+      619,
+      621,
+      623,
+      624,
+      626,
+      629,
+      631,
+      655,
+      658,
+      664,
+      665,
+      666,
+      669,
+      671,
+      673,
+      674,
+      678,
+      681,
+      683,
+      684,
+      685,
+      686,
+      688,
+      689,
+      691,
+      692,
+      695,
+      696,
+      705,
+      707,
+      709,
+      711,
+      713,
+      717,
+      719,
+      730,
+      731,
+      736,
+      742,
+      743,
+      747,
+      749,
+      757,
+      758,
+      764,
+      765,
+      767,
+      768,
+      796,
+      804,
+      805,
+      812,
+      813,
+      817,
+      818,
+      821,
+      824,
+      835,
+      839,
+      840,
+      863,
+      903
+    ],
+    "subcategory_counts": {
+      "CAT-03::Programming Fundamentals": 80,
+      "CAT-03::C Programming": 100,
+      "CAT-08::OOP Concepts": 100,
+      "CAT-02::Big-O Analysis": 25,
+      "CAT-02::Arrays & Strings": 25,
+      "CAT-02::Sorting & Searching": 25,
+      "CAT-02::Stacks & Queues": 25,
+      "CAT-02::Trees": 20,
+      "CAT-08::DBMS": 75,
+      "CAT-01::SQL Basics": 25,
+      "CAT-01::Joins": 25,
+      "CAT-01::Transactions": 25,
+      "CAT-08::Computer Networks": 100,
+      "CAT-08::Operating Systems": 100,
+      "CAT-08::Software Engineering": 60,
+      "CAT-09::API Design": 60,
+      "CAT-09::Security & Reliability": 20,
+      "CAT-03::JavaScript": 100,
+      "CAT-07::Numerical Ability": 40,
+      "CAT-07::Logical Reasoning": 40
+    },
+    "assessment_policy": {
+      "MCQ": {
+        "Easy": {
+          "marks": 1,
+          "time_seconds": 45
+        },
+        "Medium": {
+          "marks": 1.5,
+          "time_seconds": 60
+        },
+        "Hard": {
+          "marks": 2,
+          "time_seconds": 80
+        }
+      },
+      "Coding": {
+        "Easy": {
+          "marks": 7,
+          "time_seconds": 600
+        },
+        "Medium": {
+          "marks": 10,
+          "time_seconds": 900
+        },
+        "Hard": "not_used"
+      },
+      "Explainable_and_Scenario": {
+        "all_difficulties": {
+          "marks": 5,
+          "time_seconds": 300
+        }
+      }
+    },
+    "schema_blockers": [
+      "question_bank.marks is INTEGER and question_import_staging.marks is INTEGER; PostgreSQL cannot store 1.5.",
+      "_question_payload converts marks with int(...), which truncates 1.5 to 1.",
+      "GraphRAG QuestionRecord declares marks: int."
+    ],
+    "source_type_observation": "All successfully parsed source questions have four MCQ options and an answer key. Scenario-style stems remain MCQ because the source supplies options; no standalone Coding or Explainable prompts were identified. Do not fabricate these types from the MCQ source.",
+    "source_gaps_observation": "The PDF contains Q1–Q770 and Q791–Q1090. Q771–Q790 are absent; the PDF has 1,070 numbered questions, not 1,090."
+  },
+  "section_map": [
+    {
+      "question_range": "1-25",
+      "chapter": "Programming Fundamentals",
+      "section": "Programming Basics",
+      "subcategory": "Programming Basics",
+      "category_id": "CAT-03",
+      "subcategory_label": "Programming Fundamentals"
+    },
+    {
+      "question_range": "26-35",
+      "chapter": "Programming Fundamentals",
+      "section": "Compiler & Interpreter",
+      "subcategory": "Compiler and Interpreter",
+      "category_id": "CAT-03",
+      "subcategory_label": "Programming Fundamentals"
+    },
+    {
+      "question_range": "36-44",
+      "chapter": "Programming Fundamentals",
+      "section": "Variables, Identifiers & Keywords",
+      "subcategory": "Variables and Keywords",
+      "category_id": "CAT-03",
+      "subcategory_label": "Programming Fundamentals"
+    },
+    {
+      "question_range": "45-50",
+      "chapter": "Programming Fundamentals",
+      "section": "Data Types",
+      "subcategory": "Data Types",
+      "category_id": "CAT-03",
+      "subcategory_label": "Programming Fundamentals"
+    },
+    {
+      "question_range": "51-80",
+      "chapter": "Programming Fundamentals",
+      "section": "Operators, Memory, Functions & Pointers",
+      "subcategory": "Operators and Core Language Concepts",
+      "category_id": "CAT-03",
+      "subcategory_label": "Programming Fundamentals"
+    },
+    {
+      "question_range": "81-105",
+      "chapter": "C Programming",
+      "section": "Basics of C Programming",
+      "subcategory": "C Basics",
+      "category_id": "CAT-03",
+      "subcategory_label": "C Programming"
+    },
+    {
+      "question_range": "106-130",
+      "chapter": "C Programming",
+      "section": "Arrays, Strings & Pointer Basics",
+      "subcategory": "Arrays, Strings and Pointers",
+      "category_id": "CAT-03",
+      "subcategory_label": "C Programming"
+    },
+    {
+      "question_range": "131-155",
+      "chapter": "C Programming",
+      "section": "C Programming Concepts",
+      "subcategory": "C Programming Concepts (section heading not explicit in PDF)",
+      "category_id": "CAT-03",
+      "subcategory_label": "C Programming"
+    },
+    {
+      "question_range": "156-180",
+      "chapter": "C Programming",
+      "section": "Advanced C Programming",
+      "subcategory": "Advanced C Programming",
+      "category_id": "CAT-03",
+      "subcategory_label": "C Programming"
+    },
+    {
+      "question_range": "181-205",
+      "chapter": "Object-Oriented Programming (OOP)",
+      "section": "OOP Fundamentals",
+      "subcategory": "OOP Fundamentals",
+      "category_id": "CAT-08",
+      "subcategory_label": "OOP Concepts"
+    },
+    {
+      "question_range": "206-230",
+      "chapter": "Object-Oriented Programming (OOP)",
+      "section": "OOP Core Concepts",
+      "subcategory": "Inheritance and Polymorphism (range inferred from surrounding chapter structure)",
+      "category_id": "CAT-08",
+      "subcategory_label": "OOP Concepts"
+    },
+    {
+      "question_range": "231-255",
+      "chapter": "Object-Oriented Programming (OOP)",
+      "section": "Advanced OOP",
+      "subcategory": "Virtual Functions, Abstract Classes, Interfaces & SOLID",
+      "category_id": "CAT-08",
+      "subcategory_label": "OOP Concepts"
+    },
+    {
+      "question_range": "256-280",
+      "chapter": "Object-Oriented Programming (OOP)",
+      "section": "Expert Level OOP",
+      "subcategory": "Expert OOP (WellDev / Enosis)",
+      "category_id": "CAT-08",
+      "subcategory_label": "OOP Concepts"
+    },
+    {
+      "question_range": "281-305",
+      "chapter": "Data Structures, Algorithms & Time Complexity",
+      "section": "Algorithm Analysis & Time Complexity",
+      "subcategory": "Algorithm Analysis",
+      "category_id": "CAT-02",
+      "subcategory_label": "Big-O Analysis"
+    },
+    {
+      "question_range": "306-330",
+      "chapter": "Data Structures, Algorithms & Time Complexity",
+      "section": "Arrays & Strings",
+      "subcategory": "Arrays and Strings",
+      "category_id": "CAT-02",
+      "subcategory_label": "Arrays & Strings"
+    },
+    {
+      "question_range": "331-355",
+      "chapter": "Data Structures, Algorithms & Time Complexity",
+      "section": "Searching & Sorting Algorithms",
+      "subcategory": "Searching and Sorting",
+      "category_id": "CAT-02",
+      "subcategory_label": "Sorting & Searching"
+    },
+    {
+      "question_range": "356-380",
+      "chapter": "Data Structures, Algorithms & Time Complexity",
+      "section": "Stack & Queue",
+      "subcategory": "Stacks and Queues",
+      "category_id": "CAT-02",
+      "subcategory_label": "Stacks & Queues"
+    },
+    {
+      "question_range": "381-400",
+      "chapter": "Data Structures, Algorithms & Time Complexity",
+      "section": "Linked List, Trees, Graph, Heap & Advanced DSA",
+      "subcategory": "Linked Lists, Trees, Graphs and Heaps",
+      "category_id": "CAT-02",
+      "subcategory_label": "Trees"
+    },
+    {
+      "question_range": "401-425",
+      "chapter": "DBMS & Database Fundamentals",
+      "section": "Introduction to DBMS & Database Fundamentals",
+      "subcategory": "DBMS Fundamentals",
+      "category_id": "CAT-08",
+      "subcategory_label": "DBMS"
+    },
+    {
+      "question_range": "426-450",
+      "chapter": "DBMS & Database Fundamentals",
+      "section": "ER Diagram, Keys & Relationships",
+      "subcategory": "ER Modeling and Keys",
+      "category_id": "CAT-08",
+      "subcategory_label": "DBMS"
+    },
+    {
+      "question_range": "451-475",
+      "chapter": "DBMS & Database Fundamentals",
+      "section": "Normalization & Functional Dependency",
+      "subcategory": "Normalization",
+      "category_id": "CAT-08",
+      "subcategory_label": "DBMS"
+    },
+    {
+      "question_range": "476-500",
+      "chapter": "SQL",
+      "section": "SQL Fundamentals (DDL, DML, DCL, TCL & Basic Queries)",
+      "subcategory": "SQL Fundamentals",
+      "category_id": "CAT-01",
+      "subcategory_label": "SQL Basics"
+    },
+    {
+      "question_range": "501-525",
+      "chapter": "SQL",
+      "section": "SQL Joins & Advanced SQL",
+      "subcategory": "Joins and Advanced Queries",
+      "category_id": "CAT-01",
+      "subcategory_label": "Joins"
+    },
+    {
+      "question_range": "526-550",
+      "chapter": "SQL",
+      "section": "ACID, Transactions, Concurrency, Trigger & Advanced DBMS",
+      "subcategory": "Transactions and Concurrency",
+      "category_id": "CAT-01",
+      "subcategory_label": "Transactions"
+    },
+    {
+      "question_range": "551-560",
+      "chapter": "Computer Networks",
+      "section": "Networking Fundamentals",
+      "subcategory": "Networking Fundamentals (heading inferred from Chapter 6)",
+      "category_id": "CAT-08",
+      "subcategory_label": "Computer Networks"
+    },
+    {
+      "question_range": "561-585",
+      "chapter": "Computer Networks",
+      "section": "Network Topology & Networking Devices",
+      "subcategory": "Topology and Network Devices",
+      "category_id": "CAT-08",
+      "subcategory_label": "Computer Networks"
+    },
+    {
+      "question_range": "586-610",
+      "chapter": "Computer Networks",
+      "section": "OSI Model (Open Systems Interconnection)",
+      "subcategory": "OSI Model",
+      "category_id": "CAT-08",
+      "subcategory_label": "Computer Networks"
+    },
+    {
+      "question_range": "611-635",
+      "chapter": "Computer Networks",
+      "section": "TCP/IP Model, HTTP, HTTPS, DNS & Common Protocols",
+      "subcategory": "TCP/IP and Protocols",
+      "category_id": "CAT-08",
+      "subcategory_label": "Computer Networks"
+    },
+    {
+      "question_range": "636-650",
+      "chapter": "Computer Networks",
+      "section": "IP Addressing, Subnetting, NAT, Firewall & HTTP Status Codes",
+      "subcategory": "IP Addressing and Network Security",
+      "category_id": "CAT-08",
+      "subcategory_label": "Computer Networks"
+    },
+    {
+      "question_range": "651-675",
+      "chapter": "Operating System",
+      "section": "Operating System Fundamentals",
+      "subcategory": "OS Fundamentals",
+      "category_id": "CAT-08",
+      "subcategory_label": "Operating Systems"
+    },
+    {
+      "question_range": "676-700",
+      "chapter": "Operating System",
+      "section": "Process & Thread",
+      "subcategory": "Processes and Threads",
+      "category_id": "CAT-08",
+      "subcategory_label": "Operating Systems"
+    },
+    {
+      "question_range": "701-725",
+      "chapter": "Operating System",
+      "section": "CPU Scheduling & Process Synchronization",
+      "subcategory": "Scheduling and Synchronization",
+      "category_id": "CAT-08",
+      "subcategory_label": "Operating Systems"
+    },
+    {
+      "question_range": "726-750",
+      "chapter": "Operating System",
+      "section": "Memory Management, Virtual Memory & Deadlock",
+      "subcategory": "Memory Management and Deadlocks",
+      "category_id": "CAT-08",
+      "subcategory_label": "Operating Systems"
+    },
+    {
+      "question_range": "751-770",
+      "chapter": "Software Engineering Fundamentals",
+      "section": "Software Engineering Fundamentals",
+      "subcategory": "Software Engineering Fundamentals",
+      "category_id": "CAT-08",
+      "subcategory_label": "Software Engineering"
+    },
+    {
+      "question_range": "791-810",
+      "chapter": "Software Engineering Fundamentals",
+      "section": "Software Design, Testing & Quality",
+      "subcategory": "Software Design and Testing (section heading not explicit as one range)",
+      "category_id": "CAT-08",
+      "subcategory_label": "Software Engineering"
+    },
+    {
+      "question_range": "811-830",
+      "chapter": "Software Engineering Fundamentals",
+      "section": "Version Control, Git, CI/CD & Software Engineering Best Practices",
+      "subcategory": "Git and CI/CD",
+      "category_id": "CAT-08",
+      "subcategory_label": "Software Engineering"
+    },
+    {
+      "question_range": "831-850",
+      "chapter": "REST API & Web Services",
+      "section": "API Fundamentals",
+      "subcategory": "API Fundamentals",
+      "category_id": "CAT-09",
+      "subcategory_label": "API Design"
+    },
+    {
+      "question_range": "851-870",
+      "chapter": "REST API & Web Services",
+      "section": "REST Principles & Resource Design",
+      "subcategory": "REST Principles",
+      "category_id": "CAT-09",
+      "subcategory_label": "API Design"
+    },
+    {
+      "question_range": "871-890",
+      "chapter": "REST API & Web Services",
+      "section": "Authentication & API Security",
+      "subcategory": "Authentication and API Security",
+      "category_id": "CAT-09",
+      "subcategory_label": "Security & Reliability"
+    },
+    {
+      "question_range": "891-910",
+      "chapter": "REST API & Web Services",
+      "section": "Advanced REST API & HTTP Status Codes",
+      "subcategory": "Advanced REST and HTTP Status Codes",
+      "category_id": "CAT-09",
+      "subcategory_label": "API Design"
+    },
+    {
+      "question_range": "911-930",
+      "chapter": "JavaScript",
+      "section": "JavaScript Fundamentals",
+      "subcategory": "JavaScript Fundamentals",
+      "category_id": "CAT-03",
+      "subcategory_label": "JavaScript"
+    },
+    {
+      "question_range": "931-950",
+      "chapter": "JavaScript",
+      "section": "Operators, Equality, Type Coercion & Control Flow",
+      "subcategory": "Operators and Control Flow",
+      "category_id": "CAT-03",
+      "subcategory_label": "JavaScript"
+    },
+    {
+      "question_range": "951-970",
+      "chapter": "JavaScript",
+      "section": "Functions, Scope & Hoisting",
+      "subcategory": "Functions and Scope",
+      "category_id": "CAT-03",
+      "subcategory_label": "JavaScript"
+    },
+    {
+      "question_range": "971-990",
+      "chapter": "JavaScript",
+      "section": "Objects, Arrays & ES6 Features",
+      "subcategory": "Objects, Arrays and ES6",
+      "category_id": "CAT-03",
+      "subcategory_label": "JavaScript"
+    },
+    {
+      "question_range": "991-1010",
+      "chapter": "JavaScript",
+      "section": "Asynchronous JavaScript, DOM & Fetch API",
+      "subcategory": "Async JavaScript, DOM and Fetch",
+      "category_id": "CAT-03",
+      "subcategory_label": "JavaScript"
+    },
+    {
+      "question_range": "1011-1030",
+      "chapter": "Analytical Reasoning & Aptitude",
+      "section": "Number System, Percentage & Average",
+      "subcategory": "Number Systems and Averages",
+      "category_id": "CAT-07",
+      "subcategory_label": "Numerical Ability"
+    },
+    {
+      "question_range": "1031-1050",
+      "chapter": "Analytical Reasoning & Aptitude",
+      "section": "Profit & Loss, Ratio, Time & Work",
+      "subcategory": "Arithmetic and Work Problems",
+      "category_id": "CAT-07",
+      "subcategory_label": "Numerical Ability"
+    },
+    {
+      "question_range": "1051-1070",
+      "chapter": "Analytical Reasoning & Aptitude",
+      "section": "Probability, Set Theory, Age & Clock Problems",
+      "subcategory": "Probability and Logical Reasoning",
+      "category_id": "CAT-07",
+      "subcategory_label": "Logical Reasoning"
+    },
+    {
+      "question_range": "1071-1090",
+      "chapter": "Analytical Reasoning & Aptitude",
+      "section": "Interview Brain Teasers & Software Aptitude",
+      "subcategory": "Brain Teasers and Software Aptitude",
+      "category_id": "CAT-07",
+      "subcategory_label": "Logical Reasoning"
+    }
+  ],
+  "parse_errors": [],
+  "unresolved_source_gaps": [
+    {
+      "question_number": 771,
+      "expected_id": "PDF-Q0771",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 772,
+      "expected_id": "PDF-Q0772",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 773,
+      "expected_id": "PDF-Q0773",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 774,
+      "expected_id": "PDF-Q0774",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 775,
+      "expected_id": "PDF-Q0775",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 776,
+      "expected_id": "PDF-Q0776",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 777,
+      "expected_id": "PDF-Q0777",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 778,
+      "expected_id": "PDF-Q0778",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 779,
+      "expected_id": "PDF-Q0779",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 780,
+      "expected_id": "PDF-Q0780",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 781,
+      "expected_id": "PDF-Q0781",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 782,
+      "expected_id": "PDF-Q0782",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 783,
+      "expected_id": "PDF-Q0783",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 784,
+      "expected_id": "PDF-Q0784",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 785,
+      "expected_id": "PDF-Q0785",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 786,
+      "expected_id": "PDF-Q0786",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 787,
+      "expected_id": "PDF-Q0787",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 788,
+      "expected_id": "PDF-Q0788",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 789,
+      "expected_id": "PDF-Q0789",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    },
+    {
+      "question_number": 790,
+      "expected_id": "PDF-Q0790",
+      "status": "unresolved_source_gap",
+      "reason": "No question with this number appears in the uploaded PDF text layer; the PDF jumps from Q770 to Q791.",
+      "question_text": null,
+      "options": null,
+      "correct_answer": null
+    }
+  ]
+}

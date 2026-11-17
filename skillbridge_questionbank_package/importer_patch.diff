@@ -1,0 +1,15 @@
+--- a/backend/enterprise.py
++++ b/backend/enterprise.py
+@@
+-    try: marks=int(raw.get("marks") or 1)
+-    except (TypeError,ValueError): marks=0
++    try: marks=float(raw.get("marks") if raw.get("marks") not in (None, "") else 1)
++    except (TypeError,ValueError): marks=0
+@@
+-    if marks<1 or marks>100: errors.append("Marks must be between 1 and 100.")
++    if marks<0.5 or marks>100: errors.append("Marks must be between 0.5 and 100.")
+--- a/backend/graphrag.py
++++ b/backend/graphrag.py
+@@
+-    marks: int = 1
++    marks: float = 1.0

@@ -1,0 +1,2130 @@
+{
+  "package_version": "1.0",
+  "batch_id": "devops-70-001",
+  "topic": "DevOps, Git, CI/CD, Containers, Kubernetes, IaC, SRE",
+  "source_file": "skillbridge_500_questions_master.json",
+  "language": "en",
+  "generated_at": "2026-11-13T22:30:00Z",
+  "notes": [
+    "Extracted from the valid 70-question array in skillbridge_500_questions_master.json.",
+    "The file's separate 500-question 'batches' section is placeholder text and was not imported.",
+    "Rows remain drafts for human review."
+  ],
+  "questions": [
+    {
+      "id": "GEN-DEVOPS-0001",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the architectural difference between git merge and git rebase? When should you use each?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Git merge creates a non-destructive merge commit preserving exact history, while git rebase rewrites commit history by replaying commits on top of another branch for a linear log.",
+      "reference_answer": "Git merge creates a non-destructive merge commit preserving exact history, while git rebase rewrites commit history by replaying commits on top of another branch for a linear log.",
+      "grading_rubric": "Award 5 marks when the answer covers: Comparison of merge commit preservation vs linear history replaying.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0002",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how git cherry-pick works and provide a real-world scenario where it is necessary.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Cherry-picking applies the changes introduced by an existing commit onto a different branch, commonly used to backport bug fixes from a development branch to a production release branch.",
+      "reference_answer": "Cherry-picking applies the changes introduced by an existing commit onto a different branch, commonly used to backport bug fixes from a development branch to a production release branch.",
+      "grading_rubric": "Award 5 marks when the answer covers: Definition of applying a specific commit hash to the current HEAD and a hotfix use case.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0003",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the precise difference between git reset --soft, git reset --mixed, and git reset --hard?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "--soft moves HEAD only; --mixed (default) updates HEAD and clears the staging area; --hard updates HEAD, staging area, and working directory, discarding all uncommitted changes.",
+      "reference_answer": "--soft moves HEAD only; --mixed (default) updates HEAD and clears the staging area; --hard updates HEAD, staging area, and working directory, discarding all uncommitted changes.",
+      "grading_rubric": "Award 5 marks when the answer covers: Detailed breakdown of pointer movement and impact on staging area and working directory.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0004",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you recover a commit or branch that was accidentally deleted or lost using git reflog?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Git reflog records all movements of HEAD, allowing developers to locate the SHA hash of a lost commit or branch state prior to garbage collection and checkout a new branch from it.",
+      "reference_answer": "Git reflog records all movements of HEAD, allowing developers to locate the SHA hash of a lost commit or branch state prior to garbage collection and checkout a new branch from it.",
+      "grading_rubric": "Award 5 marks when the answer covers: Step-by-step commands using git reflog and git checkout/reset to restore dangling commits.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0005",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is a 'detached HEAD' state in Git, and how do you safely return to working on a branch?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "A detached HEAD occurs when checking out a specific commit instead of a branch. To save work done here, create a new branch using 'git checkout -b <branch-name>' before switching back.",
+      "reference_answer": "A detached HEAD occurs when checking out a specific commit instead of a branch. To save work done here, create a new branch using 'git checkout -b <branch-name>' before switching back.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of HEAD pointing directly to a commit hash instead of a branch ref.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0006",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain the difference between git fetch, git pull, and git pull --rebase.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Git fetch downloads remote updates without altering local branches. Git pull fetches and automatically merges, whereas git pull --rebase fetches and rebases local commits on top of remote changes.",
+      "reference_answer": "Git fetch downloads remote updates without altering local branches. Git pull fetches and automatically merges, whereas git pull --rebase fetches and rebases local commits on top of remote changes.",
+      "grading_rubric": "Award 5 marks when the answer covers: Distinction between downloading remote refs, downloading plus merging, and downloading plus rebasing.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0007",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you squash multiple commits into a single clean commit before merging a pull request?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Interactive rebase allows developers to combine ('squash' or 'fixup') multiple messy work-in-progress commits into a single cohesive commit with a clean descriptive message.",
+      "reference_answer": "Interactive rebase allows developers to combine ('squash' or 'fixup') multiple messy work-in-progress commits into a single cohesive commit with a clean descriptive message.",
+      "grading_rubric": "Award 5 marks when the answer covers: Interactive rebase workflow description using git rebase -i HEAD~n.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0008",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are Git hooks? Give examples of client-side vs. server-side hooks and their typical use cases.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Git hooks are custom scripts triggered by core Git events. Client-side hooks (pre-commit) enforce linting/formatting; server-side hooks (pre-receive) enforce branch protection rules and security scanning.",
+      "reference_answer": "Git hooks are custom scripts triggered by core Git events. Client-side hooks (pre-commit) enforce linting/formatting; server-side hooks (pre-receive) enforce branch protection rules and security scanning.",
+      "grading_rubric": "Award 5 marks when the answer covers: Categorized examples of pre-commit, pre-push, and pre-receive scripts for linting and policy enforcement.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0009",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How does Git detect and handle merge conflicts, and what is your step-by-step process for resolving them?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Conflicts occur when concurrent changes modify identical lines in a file. Git injects conflict markers; developers inspect diffs, choose desired code blocks, stage files, and complete the merge.",
+      "reference_answer": "Conflicts occur when concurrent changes modify identical lines in a file. Git injects conflict markers; developers inspect diffs, choose desired code blocks, stage files, and complete the merge.",
+      "grading_rubric": "Award 5 marks when the answer covers: Conflict marker breakdown (<<<<<<<, =======, >>>>>>>) and manual resolution workflow.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0010",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the purpose of .gitignore, and why might a file that is listed in .gitignore still be tracked by Git?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": ".gitignore prevents untracked files from being staged. Files already tracked in Git history before being added to .gitignore remain tracked until explicitly untracked.",
+      "reference_answer": ".gitignore prevents untracked files from being staged. Files already tracked in Git history before being added to .gitignore remain tracked until explicitly untracked.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of exclusion patterns and cached tracked files needing git rm --cached.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0011",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between Git submodules and Git subtrees? When would you choose one over the other?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Submodules reference a specific commit in an external repository URL (requiring explicit init/update), while subtrees merge external repository contents directly into a subdirectory of the main repo.",
+      "reference_answer": "Submodules reference a specific commit in an external repository URL (requiring explicit init/update), while subtrees merge external repository contents directly into a subdirectory of the main repo.",
+      "grading_rubric": "Award 5 marks when the answer covers: Comparison of pointer references (submodules) vs embedded subtree code integration.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0012",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you temporarily stash uncommitted work, switch branches, and reapply the stash with conflict resolution?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Git stash saves modified tracked files to a stack. Switching branches allows clean work; git stash pop re-applies changes, prompting manual resolution if conflicts arise with the new branch.",
+      "reference_answer": "Git stash saves modified tracked files to a stack. Switching branches allows clean work; git stash pop re-applies changes, prompting manual resolution if conflicts arise with the new branch.",
+      "grading_rubric": "Award 5 marks when the answer covers: Usage of git stash push, git checkout, git stash pop/apply, and conflict resolution.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0013",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between git revert and git reset in terms of shared collaboration history?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Git reset rewrites history by moving the branch pointer backward (dangerous on shared remote branches). Git revert creates a new commit that undoes previous changes safely without rewriting history.",
+      "reference_answer": "Git reset rewrites history by moving the branch pointer backward (dangerous on shared remote branches). Git revert creates a new commit that undoes previous changes safely without rewriting history.",
+      "grading_rubric": "Award 5 marks when the answer covers: Safety analysis of rewriting public history (reset) vs creating compensatory inverse commits (revert).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0014",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you permanently remove a sensitive file (like an API key or password) from your entire Git history using git filter-repo?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Tools like git filter-repo rewrite all historical commits to purge sensitive files from object storage, requiring a force push and collaborator repository re-clones.",
+      "reference_answer": "Tools like git filter-repo rewrite all historical commits to purge sensitive files from object storage, requiring a force push and collaborator repository re-clones.",
+      "grading_rubric": "Award 5 marks when the answer covers: Command syntax and explanation of rewriting historical object trees and force-pushing.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0015",
+      "category_id": "CAT-13",
+      "subcategory": "Git & Version Control",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you manage multiple remote repositories and configure upstream tracking branches?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Developers configure multiple remotes (e.g., origin for fork, upstream for main project) and link local branches to specific remote tracking branches using upstream configurations.",
+      "reference_answer": "Developers configure multiple remotes (e.g., origin for fork, upstream for main project) and link local branches to specific remote tracking branches using upstream configurations.",
+      "grading_rubric": "Award 5 marks when the answer covers: Syntax for git remote add, git fetch <remote>, and git branch --set-upstream-to.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Git",
+          "Version Control"
+        ],
+        "concept_tags": [
+          "git & version control"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0016",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Define Continuous Integration (CI), Continuous Delivery (CD), and Continuous Deployment. What distinguishes Delivery from Deployment?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "CI automates code building and testing on every commit. Continuous Delivery ensures code is always release-ready with a manual promotion gate, whereas Continuous Deployment pushes every passing build automatically to production.",
+      "reference_answer": "CI automates code building and testing on every commit. Continuous Delivery ensures code is always release-ready with a manual promotion gate, whereas Continuous Deployment pushes every passing build automatically to production.",
+      "grading_rubric": "Award 5 marks when the answer covers: Clear lifecycle definitions emphasizing manual approval gates in Delivery vs fully automated production deployment.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0017",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are the key architectural components of a modern CI/CD pipeline (e.g., triggers, runners, steps, artifacts, deployment targets)?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Pipelines comprise webhook event triggers, execution runners/agents, sequential job steps, intermediate build artifacts, and downstream environments (staging/production).",
+      "reference_answer": "Pipelines comprise webhook event triggers, execution runners/agents, sequential job steps, intermediate build artifacts, and downstream environments (staging/production).",
+      "grading_rubric": "Award 5 marks when the answer covers: Comprehensive architectural workflow explanation from webhook trigger to target execution environment.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0018",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you securely manage secrets, API tokens, and credentials in CI/CD pipelines (e.g., GitHub Actions, GitLab CI)?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Secrets should be stored in encrypted platform secret stores or dynamic vaults (HashiCorp Vault, AWS Secrets Manager) using OIDC token exchange rather than plain-text environment variables.",
+      "reference_answer": "Secrets should be stored in encrypted platform secret stores or dynamic vaults (HashiCorp Vault, AWS Secrets Manager) using OIDC token exchange rather than plain-text environment variables.",
+      "grading_rubric": "Award 5 marks when the answer covers: Best practices including encrypted environment secrets, OIDC workload identity federation, and secret masking.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0019",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between pipeline caching and artifact storage, and how do they optimize build speed?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Caching stores reusable dependency directories across pipeline runs to skip redundant downloads. Artifacts store built binaries or packages passed between sequential pipeline jobs.",
+      "reference_answer": "Caching stores reusable dependency directories across pipeline runs to skip redundant downloads. Artifacts store built binaries or packages passed between sequential pipeline jobs.",
+      "grading_rubric": "Award 5 marks when the answer covers: Distinction between dependency caches (node_modules) and immutable release build artifacts.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0020",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Compare Blue-Green deployments and Canary deployments. What are the risks and benefits of each?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Blue-Green maintains two identical production environments for instant cutover and instant rollback. Canary routes a small percentage of live user traffic to a new version to validate behavior under real load.",
+      "reference_answer": "Blue-Green maintains two identical production environments for instant cutover and instant rollback. Canary routes a small percentage of live user traffic to a new version to validate behavior under real load.",
+      "grading_rubric": "Award 5 marks when the answer covers: Risk-reward analysis comparing instant full-environment switching (Blue-Green) vs gradual subset traffic shifting (Canary).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0021",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you implement automated quality gates (unit tests, integration tests, static code analysis, and security scanning) in a pipeline?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Quality gates fail the pipeline automatically if code coverage drops, static analyzers detect critical bugs, or dependency scanners identify high-severity CVEs.",
+      "reference_answer": "Quality gates fail the pipeline automatically if code coverage drops, static analyzers detect critical bugs, or dependency scanners identify high-severity CVEs.",
+      "grading_rubric": "Award 5 marks when the answer covers: Pipeline stage sequencing enforcing test coverage thresholds, SonarQube analysis, and vulnerability checks.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0022",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is GitOps, and how does it differ from traditional push-based CI/CD pipelines?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Traditional CI/CD pushes deployments from external build servers. GitOps uses an in-cluster operator to poll Git repositories and automatically reconcile live cluster state with declared desired state.",
+      "reference_answer": "Traditional CI/CD pushes deployments from external build servers. GitOps uses an in-cluster operator to poll Git repositories and automatically reconcile live cluster state with declared desired state.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of pull-based declarative reconciliation loops (ArgoCD/Flux) using Git as the single source of truth.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0023",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you execute zero-downtime database migrations in a continuous delivery pipeline?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Zero-downtime migrations use multi-step phases: Expand schema (add new nullable columns), deploy code compatible with old and new schemas, migrate data, and Contract schema (remove old columns).",
+      "reference_answer": "Zero-downtime migrations use multi-step phases: Expand schema (add new nullable columns), deploy code compatible with old and new schemas, migrate data, and Contract schema (remove old columns).",
+      "grading_rubric": "Award 5 marks when the answer covers: Expand-and-contract (backward-compatible) schema migration strategy description.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0024",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is a self-hosted runner/agent, and when should an organization use one instead of cloud-managed runners?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Self-hosted runners run on private infrastructure, enabling access to internal VPC resources, custom hardware (GPUs), specialized compliance tooling, or reduction of cloud build minute costs.",
+      "reference_answer": "Self-hosted runners run on private infrastructure, enabling access to internal VPC resources, custom hardware (GPUs), specialized compliance tooling, or reduction of cloud build minute costs.",
+      "grading_rubric": "Award 5 marks when the answer covers: Use cases covering private network access, specialized hardware, cost control, and data residency.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0025",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Medium",
+      "question_text": "Explain matrix builds in pipeline configurations. Give a practical scenario where a matrix build is essential.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Matrix builds dynamically expand a single job template into multiple concurrent jobs across variable parameters, essential for testing Python packages across multiple OS and Python versions.",
+      "reference_answer": "Matrix builds dynamically expand a single job template into multiple concurrent jobs across variable parameters, essential for testing Python packages across multiple OS and Python versions.",
+      "grading_rubric": "Award 5 marks when the answer covers: Definition of parallel job generation across multiple OS, runtime, and architecture permutations.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0026",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is your automated rollback strategy when a production deployment fails health checks?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Pipelines monitor post-deployment health metrics and error rates; if thresholds are breached, the orchestration platform automatically shifts traffic back to the stable replica set or previous container tag.",
+      "reference_answer": "Pipelines monitor post-deployment health metrics and error rates; if thresholds are breached, the orchestration platform automatically shifts traffic back to the stable replica set or previous container tag.",
+      "grading_rubric": "Award 5 marks when the answer covers: Automated rollback workflow utilizing load balancer health checks, canary error thresholds, or previous image rollback.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0027",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you perform infrastructure testing (e.g., Terratest) as part of your CI workflow?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Terratest allows writing automated tests in Go that provision real cloud resources using Terraform, validate assertions, and guarantee cleanup even if tests fail.",
+      "reference_answer": "Terratest allows writing automated tests in Go that provision real cloud resources using Terraform, validate assertions, and guarantee cleanup even if tests fail.",
+      "grading_rubric": "Award 5 marks when the answer covers: Integration test workflow spinning up ephemeral cloud infrastructure, validating configuration, and destroying resources.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0028",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are feature flags (toggles) decouple software deployment from feature release?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Feature flags wrap new code paths in conditional checks, allowing code to be merged and deployed safely to production while remaining hidden until business readiness.",
+      "reference_answer": "Feature flags wrap new code paths in conditional checks, allowing code to be merged and deployed safely to production while remaining hidden until business readiness.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of conditional code execution controlled remotely by management platforms (LaunchDarkly, Unleash).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0029",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is a Software Bill of Materials (SBOM), and why is its generation critical in modern supply chain security?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "An SBOM is a formal inventory of all open-source libraries, packages, and dependencies included in a software build, essential for rapid CVE impact analysis during zero-day vulnerabilities.",
+      "reference_answer": "An SBOM is a formal inventory of all open-source libraries, packages, and dependencies included in a software build, essential for rapid CVE impact analysis during zero-day vulnerabilities.",
+      "grading_rubric": "Award 5 marks when the answer covers: Definition of structured component manifests (SPDX/CycloneDX) used for vulnerability tracking.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0030",
+      "category_id": "CAT-13",
+      "subcategory": "CI/CD",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you optimize pipeline execution time and resource consumption when working with large monorepos?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Monorepo CI optimization involves path-based job filtering to build and test only packages affected by a given pull request commit diff.",
+      "reference_answer": "Monorepo CI optimization involves path-based job filtering to build and test only packages affected by a given pull request commit diff.",
+      "grading_rubric": "Award 5 marks when the answer covers: Techniques utilizing sparse checkouts, changed-file detection tools (Nx, Bazel), and selective job execution.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "CI/CD",
+          "Pipelines"
+        ],
+        "concept_tags": [
+          "ci/cd"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0031",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain the fundamental differences between Virtual Machines (VMs) and Containers regarding architecture and OS resource sharing.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "VMs run full guest operating systems on top of a hypervisor, consuming high overhead. Containers share the host OS kernel via namespaces and cgroups, offering lightweight isolation.",
+      "reference_answer": "VMs run full guest operating systems on top of a hypervisor, consuming high overhead. Containers share the host OS kernel via namespaces and cgroups, offering lightweight isolation.",
+      "grading_rubric": "Award 5 marks when the answer covers: Contrast hypervisor virtualization of full guest OS instances with container user-space sharing of host kernel.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0032",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Docker image layers work, and why are multi-stage builds critical for reducing image size and attack surface?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Docker images consist of cached read-only filesystem layers. Multi-stage builds compile applications in heavy SDK images and copy only the final runtime binary into a lean production image, omitting build tools.",
+      "reference_answer": "Docker images consist of cached read-only filesystem layers. Multi-stage builds compile applications in heavy SDK images and copy only the final runtime binary into a lean production image, omitting build tools.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of UnionFS read-only layers and copying compiled binaries into minimal scratch/alpine runtime stages.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0033",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between CMD and ENTRYPOINT in a Dockerfile? Can you combine them?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "ENTRYPOINT sets the default command executed at container startup. CMD provides default arguments to ENTRYPOINT, which can be overridden easily via command-line arguments during 'docker run'.",
+      "reference_answer": "ENTRYPOINT sets the default command executed at container startup. CMD provides default arguments to ENTRYPOINT, which can be overridden easily via command-line arguments during 'docker run'.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of ENTRYPOINT as fixed executable and CMD as default arguments that can be overridden.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0034",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Docker volumes, bind mounts, and tmpfs mounts differ in data persistence and performance?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Volumes are managed entirely by Docker in host storage (best practice for persistence). Bind mounts map host filesystem paths directly into containers. Tmpfs mounts store ephemeral data directly in host memory.",
+      "reference_answer": "Volumes are managed entirely by Docker in host storage (best practice for persistence). Bind mounts map host filesystem paths directly into containers. Tmpfs mounts store ephemeral data directly in host memory.",
+      "grading_rubric": "Award 5 marks when the answer covers: Comparison of managed Docker storage (volumes), host directory mounting (bind mounts), and RAM storage (tmpfs).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0035",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain Docker networking modes: Bridge, Host, Overlay, and None. When do you use each?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Bridge is default for standalone containers. Host removes network isolation for maximum performance. Overlay enables secure multi-host container communication across Docker Swarm or Kubernetes clusters.",
+      "reference_answer": "Bridge is default for standalone containers. Host removes network isolation for maximum performance. Overlay enables secure multi-host container communication across Docker Swarm or Kubernetes clusters.",
+      "grading_rubric": "Award 5 marks when the answer covers: Use case overview for standalone private networks (bridge), host network sharing (host), multi-host swarm networking (overlay), and isolated containers (none).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0036",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you write a secure Dockerfile (e.g., running as a non-root user, pinning base images, scanning for vulnerabilities)?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Secure Dockerfiles avoid running as root by creating a dedicated user, pin base images with specific SHA256 digests rather than 'latest', and integrate vulnerability scanning tools.",
+      "reference_answer": "Secure Dockerfiles avoid running as root by creating a dedicated user, pin base images with specific SHA256 digests rather than 'latest', and integrate vulnerability scanning tools.",
+      "grading_rubric": "Award 5 marks when the answer covers: Checklist covering USER directive, specific image digests/tags, and vulnerability scanners.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0037",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What causes container disk bloat, and how do you clean up unused images, volumes, and build caches (docker system prune)?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Unused container disk bloat accumulates from dangling image layers, stopped containers, and unused build caches. 'docker system prune' safely reclaims this storage space.",
+      "reference_answer": "Unused container disk bloat accumulates from dangling image layers, stopped containers, and unused build caches. 'docker system prune' safely reclaims this storage space.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of dangling layers and syntax for docker system prune -a --volumes.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0038",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Docker health checks (HEALTHCHECK) work, and how do orchestration tools consume them?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "HEALTHCHECK instructions run commands inside containers periodically. Orchestrators monitor these health states to restart unhealthy containers or stop routing traffic to them.",
+      "reference_answer": "HEALTHCHECK instructions run commands inside containers periodically. Orchestrators monitor these health states to restart unhealthy containers or stop routing traffic to them.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of interval probing, exit code interpretation (0=healthy, 1=unhealthy), and orchestrator traffic routing.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0039",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is Docker Compose, and how do you handle service dependencies, health checks, and scaling locally?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Docker Compose defines multi-container applications in a single YAML file, coordinating service startup ordering, health conditions, and local development environments.",
+      "reference_answer": "Docker Compose defines multi-container applications in a single YAML file, coordinating service startup ordering, health conditions, and local development environments.",
+      "grading_rubric": "Award 5 marks when the answer covers: YAML syntax description utilizing depends_on, healthcheck conditions, and service replicas.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0040",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you debug a crashing or unresponsive container using docker logs, docker exec, and container introspection?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Developers inspect container failure causes by checking stdout logs with 'docker logs', executing interactive shell commands via 'docker exec -it', and inspecting container metadata with 'docker inspect'.",
+      "reference_answer": "Developers inspect container failure causes by checking stdout logs with 'docker logs', executing interactive shell commands via 'docker exec -it', and inspecting container metadata with 'docker inspect'.",
+      "grading_rubric": "Award 5 marks when the answer covers: Diagnostic command walkthrough for inspecting stdout, opening shell sessions, and inspecting exit codes.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0041",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is container image scanning, and how do tools like Trivy integrate into your CI pipeline?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Image scanning tools analyze container filesystem layers against known vulnerability databases, failing CI pipelines if critical or high CVE thresholds are exceeded.",
+      "reference_answer": "Image scanning tools analyze container filesystem layers against known vulnerability databases, failing CI pipelines if critical or high CVE thresholds are exceeded.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of CVE database matching against OS packages and application dependencies during build.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0042",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Linux namespaces and cgroups power container isolation and resource limitation?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Namespaces virtualize system resources (PID, NET, MNT) so processes see an isolated environment. Control groups (cgroups) restrict resource usage (CPU, memory, I/O) allocated to container processes.",
+      "reference_answer": "Namespaces virtualize system resources (PID, NET, MNT) so processes see an isolated environment. Control groups (cgroups) restrict resource usage (CPU, memory, I/O) allocated to container processes.",
+      "grading_rubric": "Award 5 marks when the answer covers: Technical differentiation of namespaces (process/network isolation) and cgroups (CPU/memory caps).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0043",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you share local Unix sockets or files securely between a host machine and a running container?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Host sockets and files are shared by mounting specific host paths into container mount points using volume flags (e.g., -v /var/run/docker.sock:/var/run/docker.sock).",
+      "reference_answer": "Host sockets and files are shared by mounting specific host paths into container mount points using volume flags (e.g., -v /var/run/docker.sock:/var/run/docker.sock).",
+      "grading_rubric": "Award 5 marks when the answer covers: Volume mount syntax for mounting host socket paths (e.g., Docker socket or SSH agent sockets).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0044",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is a container registry (e.g., AWS ECR, GitHub Packages), and how do image tags and immutable digests differ?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Image tags can be overwritten in registries pointing to different builds. Immutable image digests (sha256:...) guarantee exact binary reproducibility and supply chain integrity.",
+      "reference_answer": "Image tags can be overwritten in registries pointing to different builds. Immutable image digests (sha256:...) guarantee exact binary reproducibility and supply chain integrity.",
+      "grading_rubric": "Award 5 marks when the answer covers: Distinction between mutable tags (v1.0) and immutable cryptographic SHA256 content digests.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0045",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you handle graceful shutdowns (SIGTERM handling) in containerized applications to prevent dropped connections?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "When stopping, Docker sends SIGTERM. Applications must trap this signal, stop accepting new requests, finish processing in-flight requests, and exit cleanly before the forced SIGKILL timeout.",
+      "reference_answer": "When stopping, Docker sends SIGTERM. Applications must trap this signal, stop accepting new requests, finish processing in-flight requests, and exit cleanly before the forced SIGKILL timeout.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of container orchestration termination signals and application signal trap implementation.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Docker",
+          "Containers"
+        ],
+        "concept_tags": [
+          "docker"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0046",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are the core control plane components of Kubernetes (kube-apiserver, etcd, kube-scheduler, controller-manager), and what does each do?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Kube-apiserver exposes the Kubernetes API. Etcd stores cluster state reliably. Kube-scheduler assigns pods to worker nodes. Controller-manager runs background reconciliation loops.",
+      "reference_answer": "Kube-apiserver exposes the Kubernetes API. Etcd stores cluster state reliably. Kube-scheduler assigns pods to worker nodes. Controller-manager runs background reconciliation loops.",
+      "grading_rubric": "Award 5 marks when the answer covers: Architectural breakdown of cluster state storage (etcd), API gateway, scheduling logic, and control loops.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0047",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the role of kubelet, kube-proxy, and the container runtime (e.g., containerd) on worker nodes?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Kubelet ensures pods run correctly on nodes. Kube-proxy manages network rules and cluster service load balancing. Containerd pulls images and executes containers.",
+      "reference_answer": "Kubelet ensures pods run correctly on nodes. Kube-proxy manages network rules and cluster service load balancing. Containerd pulls images and executes containers.",
+      "grading_rubric": "Award 5 marks when the answer covers: Worker node component explanation managing pod lifecycle, network routing, and container execution.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0048",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Compare Pods, Deployments, StatefulSets, and DaemonSets. When would you use a StatefulSet over a Deployment?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Deployments manage stateless replica pods. StatefulSets manage stateful applications requiring unique persistent network identifiers, stable storage volumes, and ordered startup/shutdown.",
+      "reference_answer": "Deployments manage stateless replica pods. StatefulSets manage stateful applications requiring unique persistent network identifiers, stable storage volumes, and ordered startup/shutdown.",
+      "grading_rubric": "Award 5 marks when the answer covers: Workload classification covering stateless scaling vs persistent ordered stateful workloads.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0049",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Kubernetes Services (ClusterIP, NodePort, LoadBalancer) and Ingress controllers handle incoming traffic?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "ClusterIP provides internal cluster networking; NodePort opens ports on worker nodes; LoadBalancer provisions cloud load balancers. Ingress provides advanced Layer 7 routing, SSL termination, and path-based routing.",
+      "reference_answer": "ClusterIP provides internal cluster networking; NodePort opens ports on worker nodes; LoadBalancer provisions cloud load balancers. Ingress provides advanced Layer 7 routing, SSL termination, and path-based routing.",
+      "grading_rubric": "Award 5 marks when the answer covers: Traffic routing explanation from internal service abstraction to L7 HTTP/HTTPS reverse proxy routing.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0050",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between ConfigMaps and Secrets, and how are they mounted or injected into pods?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "ConfigMaps store non-confidential configuration data. Secrets store sensitive data (base64 encoded). Both can be injected into pods as environment variables or mounted files.",
+      "reference_answer": "ConfigMaps store non-confidential configuration data. Secrets store sensitive data (base64 encoded). Both can be injected into pods as environment variables or mounted files.",
+      "grading_rubric": "Award 5 marks when the answer covers: Comparison of plain-text configuration storage vs base64-encoded secret storage and injection methods.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0051",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain Requests and Limits in Kubernetes resource management. What happens to a pod that exceeds its memory limit (OOMKilled)?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Requests reserve minimum compute resources for scheduling. Limits cap maximum resource consumption. If a container exceeds its memory limit, the Linux kernel terminates the process with an OOMKilled exit code.",
+      "reference_answer": "Requests reserve minimum compute resources for scheduling. Limits cap maximum resource consumption. If a container exceeds its memory limit, the Linux kernel terminates the process with an OOMKilled exit code.",
+      "grading_rubric": "Award 5 marks when the answer covers: Distinction between scheduling allocation requests and hard resource limits, detailing Linux kernel OOM killer action.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0052",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are Liveness, Readiness, and Startup probes, and why are they vital for zero-downtime rolling updates?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Startup probes verify slow-starting app initialization. Readiness probes control when traffic is routed to pods. Liveness probes restart dead or deadlocked containers automatically.",
+      "reference_answer": "Startup probes verify slow-starting app initialization. Readiness probes control when traffic is routed to pods. Liveness probes restart dead or deadlocked containers automatically.",
+      "grading_rubric": "Award 5 marks when the answer covers: Operational distinction between app initialization (startup), traffic readiness (readiness), and health recovery (liveness).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0053",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Persistent Volumes (PV), Persistent Volume Claims (PVC), and StorageClasses work together?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "StorageClasses define storage provisioner types. PVCs are user storage requests. PVs are actual cluster storage resources. StorageClasses dynamically provision PVs matching PVC requests.",
+      "reference_answer": "StorageClasses define storage provisioner types. PVCs are user storage requests. PVs are actual cluster storage resources. StorageClasses dynamically provision PVs matching PVC requests.",
+      "grading_rubric": "Award 5 marks when the answer covers: Dynamic provisioning workflow explanation connecting user storage claims to cluster-level storage backends.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0054",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is Helm, and what problems do Helm charts solve in Kubernetes application packaging?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Helm packages complex Kubernetes manifests into shareable, version-controlled charts with configurable values, simplifying application deployment, upgrades, and rollbacks.",
+      "reference_answer": "Helm packages complex Kubernetes manifests into shareable, version-controlled charts with configurable values, simplifying application deployment, upgrades, and rollbacks.",
+      "grading_rubric": "Award 5 marks when the answer covers: Definition of Helm as the package manager for Kubernetes using templated manifests and release versioning.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0055",
+      "category_id": "CAT-13",
+      "subcategory": "Kubernetes",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do Kubernetes Network Policies enforce microsegmentation and security isolation between namespaces or pods?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Network Policies act as virtual firewall rules for pods, allowing administrators to restrict ingress and egress traffic based on namespace selectors, pod selectors, and IP blocks.",
+      "reference_answer": "Network Policies act as virtual firewall rules for pods, allowing administrators to restrict ingress and egress traffic based on namespace selectors, pod selectors, and IP blocks.",
+      "grading_rubric": "Award 5 marks when the answer covers: Ingress/egress traffic rule configuration description restricting inter-pod communication.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Kubernetes",
+          "Orchestration"
+        ],
+        "concept_tags": [
+          "kubernetes"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0056",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is Infrastructure as Code (IaC), and what are the advantages of declarative tools over imperative scripting?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "IaC manages infrastructure using machine-readable configuration files. Declarative tools define the *desired* final state, allowing automation engines to figure out required creation or update steps automatically.",
+      "reference_answer": "IaC manages infrastructure using machine-readable configuration files. Declarative tools define the *desired* final state, allowing automation engines to figure out required creation or update steps automatically.",
+      "grading_rubric": "Award 5 marks when the answer covers: Comparison of procedural script execution vs declarative target state reconciliation.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0057",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain Terraform state management. Why is remote state storage with state locking (e.g., S3 + DynamoDB) mandatory in team environments?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Terraform state tracks resource mappings between configuration and real cloud infrastructure. Remote shared storage with locking prevents concurrent team runs from corrupting state files.",
+      "reference_answer": "Terraform state tracks resource mappings between configuration and real cloud infrastructure. Remote shared storage with locking prevents concurrent team runs from corrupting state files.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of state mapping file (.tfstate) and race-condition prevention via state locking.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0058",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between terraform plan, terraform apply, and terraform destroy? How does Terraform build its dependency graph?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Plan previews changes; apply executes changes; destroy removes all managed infrastructure. Terraform automatically builds a Directed Acyclic Graph (DAG) of resource dependencies to determine correct execution order.",
+      "reference_answer": "Plan previews changes; apply executes changes; destroy removes all managed infrastructure. Terraform automatically builds a Directed Acyclic Graph (DAG) of resource dependencies to determine correct execution order.",
+      "grading_rubric": "Award 5 marks when the answer covers: Workflow explanation from dry-run diff generation to execution and resource teardown based on reference dependency graphs.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0059",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are Terraform modules, and how do they enforce reusability and standardization across cloud infrastructure?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Terraform modules encapsulate related resources into reusable components, enabling organizations to enforce consistent security baselines and standards across projects.",
+      "reference_answer": "Terraform modules encapsulate related resources into reusable components, enabling organizations to enforce consistent security baselines and standards across projects.",
+      "grading_rubric": "Award 5 marks when the answer covers: Definition of reusable configuration containers accepting input variables and returning output values.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0060",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you handle sensitive variables, passwords, and state secrets securely in Terraform/OpenTofu?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Sensitive values should be marked with `sensitive = true`, passed via environment variables, or fetched dynamically from secret vaults rather than hardcoded in version-controlled configuration files.",
+      "reference_answer": "Sensitive values should be marked with `sensitive = true`, passed via environment variables, or fetched dynamically from secret vaults rather than hardcoded in version-controlled configuration files.",
+      "grading_rubric": "Award 5 marks when the answer covers: Best practices using sensitive variable flags, environment variables, and external secret manager data sources.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0061",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is infrastructure 'drift,' and how do IaC tools detect and remediate unauthorized manual changes?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Drift occurs when infrastructure is modified manually outside of IaC. Running `terraform plan` compares current cloud state against state files to highlight and remediate drift.",
+      "reference_answer": "Drift occurs when infrastructure is modified manually outside of IaC. Running `terraform plan` compares current cloud state against state files to highlight and remediate drift.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of discrepancies between state file and actual cloud provider configuration detected during plan execution.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0062",
+      "category_id": "CAT-13",
+      "subcategory": "Infrastructure as Code",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Compare Infrastructure as Code tools (like Terraform/OpenTofu) with Configuration Management tools (like Ansible, Chef, Puppet).",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "IaC tools provision cloud servers, networks, and databases. Configuration management tools configure software packages, users, and services inside existing operating systems.",
+      "reference_answer": "IaC tools provision cloud servers, networks, and databases. Configuration management tools configure software packages, users, and services inside existing operating systems.",
+      "grading_rubric": "Award 5 marks when the answer covers: Distinction between provisioning infrastructure resources (Terraform) vs configuring OS packages inside servers (Ansible).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Terraform",
+          "IaC",
+          "Cloud"
+        ],
+        "concept_tags": [
+          "infrastructure as code"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0063",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What are the Three Pillars of Observability (Metrics, Logs, Traces), and what tools represent industry standards for each?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Metrics (Prometheus) track aggregated performance numbers; Logs (Loki, Elasticsearch) record discrete timestamped events; Traces (Jaeger, OpenTelemetry) follow requests across microservice boundaries.",
+      "reference_answer": "Metrics (Prometheus) track aggregated performance numbers; Logs (Loki, Elasticsearch) record discrete timestamped events; Traces (Jaeger, OpenTelemetry) follow requests across microservice boundaries.",
+      "grading_rubric": "Award 5 marks when the answer covers: Classification of numerical time-series data, text event logs, and distributed transaction spans with tool examples.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0064",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between push-based monitoring and pull-based monitoring (e.g., Prometheus architecture)?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Pull-based monitoring scrapes metrics from target endpoints over HTTP, allowing easier service discovery and health detection of scraper targets compared to push-based agents.",
+      "reference_answer": "Pull-based monitoring scrapes metrics from target endpoints over HTTP, allowing easier service discovery and health detection of scraper targets compared to push-based agents.",
+      "grading_rubric": "Award 5 marks when the answer covers: Architectural contrast of agents sending metrics to a central collector (push) vs central server scraping endpoints (pull).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0065",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Define SLOs (Service Level Objectives), SLAs (Service Level Agreements), and SLIs (Service Level Indicators) with a concrete web service example.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "SLIs measure system performance (e.g., HTTP request latency). SLOs set internal targets for SLIs (e.g., 99.9% of requests under 200ms). SLAs are legal customer contracts tied to financial penalties.",
+      "reference_answer": "SLIs measure system performance (e.g., HTTP request latency). SLOs set internal targets for SLIs (e.g., 99.9% of requests under 200ms). SLAs are legal customer contracts tied to financial penalties.",
+      "grading_rubric": "Award 5 marks when the answer covers: Clear mathematical definitions and business agreements regarding uptime and latency metrics.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0066",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is an 'error budget' in Site Reliability Engineering (SRE), and how does it balance release velocity with system stability?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "An error budget represents the acceptable unreliability derived from an SLO (e.g., 100% - 99.9% = 0.1% downtime). If the budget is exhausted, releases are halted to prioritize reliability.",
+      "reference_answer": "An error budget represents the acceptable unreliability derived from an SLO (e.g., 100% - 99.9% = 0.1% downtime). If the budget is exhausted, releases are halted to prioritize reliability.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of allowable downtime derived from SLO targets and policy enforcement for feature freezes.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0067",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "How do you design centralized log aggregation across distributed microservices using tools like Grafana Loki or Elasticsearch?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Centralized logging uses daemonset log agents on nodes to harvest container stdout, tag them with metadata, and stream them to searchable indexed or index-free log stores.",
+      "reference_answer": "Centralized logging uses daemonset log agents on nodes to harvest container stdout, tag them with metadata, and stream them to searchable indexed or index-free log stores.",
+      "grading_rubric": "Award 5 marks when the answer covers: Architecture overview of container log collectors (Promtail/FluentBit) shipping logs to backend query engines.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0068",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is Distributed Tracing, and how do correlation IDs and OpenTelemetry help trace requests across multiple services?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Distributed tracing injects trace and span IDs into HTTP request headers across service calls, enabling visualization of end-to-end latency and bottleneck analysis in microservices.",
+      "reference_answer": "Distributed tracing injects trace and span IDs into HTTP request headers across service calls, enabling visualization of end-to-end latency and bottleneck analysis in microservices.",
+      "grading_rubric": "Award 5 marks when the answer covers: Explanation of HTTP context propagation headers tracking request lifecycles across distributed systems.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0069",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is the difference between SAST (Static Application Security Testing) and DAST (Dynamic Application Security Testing) in a DevOps lifecycle?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "SAST analyzes source code or binaries for vulnerabilities during CI without running the app. DAST tests running applications externally via simulated attacks to find runtime misconfigurations.",
+      "reference_answer": "SAST analyzes source code or binaries for vulnerabilities during CI without running the app. DAST tests running applications externally via simulated attacks to find runtime misconfigurations.",
+      "grading_rubric": "Award 5 marks when the answer covers: Distinction between analyzing source code without execution (SAST) and black-box runtime penetration testing (DAST).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DEVOPS-0070",
+      "category_id": "CAT-13",
+      "subcategory": "Monitoring & Observability",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "What is 'Chaos Engineering', and how do tools like Chaos Mesh help test system resilience under failure conditions?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Chaos engineering introduces controlled, real-world failures (like network partitions or node crashes) into staging or production systems to verify automated recovery and system resilience.",
+      "reference_answer": "Chaos engineering introduces controlled, real-world failures (like network partitions or node crashes) into staging or production systems to verify automated recovery and system resilience.",
+      "grading_rubric": "Award 5 marks when the answer covers: Definition of proactive fault injection experiments (latency, pod failure, packet loss) to validate system resilience.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "DevOps Pack - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "Observability",
+          "SRE",
+          "Security"
+        ],
+        "concept_tags": [
+          "monitoring & observability"
+        ],
+        "prerequisite_concepts": [],
+        "related_within_section": []
+      }
+    }
+  ]
+}

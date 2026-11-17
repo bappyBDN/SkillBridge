@@ -1,0 +1,2050 @@
+{
+  "package_version": "1.0",
+  "batch_id": "framework-bank-001",
+  "source_file": "questionbank.json",
+  "topic": "Framework and AI engineering question bank",
+  "language": "en",
+  "generated_at": "2026-11-13T21:35:00Z",
+  "normalized_at": "2026-11-13",
+  "notes": [
+    "Concatenated JSON objects were split into one batch; unescaped quotes and invalid backslash escapes repaired.",
+    "category_id remapped to live categories CAT-02, CAT-04, CAT-11, CAT-12 and CAT-13.",
+    "subcategory set to the exact label declared in question_categories so GraphRAG skill retrieval matches.",
+    "Medium Coding marks/time corrected to the 10 mark / 900 sec policy.",
+    "Duplicate 'Valid Parentheses' coding question (GEN-DSA-COD-0005) removed in favour of GEN-DSA-COD-0002.",
+    "All rows remain status=draft for human review."
+  ],
+  "coverage": {
+    "topics": {
+      "Data Structures & Algorithms": {
+        "questions": 8,
+        "difficulty": {
+          "Easy": 3,
+          "Medium": 4,
+          "Hard": 1
+        },
+        "formats": {
+          "Coding": 4,
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1
+        }
+      },
+      "Django": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 1,
+          "Medium": 3,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "Docker": {
+        "questions": 3,
+        "difficulty": {
+          "Medium": 2,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "FastAPI": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 2,
+          "Medium": 2,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "Fine-Tuning & PyTorch": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 1,
+          "Medium": 3,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "LangGraph": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 1,
+          "Medium": 3,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "Linux": {
+        "questions": 1,
+        "difficulty": {
+          "Easy": 1
+        },
+        "formats": {
+          "MCQ": 1
+        }
+      },
+      "Node.js": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 1,
+          "Medium": 3,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "Operating Systems": {
+        "questions": 1,
+        "difficulty": {
+          "Medium": 1
+        },
+        "formats": {
+          "Explainable": 1
+        }
+      },
+      "RAG Pipelines": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 1,
+          "Medium": 3,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      },
+      "React & Next.js": {
+        "questions": 5,
+        "difficulty": {
+          "Easy": 1,
+          "Medium": 3,
+          "Hard": 1
+        },
+        "formats": {
+          "MCQ": 2,
+          "Explainable": 1,
+          "Scenario-Based": 1,
+          "Coding": 1
+        }
+      }
+    },
+    "total_questions": 48
+  },
+  "questions": [
+    {
+      "id": "GEN-FASTAPI-MCQ-0001",
+      "category_id": "CAT-11",
+      "subcategory": "FastAPI",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "Which Python library does FastAPI use under the hood for data validation, serialization, and settings management?",
+      "options": [
+        "Pydantic",
+        "Marshmallow",
+        "Cerberus",
+        "SQLModel"
+      ],
+      "correct_answer": "Pydantic",
+      "explanation": "FastAPI relies entirely on Pydantic for defining data models, validating incoming request payloads, and serializing responses. Marshmallow and Cerberus are alternative validation libraries not used natively by FastAPI's core architecture. SQLModel is built on top of Pydantic by the same author, but Pydantic itself is the core validation engine. In production, understanding Pydantic v2 performance improvements is essential when handling high-throughput JSON payloads (Version note: Pydantic v2 introduced significant rust-core speedups used in FastAPI 0.100+).",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "FastAPI",
+          "Python"
+        ],
+        "concept_tags": [
+          "pydantic",
+          "validation"
+        ],
+        "prerequisite_concepts": [
+          "python type hints"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-FASTAPI-MCQ-0002",
+      "category_id": "CAT-11",
+      "subcategory": "FastAPI",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "When defining a dependency using Depends() in FastAPI that opens a database session, how does FastAPI ensure the session cleanup (such as closing the connection) occurs after the response is sent?",
+      "options": [
+        "Using a Python generator with a try/finally or yield statement",
+        "Using a background task registered via BackgroundTasks",
+        "Using a FastAPI middleware hooked into the ASGI lifecycle",
+        "Using a context manager decorator on the endpoint function"
+      ],
+      "correct_answer": "Using a Python generator with a try/finally or yield statement",
+      "explanation": "FastAPI supports generator-based dependencies using yield. Code before yield executes before the endpoint runs, and code after yield executes after the response is sent, even if an exception occurs during request processing (wrapped in a try/finally block). Background tasks run after the response, but are not designed for dependency cleanup. Middleware runs at the ASGI layer, not per-dependency. Context managers on endpoints do not integrate natively with FastAPI's dependency injection system. In production, failing to use yield properly with async DB sessions can cause connection leaks.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "FastAPI",
+          "Python"
+        ],
+        "concept_tags": [
+          "dependency injection",
+          "generator"
+        ],
+        "prerequisite_concepts": [
+          "dependency injection"
+        ],
+        "related_within_section": [
+          "GEN-FASTAPI-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-FASTAPI-EXP-0003",
+      "category_id": "CAT-11",
+      "subcategory": "FastAPI",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how FastAPI decides whether to run a path operation function (endpoint) in a separate thread pool versus directly on the main event loop. What are the performance implications of choosing def versus async def incorrectly?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "FastAPI inspects how the endpoint function is defined. If defined with standard def, FastAPI runs it in an external thread pool (Starlette's run_in_threadpool) to prevent blocking the main event loop. If defined with async def, FastAPI runs it directly on the event loop. If an async def endpoint performs blocking synchronous I/O (such as standard requests or blocking SQL queries), it starves the event loop, causing latency spikes for all concurrent requests. Conversely, making a pure async endpoint a regular def introduces unnecessary thread context-switch overhead. In FastAPI 0.100+, proper threadpool management is crucial for hybrid async/sync codebases.",
+      "reference_answer": "FastAPI uses async def to run handlers directly on the event loop as coroutines, whereas standard def functions are executed in an external thread pool managed by Starlette. If a developer uses async def but calls blocking I/O (like file reading or synchronous database drivers), the entire event loop blocks, destroying concurrency. If they use def for async-native operations, they lose non-blocking efficiency due to thread overhead. Example: A synchronous DB call inside async def get_items() blocks 100 concurrent requests; changing it to def get_items() offloads it safely to a thread pool.",
+      "grading_rubric": "Award 1 mark for correctly explaining the rule for def vs async def. Award 2 marks for explaining event loop blocking and thread pool offloading. Award 2 marks for giving concrete performance implications and a correct fix.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "FastAPI",
+          "Python"
+        ],
+        "concept_tags": [
+          "event loop",
+          "async io"
+        ],
+        "prerequisite_concepts": [
+          "coroutines",
+          "HTTP request handling"
+        ],
+        "related_within_section": [
+          "GEN-FASTAPI-MCQ-0001",
+          "GEN-FASTAPI-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-FASTAPI-SCN-0004",
+      "category_id": "CAT-11",
+      "subcategory": "FastAPI",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A high-traffic FastAPI microservice experiences intermittent request timeouts under load. Investigation reveals that a dependency fetching user permissions makes synchronous HTTP calls to an external Auth0 service inside an async def endpoint without timeouts or circuit breaking. Detail how you would refactor this dependency and route to ensure resilience, and how you would test the failure mode.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "A robust solution requires replacing synchronous HTTP clients with an asynchronous client (like httpx.AsyncClient) with explicit connection timeouts, implementing circuit breaking (e.g., via resilience or pybreaker), and caching permission results in Redis to reduce external calls. Furthermore, since the external call is I/O bound, using async def properly with httpx prevents event loop blocking, provided connection pooling is configured. Testing should involve mocking the Auth0 service with latency injection (e.g., respx or pytest-asyncio) to verify timeout handling and fallback behavior.",
+      "reference_answer": "To resolve this, first convert the permission-fetching dependency to use httpx.AsyncClient with strict timeout configurations (e.g., 2.0 seconds). Second, wrap the external call in a circuit breaker pattern to fail fast when Auth0 is degraded. Third, cache user permissions in Redis with a short TTL (e.g., 60 seconds) so repeated requests within a window don't hit Auth0. To prove the fix, write a pytest test using respx to simulate Auth0 latency and verify that the endpoint returns a 503 Service Unavailable or falls back gracefully rather than hanging the event loop.",
+      "grading_rubric": "Award 1 mark for identifying event loop blocking or timeout omission. Award 2 marks for proposing async HTTP client, timeouts, and caching/circuit breaker. Award 2 marks for describing a valid testing/simulation methodology with mock latency.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "FastAPI",
+          "Python"
+        ],
+        "concept_tags": [
+          "async io",
+          "dependency injection"
+        ],
+        "prerequisite_concepts": [
+          "event loop",
+          "dependency injection"
+        ],
+        "related_within_section": [
+          "GEN-FASTAPI-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-FASTAPI-COD-0005",
+      "category_id": "CAT-11",
+      "subcategory": "FastAPI",
+      "question_type": "Coding",
+      "difficulty_level": "Easy",
+      "question_text": "Write a complete, runnable FastAPI path operation that accepts a JSON body containing an item name (string) and price (float greater than 0), calculates a 15% tax, and returns the item name along with the calculated total price (price * 1.15). Use Pydantic for validation.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task evaluates correct Pydantic model definition (BaseModel with Field(gt=0)) and FastAPI path operation routing. The solution must define an input model, an output model (or dict), and a POST endpoint taking the validated payload. Edge cases include zero or negative prices being automatically rejected by Pydantic validation (returning a 422 Unprocessable Entity), and float precision handling. Time complexity is O(1) and space complexity is O(1).",
+      "reference_answer": "from fastapi import FastAPI, HTTPException\nfrom pydantic import BaseModel, Field\n\napp = FastAPI()\n\nclass ItemCreate(BaseModel):\n    name: str\n    price: float = Field(..., gt=0, description=\"Price must be greater than zero\")\n\nclass ItemResponse(BaseModel):\n    name: str\n    total_price: float\n\n@app.post(\"/items/\", response_model=ItemResponse)\ndef create_item(item: ItemCreate):\n    total = round(item.price * 1.15, 2)\n    return ItemResponse(name=item.name, total_price=total)\n\nTime Complexity: O(1). Space Complexity: O(1). Edge cases: Pydantic handles negative or zero prices by raising a 422 validation error automatically.",
+      "grading_rubric": "Award 2 marks for correct Pydantic model with gt=0 validation. Award 2 marks for correct FastAPI POST route definition and type annotations. Award 2 marks for correct tax calculation and response model. Award 1 mark for clean code, edge case handling, and complexity statement.",
+      "marks": 7,
+      "time_allocation": 600,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "FastAPI",
+          "Python"
+        ],
+        "concept_tags": [
+          "pydantic",
+          "validation"
+        ],
+        "prerequisite_concepts": [
+          "python type hints",
+          "pydantic"
+        ],
+        "related_within_section": [
+          "GEN-FASTAPI-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DJANGO-MCQ-0001",
+      "category_id": "CAT-11",
+      "subcategory": "Django",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "What is the primary difference between select_related() and prefetch_related() in the Django ORM?",
+      "options": [
+        "select_related does an SQL JOIN for ForeignKey/OneToOne, while prefetch_related does separate queries and joins in Python for ManyToMany/Reverse ForeignKeys.",
+        "select_related caches results in Redis, while prefetch_related caches in memory.",
+        "select_related is used for ManyToMany relationships, while prefetch_related is used for ForeignKey relationships.",
+        "select_related executes asynchronously, while prefetch_related executes synchronously."
+      ],
+      "correct_answer": "select_related does an SQL JOIN for ForeignKey/OneToOne, while prefetch_related does separate queries and joins in Python for ManyToMany/Reverse ForeignKeys.",
+      "explanation": "select_related follows foreign-key relationships, performing a SQL JOIN and populating the object in a single query. It is suitable for single-valued relationships (ForeignKey, OneToOneField). prefetch_related handles multi-valued relationships (ManyToManyField, reverse ForeignKeys) by executing separate lookups for each relationship and joining them in Python memory using Python-side set operations. Using select_related on a ManyToMany field raises an error. In Django production code, choosing the correct method prevents severe N+1 query performance degradation.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "Django",
+          "Python",
+          "SQL"
+        ],
+        "concept_tags": [
+          "orm",
+          "query optimization",
+          "n+1 query"
+        ],
+        "prerequisite_concepts": [
+          "database joins",
+          "django orm"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DJANGO-MCQ-0002",
+      "category_id": "CAT-11",
+      "subcategory": "Django",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "In Django middleware (using the modern MIDDLEWARE setting style with the factory pattern), how is a middleware initialized and executed per request?",
+      "options": [
+        "The middleware factory is called once when the server starts to create the middleware instance, and its __call__ method is invoked for every incoming request.",
+        "A new instance of the middleware class is instantiated for every incoming request.",
+        "The middleware __init__ method is called per request, and __call__ is called only once on startup.",
+        "Middleware functions are executed in reverse order of the URL resolver configuration."
+      ],
+      "correct_answer": "The middleware factory is called once when the server starts to create the middleware instance, and its __call__ method is invoked for every incoming request.",
+      "explanation": "Django middleware is initialized only once when the Web Server Gateway Interface (WSGI) or ASGI application starts up. The `__init__` method receives the `get_response` callable. For each incoming HTTP request, the middleware instance's `__call__` method is invoked, allowing it to process the request before passing it down the chain. Because middleware is instantiated once globally, developers must ensure middleware instances are thread-safe and avoid storing request-specific state directly on instance attributes. (Version note: This factory pattern became standard starting in Django 1.10+ and remains in Django 4.x/5.x).",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "Django",
+          "Python"
+        ],
+        "concept_tags": [
+          "middleware",
+          "request-response cycle"
+        ],
+        "prerequisite_concepts": [
+          "HTTP request handling"
+        ],
+        "related_within_section": [
+          "GEN-DJANGO-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DJANGO-EXP-0003",
+      "category_id": "CAT-11",
+      "subcategory": "Django",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how Django's transaction.atomic() context manager handles database transactions and how nested atomic blocks behave using database savepoints.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Django's `transaction.atomic()` ensures that all database queries executed within its block are committed together or rolled back entirely if an exception occurs. When atomic blocks are nested, Django does not open a new top-level database transaction; instead, it utilizes database savepoints (using SQL SAVEPOINT commands). If an inner atomic block raises an exception, Django rolls back only to that specific savepoint, allowing the outer transaction to catch the exception, handle it gracefully, and choose whether to commit the remaining changes. This prevents partial data corruption and provides granular transaction management across service layers.",
+      "reference_answer": "transaction.atomic() guarantees atomicity by wrapping operations in a database transaction block (BEGIN/COMMIT/ROLLBACK). When nested, Django creates a database savepoint. If an exception occurs inside the inner block, Django issues a ROLLBACK TO SAVEPOINT, discarding only the inner changes while keeping outer database operations intact. Example: A user registration function is atomic; inside it, a nested atomic block creates a profile. If profile creation fails due to a constraint violation, the savepoint rolls back the profile query without rolling back the base user creation, provided the exception is caught and handled appropriately.",
+      "grading_rubric": "Award 1 mark for explaining basic commit/rollback behavior of atomic(). Award 2 marks for explaining nested atomic blocks and savepoint mechanics. Award 2 marks for explaining how exceptions trigger partial vs full rollbacks and preventing data corruption.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "Django",
+          "Python",
+          "SQL"
+        ],
+        "concept_tags": [
+          "transactions",
+          "orm",
+          "savepoints"
+        ],
+        "prerequisite_concepts": [
+          "database transactions",
+          "django orm"
+        ],
+        "related_within_section": [
+          "GEN-DJANGO-MCQ-0001",
+          "GEN-DJANGO-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DJANGO-SCN-0004",
+      "category_id": "CAT-11",
+      "subcategory": "Django",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A Django financial ledger application processes high-volume concurrent deposits and withdrawals on bank accounts. Developers notice that updating an account balance using `account.balance = account.balance + amount; account.save()` results in lost updates under race conditions. Explain how you would diagnose this and rewrite the update using Django ORM features to guarantee thread-safe atomicity without manual table locking.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This issue is a classic read-modify-write race condition: two concurrent threads read the same balance value from the database, compute the new balance independently in Python, and overwrite each other's updates upon `.save()`, causing lost updates. Diagnosis involves reproducing the issue with concurrent test threads or stress tests and observing that python-side calculations overwrite updates. The correct fix is to use Django's `F()` expressions (e.g., `Account.objects.filter(pk=account_id).update(balance=F('balance') + amount)`), which translates into an atomic SQL atomic update statement (`UPDATE ... SET balance = balance + amount`), executed entirely on the database server without Python read races. For business validations requiring row checks, `select_for_update()` inside `transaction.atomic()` can be used.",
+      "reference_answer": "Identify the read-modify-write race condition where Python fetches balance, modifies it, and saves. To fix it without full table locks, use `Account.objects.filter(pk=account_id).update(balance=F('balance') + amount)`. This instructs the database to perform the arithmetic atomically in SQL, eliminating the race window. If strict validation is needed before updating, wrap the operation in `transaction.atomic()` and use `Account.objects.select_for_update().get(pk=account_id)` to lock the specific row until the transaction commits.",
+      "grading_rubric": "Award 1 mark for identifying the read-modify-write race condition. Award 2 marks for explaining F() expressions and atomic SQL execution. Award 1 mark for mentioning select_for_update() as an alternative row-locking approach. Award 1 mark for explaining database-level atomicity benefits.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "Django",
+          "Python",
+          "SQL"
+        ],
+        "concept_tags": [
+          "concurrency",
+          "orm",
+          "transactions"
+        ],
+        "prerequisite_concepts": [
+          "transactions",
+          "django orm"
+        ],
+        "related_within_section": [
+          "GEN-DJANGO-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DJANGO-COD-0005",
+      "category_id": "CAT-11",
+      "subcategory": "Django",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a complete Django REST Framework (DRF) ModelSerializer and a corresponding APIView for an Article model that validates that the title is unique and automatically sets an author field to the currently authenticated request user upon creation.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task tests knowledge of Django REST Framework ModelSerializer configuration and APIView customization. The serializer must mark the `author` field as `read_only_fields` so clients cannot spoof authorship. The APIView's `post` method must check `serializer.is_valid()` and pass `author=request.user` into `serializer.save()`. Time complexity is O(1) for serialization/validation, and space complexity is O(1). Edge cases include unauthenticated access (handled by DRF permission classes) and database unique constraint violations on the title field.",
+      "reference_answer": "from rest_framework import serializers, status\nfrom rest_framework.response import Response\nfrom rest_framework.views import APIView\nfrom rest_framework.permissions import IsAuthenticated\nfrom .models import Article\n\nclass ArticleSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Article\n        fields = ['id', 'title', 'content', 'author', 'created_at']\n        read_only_fields = ['author', 'created_at']\n\nclass ArticleCreateView(APIView):\n    permission_classes = [IsAuthenticated]\n\n    def post(self, request):\n        serializer = ArticleSerializer(data=request.data)\n        if serializer.is_valid():\n            serializer.save(author=request.user)\n            return Response(serializer.data, status=status.HTTP_201_CREATED)\n        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)\n\nTime Complexity: O(1). Space Complexity: O(1). Edge cases: Unique title constraints handled by DB/serializer validators.",
+      "grading_rubric": "Award 3 marks for correct ModelSerializer definition with read_only_fields for author. Award 3 marks for correct APIView handling of request.data and validation. Award 3 marks for setting author=request.user on save(). Award 1 mark for clean code structure, permissions, error handling, and complexity notes.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "Django",
+          "Python"
+        ],
+        "concept_tags": [
+          "serializer",
+          "drf",
+          "validation"
+        ],
+        "prerequisite_concepts": [
+          "django orm",
+          "django rest framework"
+        ],
+        "related_within_section": [
+          "GEN-DJANGO-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-REACT-NEXT-MCQ-0001",
+      "category_id": "CAT-12",
+      "subcategory": "React & Next.js",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "In the Next.js App Router (Next.js 13/14/15), how are components rendered by default if they do not include the `'use client'` directive at the top of the file?",
+      "options": [
+        "As React Server Components (RSC) rendered entirely on the server",
+        "As Client Components hydrated on the browser after initial JS execution",
+        "As static HTML pages cached at the CDN edge without JavaScript execution",
+        "As API endpoints returning JSON data directly to the browser"
+      ],
+      "correct_answer": "As React Server Components (RSC) rendered entirely on the server",
+      "explanation": "In the Next.js App Router architecture, all components within the `app/` directory are React Server Components (RSC) by default. They execute exclusively on the server, reducing the JavaScript bundle sent to the client and allowing direct access to backend resources like databases and file systems. To use interactivity, event listeners, or browser-only hooks (`useState`, `useEffect`), developers must explicitly add the `'use client'` directive at the top of the file. (Version note: This behavior is standard across Next.js 13, 14, and 15).",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Frontend Frameworks",
+        "skill_tags": [
+          "react",
+          "nextjs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "server components",
+          "ssr",
+          "app router"
+        ],
+        "prerequisite_concepts": [
+          "react fundamentals",
+          "jsx"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-REACT-NEXT-MCQ-0002",
+      "category_id": "CAT-12",
+      "subcategory": "React & Next.js",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "When submitting a Next.js Server Action combined with React's `useActionState` (formerly `useFormState`) or `useTransition`, how does the client manage the submission loading state?",
+      "options": [
+        "The `pending` boolean returned by useTransition or useActionState automatically becomes true during execution, allowing UI loading indicators.",
+        "The browser performs a full-page reload, wiping out all React component local state.",
+        "A global service worker intercepts the form submit event and injects a loading spinner DOM element.",
+        "React automatically disables all buttons across the entire application until the server responds."
+      ],
+      "correct_answer": "The `pending` boolean returned by useTransition or useActionState automatically becomes true during execution, allowing UI loading indicators.",
+      "explanation": "React 19 and Next.js Server Actions integrate tightly with hooks like `useActionState` and `useTransition`. When an action is invoked, the `pending` (or `isPending`) state transitions to true asynchronously without requiring manual `useState` toggles for loading spinners. The browser does not trigger a traditional full-page reload because Server Actions use progressive enhancement over standard POST requests handled via React's concurrent rendering features.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Frontend Frameworks",
+        "skill_tags": [
+          "react",
+          "nextjs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "server actions",
+          "hooks",
+          "concurrency"
+        ],
+        "prerequisite_concepts": [
+          "react hooks",
+          "forms"
+        ],
+        "related_within_section": [
+          "GEN-REACT-NEXT-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-REACT-NEXT-EXP-0003",
+      "category_id": "CAT-12",
+      "subcategory": "React & Next.js",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain the fundamental architectural differences between React Server Components (RSC) and Client Components in Next.js App Router. Why is it invalid to import a Server Component directly inside a Client Component?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "React Server Components (RSC) execute entirely on the server and transmit serialized JSON-like JSX (React Flight format) to the client, shipping zero JavaScript to the client bundle for those components. Client Components, marked with `'use client'`, execute both during SSR (on the server) and hydrate on the client browser. Importing a Server Component directly inside a Client Component is invalid because Client Components can be instantiated anywhere in the tree during client-side rendering where server-only modules, database drivers, and Node.js APIs are unavailable and cannot be bundled into client JavaScript. Instead, Server Components must be passed into Client Components as children or props (often via the `children` slot).",
+      "reference_answer": "Server Components run exclusively on the server, generating lightweight UI payloads with no client bundle footprint. Client Components run on both server (SSR) and client (hydration). Importing an RSC inside a Client Component breaks the bundling boundary because client code is shipped to the browser, exposing server-only dependencies or causing hydration failures. To compose them correctly, pass the Server Component as `children` prop into the Client Component container, which maintains the server boundary.",
+      "grading_rubric": "Award 1 mark for defining RSC vs Client Component execution environments. Award 2 marks for explaining why importing RSC inside a Client Component violates bundling boundaries. Award 2 marks for explaining the `children` prop composition pattern workaround.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Frontend Frameworks",
+        "skill_tags": [
+          "react",
+          "nextjs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "server components",
+          "hydration",
+          "bundling"
+        ],
+        "prerequisite_concepts": [
+          "server components",
+          "react fundamentals"
+        ],
+        "related_within_section": [
+          "GEN-REACT-NEXT-MCQ-0001",
+          "GEN-REACT-NEXT-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-REACT-NEXT-SCN-0004",
+      "category_id": "CAT-12",
+      "subcategory": "React & Next.js",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A Next.js App Router dashboard page throws frequent hydration mismatch errors in production and displays a jarring layout shift upon load. Investigation reveals that components are directly accessing `window.innerWidth` and `localStorage` during initial render to determine theme and sidebar state. Detail how you would diagnose this root cause and refactor the components for robust SSR and hydration alignment.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Hydration mismatch occurs because the server renders HTML using default values (since `window` and `localStorage` do not exist in Node.js), while the browser client renders different initial markup based on actual browser state. Diagnosis involves checking console error logs for 'Hydration failed because the initial UI does not match what was rendered on the server.' The fix requires deferring browser-only API reads until after mounting using `useEffect`, initializing state with safe default primitives, or utilizing `useSyncExternalStore` / conditional rendering checks like `isMounted` state. For theme and preferences, storing values in cookies rather than `localStorage` allows server-side reading during initial SSR markup generation.",
+      "reference_answer": "Identify that accessing browser globals (`window`, `localStorage`) during initial render causes server markup and client hydration markup to diverge. To fix this: 1) Wrap browser-dependent logic inside `useEffect` so it only runs post-hydration on the client; 2) For theme preferences, migrate from `localStorage` to cookies so the server can read the cookie in Server Components and render the correct markup initially; 3) Use an `isMounted` state boolean if client-only rendering is strictly required, ensuring identical server and initial client fallback renders.",
+      "grading_rubric": "Award 1 mark for identifying the hydration mismatch root cause due to server vs client global API access. Award 2 marks for proposing useEffect post-mount execution or isMounted pattern. Award 2 marks for recommending cookies for server-readable persistence and eliminating layout shift.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Frontend Frameworks",
+        "skill_tags": [
+          "react",
+          "nextjs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "hydration",
+          "ssr",
+          "state management"
+        ],
+        "prerequisite_concepts": [
+          "ssr",
+          "react hooks"
+        ],
+        "related_within_section": [
+          "GEN-REACT-NEXT-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-REACT-NEXT-COD-0005",
+      "category_id": "CAT-12",
+      "subcategory": "React & Next.js",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a complete Next.js Client Component using React 19's `useOptimistic` hook (or equivalent optimistic state update pattern) for a Like button. The component should accept an initial like count and an async server action `updateLikeAction`, updating the UI instantly while the server action processes in the background.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task tests mastery of React 19 concurrent features and optimistic UI updates. `useOptimistic` takes current state and an update function, allowing the UI to reflect changes immediately before network confirmation. If the server action fails, React automatically reverts to the previous state. Time complexity is O(1) and space complexity is O(1). Edge cases include rapid multi-clicks and server action network failures.",
+      "reference_answer": "'use client';\n\nimport { useOptimistic, useTransition } from 'react';\n\nexport default function LikeButton({ initialLikes, contentId, updateLikeAction }) {\n  const [isPending, startTransition] = useTransition();\n  const [optimisticLikes, setOptimisticLikes] = useOptimistic(\n    initialLikes,\n    (currentLikes, updateAmount) => currentLikes + updateAmount\n  );\n\n  const handleLike = async () => {\n    startTransition(async () => {\n      setOptimisticLikes(1);\n      try {\n        await updateLikeAction(contentId);\n      } catch (error) {\n        console.error('Failed to update like', error);\n      }\n    });\n  };\n\n  return (\n    <button onClick={handleLike} disabled={isPending}>\n      ❤️ {optimisticLikes} {isPending ? 'Saving...' : 'Likes'}\n    </button>\n  );\n}\n\nTime Complexity: O(1). Space Complexity: O(1). Edge cases: Automatic rollback occurs if the async action throws an error.",
+      "grading_rubric": "Award 3 marks for correct useOptimistic hook setup and state reducer. Award 3 marks for useTransition and async server action invocation. Award 3 marks for handling pending state and button disable logic. Award 1 mark for clean code, error handling, and complexity notes.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Frontend Frameworks",
+        "skill_tags": [
+          "react",
+          "nextjs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "optimistic ui",
+          "hooks",
+          "server actions"
+        ],
+        "prerequisite_concepts": [
+          "react hooks",
+          "async await"
+        ],
+        "related_within_section": [
+          "GEN-REACT-NEXT-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-NODEJS-MCQ-0001",
+      "category_id": "CAT-11",
+      "subcategory": "Node.js",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "In the Node.js event loop, which phase is responsible for executing callbacks scheduled by `setTimeout()` and `setInterval()`?",
+      "options": [
+        "Timers phase",
+        "Poll phase",
+        "Check phase",
+        "Close callbacks phase"
+      ],
+      "correct_answer": "Timers phase",
+      "explanation": "The Node.js event loop operates in distinct phases managed by libuv. The timers phase executes callbacks scheduled by `setTimeout()` and `setInterval()` when their threshold has been reached. The poll phase retrieves new I/O events and executes I/O-related callbacks. The check phase specifically executes `setImmediate()` callbacks, and the close callbacks phase handles cleanup events like `socket.on('close', ...)`. Understanding these phases is crucial for predicting asynchronous execution order in production applications.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "nodejs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "event loop",
+          "libuv"
+        ],
+        "prerequisite_concepts": [
+          "asynchronous programming",
+          "javascript callbacks"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-NODEJS-MCQ-0002",
+      "category_id": "CAT-11",
+      "subcategory": "Node.js",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "When should a developer choose `Worker Threads` (`worker_threads` module) over the `cluster` module in Node.js?",
+      "options": [
+        "When performing heavy CPU-intensive computations that share memory state via SharedArrayBuffer.",
+        "When scaling a web server across multiple CPU cores by spawning independent server worker processes listening on the same port.",
+        "When handling asynchronous network I/O requests to external microservices.",
+        "When streaming large files from disk to HTTP clients using pipe()."
+      ],
+      "correct_answer": "When performing heavy CPU-intensive computations that share memory state via SharedArrayBuffer.",
+      "explanation": "The `cluster` module spawns independent worker processes with separate memory spaces, ideal for scaling HTTP server throughput across cores. Conversely, the `worker_threads` module runs multiple threads within a single Node.js process instance, allowing efficient memory sharing via `SharedArrayBuffer` for CPU-bound tasks (like image processing or cryptography) without IPC serialization overhead. Neither module is required for standard asynchronous I/O or file streaming, which are handled natively by libuv's thread pool and streams.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "nodejs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "worker threads",
+          "cluster",
+          "concurrency"
+        ],
+        "prerequisite_concepts": [
+          "event loop",
+          "processes and threads"
+        ],
+        "related_within_section": [
+          "GEN-NODEJS-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-NODEJS-EXP-0003",
+      "category_id": "CAT-11",
+      "subcategory": "Node.js",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how libuv manages asynchronous I/O in Node.js using its internal thread pool versus non-blocking operating system kernel system calls (epoll, kqueue). Which tasks are offloaded to the libuv thread pool?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Node.js achieves non-blocking I/O through a combination of OS-level asynchronous mechanisms and libuv's internal thread pool. Network I/O operations (like TCP/HTTP sockets) are handled directly by the OS kernel using asynchronous event notification multiplexers (such as epoll on Linux, kqueue on macOS, or IOCP on Windows) without consuming libuv thread pool threads. However, operations that do not have reliable native non-blocking asynchronous kernel equivalents—specifically file system operations (`fs`), DNS lookups (`dns.lookup`), and cryptographic functions (`crypto`)—are offloaded to libuv's internal thread pool (which defaults to 4 threads, configurable via `UV_THREADPOOL_SIZE`).",
+      "reference_answer": "libuv splits async operations into OS-level non-blocking calls and thread-pool tasks. Network I/O uses OS kernel mechanisms (epoll/kqueue) directly on the event loop. File system (fs), DNS lookups, and crypto tasks are offloaded to libuv's worker thread pool because OS support for non-blocking file I/O is inconsistent. If a Node.js app performs heavy synchronous file reads, it starves the thread pool and delays all other file/crypto operations across the application.",
+      "grading_rubric": "Award 1 mark for explaining OS kernel multiplexing for network I/O. Award 2 marks for identifying libuv thread pool usage for fs, DNS, and crypto. Award 2 marks for explaining thread pool starvation and default sizing limits (UV_THREADPOOL_SIZE).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "nodejs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "libuv",
+          "event loop",
+          "async io"
+        ],
+        "prerequisite_concepts": [
+          "event loop",
+          "operating system fundamentals"
+        ],
+        "related_within_section": [
+          "GEN-NODEJS-MCQ-0001",
+          "GEN-NODEJS-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-NODEJS-SCN-0004",
+      "category_id": "CAT-11",
+      "subcategory": "Node.js",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A production Node.js Express API service experiences gradual memory growth (a memory leak) over several days until it crashes with an Out Of Memory (OOM) error. Heap snapshots reveal a growing number of detached DOM-like structures or retained closure scopes holding large request payloads. Detail how you would capture a heap dump in production, diagnose the retained object graph, and fix typical closure or event listener leaks in Node.js.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Diagnosing a memory leak in Node.js requires capturing heap snapshots before and after load using tools like `v8.writeHeapSnapshot()`, clinic.js, or Chrome DevTools attached via inspector. Analysis focuses on comparing snapshots to find objects whose count continuously increases (retained paths). Common leaks in Node.js include: 1) Event listeners added dynamically to global event emitters (like `process` or global caches) without corresponding `.removeListener()` calls; 2) Closures capturing large outer scope variables in long-lived callback chains. The fix involves ensuring proper cleanup of event listeners, avoiding unbounded global caching structures (or using `lru-cache` with strict limits), and breaking unintended closure retention.",
+      "reference_answer": "To diagnose, trigger heap snapshots using `v8.writeHeapSnapshot()` during peak memory usage. Open the snapshot in Chrome DevTools, use the 'Comparison' or 'Allocation timeline' view to identify constructor functions or closures retaining memory. Common root causes include global maps accumulating objects without eviction, or event listeners attached to global targets in request handlers. Fix by removing listeners upon request completion, implementing LRU caches with max size limits, and ensuring request-scoped variables are not captured by long-lived global closures.",
+      "grading_rubric": "Award 1 mark for describing heap snapshot capture methods (v8 module or clinic.js). Award 2 marks for explaining how to analyze retained object paths and constructor allocation in DevTools. Award 2 marks for identifying common leak sources (unbounded caches, unremoved event listeners, closure retention) and remediation.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "nodejs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "memory leak",
+          "v8",
+          "debugging"
+        ],
+        "prerequisite_concepts": [
+          "garbage collection",
+          "closures"
+        ],
+        "related_within_section": [
+          "GEN-NODEJS-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-NODEJS-COD-0005",
+      "category_id": "CAT-11",
+      "subcategory": "Node.js",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a robust Node.js asynchronous function using Streams or Promises that processes an array of items in concurrent batches of a specified limit (e.g., max 3 concurrent asynchronous operations at a time) to prevent overloading downstream services.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task tests mastery of asynchronous concurrency control in Node.js without relying on external libraries like p-limit. The function must slice an array into chunks or manage a concurrency pool where worker promises spawn up to the concurrency limit as previous ones resolve. Time complexity is O(N) where N is the number of items, and space complexity is O(limit) for active concurrent promises. Edge cases include empty arrays, limit greater than array length, and async task rejections.",
+      "reference_answer": "async function promisePool(items, limit, asyncFn) {\n  const results = [];\n  const executing = [];\n  \n  for (const item of items) {\n    const p = Promise.resolve().then(() => asyncFn(item));\n    results.push(p);\n    \n    if (limit <= items.length) {\n      const e = p.then(() => executing.splice(executing.indexOf(e), 1));\n      executing.push(e);\n      \n      if (executing.length >= limit) {\n        await Promise.race(executing);\n      }\n    }\n  }\n  \n  return Promise.all(results);\n}\n\nTime Complexity: O(N). Space Complexity: O(limit). Edge cases: Handles promise rejections and boundary conditions where limit exceeds array length.",
+      "grading_rubric": "Award 4 marks for correct concurrency queue/pool management logic. Award 3 marks for proper handling of Promise.all / Promise.race. Award 2 marks for correct array iteration and return values. Award 1 mark for clean code structure, error resilience, and complexity notes.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "Backend Frameworks",
+        "skill_tags": [
+          "nodejs",
+          "javascript"
+        ],
+        "concept_tags": [
+          "async io",
+          "concurrency",
+          "promises"
+        ],
+        "prerequisite_concepts": [
+          "promises",
+          "async await"
+        ],
+        "related_within_section": [
+          "GEN-NODEJS-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-RAG-LANG-MCQ-0001",
+      "category_id": "CAT-04",
+      "subcategory": "RAG Pipelines",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "Which similarity metric is most commonly used with normalized dense embedding vectors in modern vector databases for semantic search?",
+      "options": [
+        "Cosine Similarity",
+        "Euclidean Distance (L2)",
+        "Manhattan Distance (L1)",
+        "Hamming Distance"
+      ],
+      "correct_answer": "Cosine Similarity",
+      "explanation": "When embedding vectors are normalized to unit length, cosine similarity is directly proportional to the dot product and measures the angle between vectors, making it invariant to vector magnitude differences. Euclidean distance (L2) is sensitive to vector length magnitudes unless normalization is explicitly enforced. Manhattan and Hamming distances are typically used for sparse or categorical representations rather than dense neural embeddings. In production vector databases (e.g., Pinecone, Qdrant, Milvus), cosine similarity is the standard default for semantic text search.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "rag",
+          "langchain",
+          "python"
+        ],
+        "concept_tags": [
+          "embeddings",
+          "vector search",
+          "similarity metrics"
+        ],
+        "prerequisite_concepts": [
+          "linear algebra",
+          "vector spaces"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-RAG-LANG-MCQ-0002",
+      "category_id": "CAT-04",
+      "subcategory": "RAG Pipelines",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "In a Retrieval-Augmented Generation (RAG) pipeline, what is the primary technical purpose of introducing chunk overlap when splitting large documents into smaller text chunks?",
+      "options": [
+        "To preserve contextual continuity and prevent semantic fragmentation across chunk boundaries",
+        "To double the vector database storage capacity and accelerate index building speeds",
+        "To eliminate duplicate embedding vectors and reduce API embedding costs by exactly 50%",
+        "To force the LLM to generate longer and more detailed final answers during generation"
+      ],
+      "correct_answer": "To preserve contextual continuity and prevent semantic fragmentation across chunk boundaries",
+      "explanation": "Chunk overlap ensures that sentences or concepts spanning across the arbitrary cut-off point of a single text chunk are not completely severed, maintaining contextual transitions for the embedding model and retriever. It does not reduce storage or costs (it actually increases total chunk count slightly) and does not directly control LLM output length. In production RAG systems, tuning chunk size and overlap is crucial for optimizing retrieval recall and precision.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "rag",
+          "langchain",
+          "python"
+        ],
+        "concept_tags": [
+          "chunking",
+          "text splitting",
+          "context retention"
+        ],
+        "prerequisite_concepts": [
+          "tokenization",
+          "text processing"
+        ],
+        "related_within_section": [
+          "GEN-RAG-LANG-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-RAG-LANG-EXP-0003",
+      "category_id": "CAT-04",
+      "subcategory": "RAG Pipelines",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how LangChain Expression Language (LCEL) works under the hood and why it supersedes traditional legacy chain classes (like LLMChain or RetrievalQA). What are the native runtime benefits of LCEL?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "LangChain Expression Language (LCEL) is a declarative composition syntax built on top of standard Python Runnables. Unlike legacy chains which were monolithic black-box Python classes with rigid, hardcoded interfaces, LCEL allows developers to declaratively compose components (prompts, models, vector stores, output parsers) using the pipe operator (`|`). Under the hood, every LCEL component implements the `Runnable` protocol, providing unified native support for synchronous invocation (`invoke`), asynchronous execution (`ainvoke`), streaming (`stream` / `astream`), batching (`batch` / `abatch`), and automatic parallelization. This makes fallback handling, telemetry logging, and middleware integration seamless in production.",
+      "reference_answer": "LCEL represents a shift from rigid Python class hierarchies to declarative pipelines using the `|` operator. Every component implements the Runnable interface. Native benefits include: 1) First-class async support (`ainvoke`, `abatch`) out of the box; 2) Seamless token-by-token streaming (`astream`) across the entire pipeline; 3) Built-in parallel execution for multiple retriever branches; 4) Simplified fallback and retry configurations. Legacy classes like LLMChain lacked these unified primitives and required custom wrapper code for streaming and async execution.",
+      "grading_rubric": "Award 1 mark for defining LCEL and the Runnable protocol. Award 2 marks for comparing LCEL with legacy monolithic chains (LLMChain/RetrievalQA). Award 2 marks for identifying native runtime benefits such as async, streaming, batching, and parallelization.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langchain",
+          "rag",
+          "python"
+        ],
+        "concept_tags": [
+          "lcel",
+          "runnables",
+          "pipelines"
+        ],
+        "prerequisite_concepts": [
+          "python dunder methods",
+          "asyncio"
+        ],
+        "related_within_section": [
+          "GEN-RAG-LANG-MCQ-0001",
+          "GEN-RAG-LANG-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-RAG-LANG-SCN-0004",
+      "category_id": "CAT-04",
+      "subcategory": "RAG Pipelines",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A production RAG system retrieves the top 20 documents using dense vector search, but the LLM frequently hallucinates or answers incorrectly because the most relevant information is buried in positions 15-20, or overshadowed by noisy distractor chunks. Explain how you would diagnose this and refactor the pipeline using a two-stage retrieval architecture with a cross-encoder reranker and query transformation.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This scenario highlights the 'lost in the middle' phenomenon where LLMs fail to attend to critical context placed in the middle of long prompts. Diagnosis involves evaluating retrieval metrics (MRR, Recall@K) and inspecting prompt token distributions. The refactoring strategy introduces a two-stage retrieval architecture: 1) Initial broad retrieval (fetching top 20-50 candidate chunks via fast bi-encoder vector search); 2) High-precision neural reranking using a Cross-Encoder or reranker model (such as Cohere Rerank or BGE-Reranker) to score query-document pairs jointly, re-ordering the results and passing only the top 3-5 highest-scoring chunks to the LLM. Additionally, applying query transformation (like query rewriting or multi-query expansion) ensures the initial retrieval step captures diverse semantic angles.",
+      "reference_answer": "Identify the root cause: bi-encoder vector search has high recall but low precision, and LLMs suffer from positional bias ('lost in the middle'). To fix this: 1) Implement query transformation to expand user prompts into richer search queries; 2) Increase initial vector search fetch size to top 30-50 documents; 3) Integrate a Cross-Encoder reranker (e.g., CohereRerank) to deeply evaluate query-document relevance and filter down to the top 3-5 most pertinent chunks before feeding them to the LLM prompt template.",
+      "grading_rubric": "Award 1 mark for identifying the bi-encoder precision limit and LLM positional bias ('lost in the middle'). Award 2 marks for designing a two-stage retrieval and cross-encoder reranking architecture. Award 2 marks for adding query transformation / expansion techniques and proving retrieval quality improvement.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "rag",
+          "langchain",
+          "python"
+        ],
+        "concept_tags": [
+          "reranking",
+          "cross-encoder",
+          "query transformation",
+          "hallucination"
+        ],
+        "prerequisite_concepts": [
+          "embeddings",
+          "vector search"
+        ],
+        "related_within_section": [
+          "GEN-RAG-LANG-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-RAG-LANG-COD-0005",
+      "category_id": "CAT-04",
+      "subcategory": "RAG Pipelines",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a complete Python snippet using LangChain and LCEL (LangChain Expression Language) that sets up a RAG chain: taking a user query, retrieving relevant documents from a vector store retriever, formatting them into a prompt template, passing them to a ChatOpenAI model, and returning the string output.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task evaluates proficiency in building modern LCEL chains in LangChain. The solution must define a retriever from a vector store, a prompt template accepting context and query, a chat model, and an output parser. The LCEL chain uses dict mapping and the `|` operator to wire inputs and format retrieved documents into a single string context. Time complexity of pipeline execution is O(K) where K is retrieved chunks, and space complexity is O(context length). Edge cases include empty retrieval results and API rate limits.",
+      "reference_answer": "from langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.runnables import RunnablePassthrough\nfrom langchain_core.output_parsers import StrOutputParser\nfrom langchain_openai import ChatOpenAI\n\ndef create_rag_chain(vectorstore):\n    retriever = vectorstore.as_retriever(search_kwargs={\"k\": 4})\n    \n    template = \"Answer the question based only on the following context:\\n{context}\\n\\nQuestion: {question}\"\n    prompt = ChatPromptTemplate.from_template(template)\n    \n    model = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n    \n    def format_docs(docs):\n        return \"\\n\\n\".join(doc.page_content for doc in docs)\n    \n    rag_chain = (\n        {\"context\": retriever | format_docs, \"question\": RunnablePassthrough()}\n        | prompt\n        | model\n        | StrOutputParser()\n    )\n    \n    return rag_chain\n\nTime Complexity: O(K) document retrieval overhead. Space Complexity: O(prompt size). Edge cases: Handles empty document lists gracefully via format_docs.",
+      "grading_rubric": "Award 3 marks for correct retriever configuration and document formatting function. Award 3 marks for correct ChatPromptTemplate and ChatOpenAI setup. Award 3 marks for correct LCEL wiring using dict mapping and the `|` pipe operator. Award 1 mark for clean code structure, output parser usage, and complexity notes.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langchain",
+          "rag",
+          "python"
+        ],
+        "concept_tags": [
+          "lcel",
+          "retrieval",
+          "prompt templates"
+        ],
+        "prerequisite_concepts": [
+          "python dictionaries",
+          "langchain core"
+        ],
+        "related_within_section": [
+          "GEN-RAG-LANG-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LANGGRAPH-MCQ-0001",
+      "category_id": "CAT-04",
+      "subcategory": "LangGraph",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "In LangGraph, what is the primary role of a state reducer function (such as operator.add or custom append reducers) when updating graph state keys?",
+      "options": [
+        "To determine how incoming updates from node executions are merged into the existing state object",
+        "To compress large vector embeddings before storing them in the vector database",
+        "To automatically convert synchronous agent functions into asynchronous coroutines",
+        "To serialize workflow state into JSON format for network transport across microservices"
+      ],
+      "correct_answer": "To determine how incoming updates from node executions are merged into the existing state object",
+      "explanation": "In LangGraph, state keys can be configured with reducer functions. By default, node returns overwrite state values. When a reducer function (like `operator.add`) is specified, updates returned by nodes are accumulated or merged into the existing state rather than overwriting it, which is essential for maintaining message histories across multi-turn agent interactions. Reducers do not handle embeddings, async conversion, or JSON network serialization.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langgraph",
+          "python"
+        ],
+        "concept_tags": [
+          "state management",
+          "reducers",
+          "graphs"
+        ],
+        "prerequisite_concepts": [
+          "python functions",
+          "state machines"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-LANGGRAPH-MCQ-0002",
+      "category_id": "CAT-04",
+      "subcategory": "LangGraph",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "Why does LangGraph intentionally support cyclic graph structures (loops), whereas traditional workflow engines and LCEL pipelines are strictly Directed Acyclic Graphs (DAGs)?",
+      "options": [
+        "To enable iterative agent loops (like the ReAct pattern) where an agent executes tools, evaluates results, and decides whether to continue or terminate",
+        "To allow infinite execution loops without requiring any termination condition or recursion limit",
+        "To bypass the Python event loop and execute node code directly on kernel threads",
+        "To cache compiled graph execution states indefinitely in local memory without a checkpointer"
+      ],
+      "correct_answer": "To enable iterative agent loops (like the ReAct pattern) where an agent executes tools, evaluates results, and decides whether to continue or terminate",
+      "explanation": "Traditional LCEL chains and DAG pipelines execute linearly from start to finish without backward edges. Agentic workflows require iterative decision-making (e.g., Reasoning and Acting - ReAct), where an LLM calls a tool, reviews the tool output, and either loops back to call another tool or exits. LangGraph supports cycles precisely to model this iterative loop. However, LangGraph enforces a strict recursion limit to prevent infinite loops when termination conditions fail.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langgraph",
+          "python"
+        ],
+        "concept_tags": [
+          "cyclic graphs",
+          "agent loops",
+          "react pattern"
+        ],
+        "prerequisite_concepts": [
+          "graphs",
+          "lcel"
+        ],
+        "related_within_section": [
+          "GEN-LANGGRAPH-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LANGGRAPH-EXP-0003",
+      "category_id": "CAT-04",
+      "subcategory": "LangGraph",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how LangGraph implements Human-in-the-Loop (HITL) workflows using checkpointers and breakpoints (`interrupt_before` / `interrupt_after`). What happens during execution when a breakpoint is hit?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "LangGraph achieves Human-in-the-Loop capabilities by integrating persistent checkpointers (such as MemorySaver or PostgresSaver) with execution control flags (`interrupt_before` or `interrupt_after`). When a graph is compiled with breakpoints, execution pauses immediately before or after specified nodes. The state at that exact snapshot is serialized and saved in the checkpointer. The client can inspect the state, approve, modify, or reject pending actions (such as approving a dangerous database query tool call), and then resume execution from the exact thread ID using `graph.stream(None, config)` without losing previous context.",
+      "reference_answer": "LangGraph uses checkpointers to persist graph state across steps. When configuring `interrupt_before=['tool_node']`, the graph pauses execution right before entering the tool node. The current state is committed to the checkpointer database. The system suspends, allowing a human reviewer to inspect the proposed tool arguments. Once approved or modified via state updates, execution resumes seamlessly from the checkpoint using the same thread_id.",
+      "grading_rubric": "Award 1 mark for explaining checkpointer persistence. Award 2 marks for describing breakpoints (`interrupt_before`/`interrupt_after`). Award 2 marks for explaining the human review and resumption lifecycle (thread resumption).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langgraph",
+          "python"
+        ],
+        "concept_tags": [
+          "human-in-the-loop",
+          "checkpointers",
+          "breakpoints"
+        ],
+        "prerequisite_concepts": [
+          "state management",
+          "persistence"
+        ],
+        "related_within_section": [
+          "GEN-LANGGRAPH-MCQ-0001",
+          "GEN-LANGGRAPH-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LANGGRAPH-SCN-0004",
+      "category_id": "CAT-04",
+      "subcategory": "LangGraph",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A multi-agent LangGraph application handling customer support exhibits intermittent state corruption and missing chat history when multiple concurrent user requests share the same thread ID or when background worker nodes mutate shared state without reducers. Detail how you would diagnose this isolation failure and refactor the state schema and checkpointer setup to guarantee thread safety.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "State corruption in multi-agent workflows usually stems from two root causes: 1) Reusing a single static `thread_id` across distinct client sessions, causing concurrent requests to interleave updates into the same checkpoint history; 2) Failing to use reducer functions (like `add_messages`) on message list keys, causing agent nodes to overwrite each other's outputs. Diagnosis involves inspecting checkpointer storage logs and thread isolation keys. The fix requires generating unique UUID `thread_id` per user session in configuration headers, and defining state schemas using `Annotated[list, add_messages]` so all agent contributions append safely.",
+      "reference_answer": "To diagnose, inspect checkpointer transaction logs and observe overlapping state mutations for a single thread_id. To fix: 1) Ensure every independent user conversation instantiates a unique `thread_id` (e.g., UUID4) passed via `config={'configurable': {'thread_id': session_id}}`; 2) Update the State TypedDict to use `Annotated[list[BaseMessage], add_messages]` for the messages key so concurrent or sequential agent nodes append messages correctly rather than overwriting the list.",
+      "grading_rubric": "Award 1 mark for identifying thread_id collision or missing message reducers. Award 2 marks for explaining checkpointer thread isolation. Award 2 marks for implementing Annotated message reducers (add_messages) to prevent state overwrites.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langgraph",
+          "python"
+        ],
+        "concept_tags": [
+          "state management",
+          "checkpointers",
+          "multi-agent"
+        ],
+        "prerequisite_concepts": [
+          "reducers",
+          "threading"
+        ],
+        "related_within_section": [
+          "GEN-LANGGRAPH-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LANGGRAPH-COD-0005",
+      "category_id": "CAT-04",
+      "subcategory": "LangGraph",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a complete Python snippet using LangGraph that defines a StateGraph with a state schema containing a message list (using `add_messages`), adds an 'agent' node and a 'tools' node, adds a conditional edge routing from the agent to either the tools node or END based on whether tool calls are present, and compiles the graph.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task tests proficiency in constructing a standard LangGraph agent architecture. The solution requires defining a `TypedDict` state with `Annotated[list, add_messages]`, initializing a `StateGraph`, adding nodes (`agent` and `tools`), setting entry points, defining a routing function (`should_continue`), and compiling the graph with `.compile()`. Time complexity per graph step is O(1) graph routing, and space complexity is O(M) where M is message history length. Edge cases include empty message lists and malformed tool call structures.",
+      "reference_answer": "from typing import Annotated, Literal\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.graph.message import add_messages\n\nclass State(TypedDict):\n    messages: Annotated[list, add_messages]\n\nworkflow = StateGraph(State)\n\ndef call_model(state):\n    # Simulated model node returning messages\n    return {\"messages\": [\"Response from model\"]}\n\ndef should_continue(state) -> Literal[\"tools\", \"__end__\"]:\n    messages = state[\"messages\"]\n    last_message = messages[-1]\n    # Check if tool calls exist\n    if getattr(last_message, \"tool_calls\", None):\n        return \"tools\"\n    return END\n\nworkflow.add_node(\"agent\", call_model)\nworkflow.add_node(\"tools\", lambda state: {\"messages\": [\"Tool output\"]})\n\nworkflow.add_edge(START, \"agent\")\nworkflow.add_conditional_edges(\"agent\", should_continue)\nworkflow.add_edge(\"tools\", \"agent\")\n\napp = workflow.compile()\n\nTime Complexity: O(1) per routing step. Space Complexity: O(M) for message history. Edge cases: Handles termination when no tool calls are requested.",
+      "grading_rubric": "Award 4 marks for correct StateGraph and TypedDict schema setup with add_messages. Award 3 marks for correct node definitions and edge wiring. Award 2 marks for conditional edge routing logic. Award 1 mark for clean code structure, compilation, and complexity notes.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "ai_ml",
+          "langgraph",
+          "python"
+        ],
+        "concept_tags": [
+          "stategraph",
+          "conditional edges",
+          "agent loops"
+        ],
+        "prerequisite_concepts": [
+          "lcel",
+          "state management"
+        ],
+        "related_within_section": [
+          "GEN-LANGGRAPH-MCQ-0001",
+          "GEN-LANGGRAPH-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-PYTORCH-MCQ-0001",
+      "category_id": "CAT-04",
+      "subcategory": "Fine-Tuning & PyTorch",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "What is the primary purpose of calling `optimizer.zero_grad()` before performing `loss.backward()` in a standard PyTorch training loop?",
+      "options": [
+        "To clear accumulated gradients from the previous iteration in the computation graph",
+        "To reset all model weights and biases back to their initial random states",
+        "To flush the GPU cache memory and prevent fragmentation across batches",
+        "To detach all model tensors from the dynamic computation graph and free RAM"
+      ],
+      "correct_answer": "To clear accumulated gradients from the previous iteration in the computation graph",
+      "explanation": "In PyTorch, gradients accumulate by default during `backward()` calls to facilitate techniques like gradient accumulation over multiple mini-batches. Therefore, calling `optimizer.zero_grad()` at the start of each training step is necessary to clear out gradients from the previous iteration. It does not reset model weights (which is optimizer.state_dict reset), nor does it clear GPU cache (torch.cuda.empty_cache) or detach tensors. Failing to zero gradients leads to incorrect gradient summation and erratic model convergence.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "pytorch",
+          "ai_ml",
+          "python"
+        ],
+        "concept_tags": [
+          "autograd",
+          "gradients",
+          "training loop"
+        ],
+        "prerequisite_concepts": [
+          "tensor operations",
+          "backpropagation"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-PYTORCH-MCQ-0002",
+      "category_id": "CAT-04",
+      "subcategory": "Fine-Tuning & PyTorch",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "How does Low-Rank Adaptation (LoRA) significantly reduce memory and computational overhead when fine-tuning large language models in PyTorch?",
+      "options": [
+        "By freezing original model weights and injecting trainable low-rank decomposition matrices (A and B) into attention layers",
+        "By quantizing all transformer weights to 4-bit integers during the backward pass using bitsandbytes",
+        "By pruning 90% of unimportant attention heads prior to fine-tuning based on gradient magnitude",
+        "By replacing standard multi-head self-attention with linear attention kernels computed on CPU"
+      ],
+      "correct_answer": "By freezing original model weights and injecting trainable low-rank decomposition matrices (A and B) into attention layers",
+      "explanation": "LoRA freezes the pre-trained model weights ($W$) and introduces trainable rank decomposition matrices ($A$ and $B$) representing the weight update ($\\Delta W = BA$). This reduces the number of trainable parameters by orders of magnitude and eliminates the need to store optimizer states for the vast majority of parameters. Quantization (like QLoRA) is a separate technique, pruning does not define LoRA, and attention kernels remain unchanged. (Version note: Hugging Face PEFT library integrates LoRA natively with PyTorch 2.x).",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "pytorch",
+          "ai_ml",
+          "python"
+        ],
+        "concept_tags": [
+          "lora",
+          "peft",
+          "fine-tuning"
+        ],
+        "prerequisite_concepts": [
+          "linear algebra",
+          "transformer architecture"
+        ],
+        "related_within_section": [
+          "GEN-PYTORCH-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-PYTORCH-EXP-0003",
+      "category_id": "CAT-04",
+      "subcategory": "Fine-Tuning & PyTorch",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how Mixed Precision training (`torch.amp` / Automatic Mixed Precision) accelerates neural network training and reduces memory usage in PyTorch. What is the specific role of gradient scaling when training in FP16?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Mixed precision training combines 16-bit floating-point (FP16 or BF16) and 32-bit floating-point (FP32) formats. Storing activations and weights in FP16 halves memory bandwidth and utilizes NVIDIA Tensor Cores for accelerated matrix multiplication. However, FP16 has a narrow dynamic range, causing small gradients to underflow (rounded to zero). Gradient scaling solves this by multiplying the loss value by a scale factor before backpropagation, pushing gradients into a representable FP16 range. The gradients are then unscaled before the optimizer parameter update step. (Version note: PyTorch 2.x provides native `torch.amp.autocast` and `GradScaler`, and modern hardware using BF16 avoids underflow entirely without needing gradient scaling).",
+      "reference_answer": "Mixed precision uses FP16/BF16 for forward and backward passes to reduce memory and speed up computation via Tensor Cores, while keeping master weights in FP32. Gradient scaling is critical for FP16 because small gradients underflow due to limited exponent bits. By scaling the loss up before backward(), gradients are magnified above the underflow threshold. GradScaler unscales them before optimizer.step(). BF16 eliminates this need due to a wider dynamic range.",
+      "grading_rubric": "Award 1 mark for explaining FP16 vs FP32 memory and speed advantages. Award 2 marks for explaining the FP16 underflow problem. Award 2 marks for explaining gradient scaling mechanics (scale loss, backward, unscale, optimizer step).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "pytorch",
+          "ai_ml",
+          "python"
+        ],
+        "concept_tags": [
+          "mixed precision",
+          "amp",
+          "gradient scaling"
+        ],
+        "prerequisite_concepts": [
+          "floating point representation",
+          "backpropagation"
+        ],
+        "related_within_section": [
+          "GEN-PYTORCH-MCQ-0001",
+          "GEN-PYTORCH-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-PYTORCH-SCN-0004",
+      "category_id": "CAT-04",
+      "subcategory": "Fine-Tuning & PyTorch",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A machine learning engineer fine-tuning a 7B parameter LLM on a single A100 GPU encounters a `CUDA out of memory` (OOM) error during the backward pass even with batch size set to 1. Detail how you would diagnose memory allocation and refactor the training configuration using PyTorch features like gradient checkpointing, activation caching, or LoRA to resolve the OOM.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "OOM errors during the backward pass are typically caused by storing massive intermediate activation tensors generated during the forward pass across all transformer layers. Diagnosis involves inspecting peak memory via `torch.cuda.max_memory_allocated()` or PyTorch memory profiler. The refactoring strategy combines several memory-saving techniques: 1) Enable gradient checkpointing (`model.gradient_checkpointing_enable()`), which discards intermediate activations during the forward pass and recomputes them on-the-fly during backward propagation, trading minor compute for massive memory savings; 2) Apply parameter-efficient fine-tuning (PEFT/LoRA) to freeze base weights and avoid storing optimizer states for 99% of parameters; 3) Use 4-bit quantization (QLoRA) or mixed precision (BF16).",
+      "reference_answer": "Identify that intermediate activations stored during the forward pass for backpropagation exceed VRAM limits. To fix: 1) Enable gradient checkpointing to recompute activations during backward pass instead of caching them; 2) Apply LoRA/PEFT to avoid full-parameter optimizer states (AdamW stores 16 bytes per parameter for FP16 weights + FP32 master weights/moments); 3) Use torch.compile or flash-attention to optimize memory bandwidth. Prove the fix by verifying peak memory drops below GPU capacity.",
+      "grading_rubric": "Award 1 mark for identifying activation memory accumulation during forward pass as the root cause. Award 2 marks for explaining gradient checkpointing trade-offs (recomputation vs memory). Award 2 marks for proposing PEFT/LoRA, mixed precision, and memory profiling verification.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "pytorch",
+          "ai_ml",
+          "python"
+        ],
+        "concept_tags": [
+          "cuda oom",
+          "gradient checkpointing",
+          "memory management"
+        ],
+        "prerequisite_concepts": [
+          "gpu memory",
+          "backpropagation"
+        ],
+        "related_within_section": [
+          "GEN-PYTORCH-EXP-0003"
+        ]
+      }
+    },
+    {
+      "id": "GEN-PYTORCH-COD-0005",
+      "category_id": "CAT-04",
+      "subcategory": "Fine-Tuning & PyTorch",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a complete PyTorch custom `Dataset` and `DataLoader` setup in Python for a text classification task, where text samples are converted into padded integer token tensor inputs and corresponding scalar label tensors.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task tests mastery of PyTorch data pipelines (`torch.utils.data.Dataset` and `DataLoader`). The custom dataset must implement `__init__`, `__len__`, and `__getitem__`. To handle variable-length sequences, a custom `collate_fn` or padding mechanism is typically required in the DataLoader. Time complexity is O(N) for dataset indexing and batching, and space complexity is O(batch_size * max_seq_len). Edge cases include empty datasets and mismatched tensor shapes during batch collation.",
+      "reference_answer": "import torch\nfrom torch.utils.data import Dataset, DataLoader\n\nclass TextClassificationDataset(Dataset):\n    def __init__(self, texts, labels, max_len=128):\n        self.texts = texts\n        self.labels = labels\n        self.max_len = max_len\n\n    def __len__(self):\n        return len(self.texts)\n\n    def __getitem__(self, idx):\n        # Simulated tokenization to fixed length integer tensors\n        tokens = torch.tensor(self.texts[idx][:self.max_len], dtype=torch.long)\n        # Pad if shorter than max_len\n        if len(tokens) < self.max_len:\n            padding = torch.zeros(self.max_len - len(tokens), dtype=torch.long)\n            tokens = torch.cat([tokens, padding])\n        label = torch.tensor(self.labels[idx], dtype=torch.float)\n        return tokens, label\n\n# Example usage:\nsample_texts = [[101, 2054, 2003, 102], [101, 2054, 102]]\nsample_labels = [1.0, 0.0]\n\ndataset = TextClassificationDataset(sample_texts, sample_labels, max_len=10)\ndataloader = DataLoader(dataset, batch_size=2, shuffle=True)\n\nTime Complexity: O(N). Space Complexity: O(batch_size * max_len). Edge cases: Handles padding for sequences shorter than max_len.",
+      "grading_rubric": "Award 4 marks for correct Dataset implementation (__init__, __len__, __getitem__). Award 3 marks for tensor padding and data type casting. Award 2 marks for correct DataLoader instantiation and batching. Award 1 mark for clean code structure, error handling, and complexity notes.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "AI & Machine Learning",
+        "skill_tags": [
+          "pytorch",
+          "ai_ml",
+          "python"
+        ],
+        "concept_tags": [
+          "dataset",
+          "dataloader",
+          "data pipeline"
+        ],
+        "prerequisite_concepts": [
+          "python classes",
+          "tensor operations"
+        ],
+        "related_within_section": [
+          "GEN-PYTORCH-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LINUX-OS-MCQ-0001",
+      "category_id": "CAT-13",
+      "subcategory": "Linux",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "What is the fundamental difference between the `SIGTERM` and `SIGKILL` signals in Linux process management?",
+      "options": [
+        "SIGTERM requests graceful termination allowing cleanup, whereas SIGKILL forces the kernel to immediately terminate the process without cleanup.",
+        "SIGTERM pauses process execution, whereas SIGKILL permanently deletes the executable binary from disk.",
+        "SIGTERM can only be sent by the root user, whereas SIGKILL can be initiated by any unprivileged user.",
+        "SIGTERM is used exclusively for multi-threaded processes, whereas SIGKILL applies only to single-threaded background daemons."
+      ],
+      "correct_answer": "SIGTERM requests graceful termination allowing cleanup, whereas SIGKILL forces the kernel to immediately terminate the process without cleanup.",
+      "explanation": "SIGTERM (Signal 15) is the standard signal sent to request polite termination, giving processes time to close file descriptors, release database connections, and save state. Conversely, SIGKILL (Signal 9) is handled directly by the Linux kernel; it cannot be caught, blocked, or ignored by the target process, leading to immediate termination without cleanup. In production orchestration tools like Docker and Kubernetes, sending SIGTERM first followed by a grace period before SIGKILL is standard practice.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "linux",
+          "os",
+          "bash"
+        ],
+        "concept_tags": [
+          "signals",
+          "process management",
+          "kernel"
+        ],
+        "prerequisite_concepts": [
+          "process lifecycle",
+          "linux command line"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-LINUX-OS-MCQ-0002",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "In Docker, how do multi-stage builds (`FROM ... AS ...` followed by `COPY --from=...`) optimize final container image sizes?",
+      "options": [
+        "By discarding heavy build tools, source code, and intermediate dependencies from the final production image layer",
+        "By automatically compressing all container filesystem layers using gzip level 9 compression at build time",
+        "By caching compiled binary files in the Docker daemon memory across multiple separate host machines",
+        "By converting interpreted scripts into static machine binaries inside the Docker registry cache"
+      ],
+      "correct_answer": "By discarding heavy build tools, source code, and intermediate dependencies from the final production image layer",
+      "explanation": "Docker multi-stage builds allow developers to use multiple `FROM` instructions in a single Dockerfile. Each `FROM` starts a new stage with a fresh base image. Using `COPY --from=<stage_name>`, artifacts (such as compiled binaries or virtual environments) can be copied from a heavy build stage containing compilers and SDKs into a lightweight runtime image (like Alpine or distroless), stripping out unnecessary build-time bloat and reducing security attack surfaces.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "docker",
+          "linux",
+          "devops"
+        ],
+        "concept_tags": [
+          "multi-stage builds",
+          "image optimization",
+          "layers"
+        ],
+        "prerequisite_concepts": [
+          "dockerfile syntax",
+          "image layers"
+        ],
+        "related_within_section": [
+          "GEN-LINUX-OS-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LINUX-OS-EXP-0003",
+      "category_id": "CAT-13",
+      "subcategory": "Operating Systems",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain how operating systems manage process context switching and why excessive context switching degrades CPU performance. What hardware and kernel state must be saved and restored during a context switch?",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "A context switch is the kernel procedure of storing the state (context) of a currently running process or thread so that it can be paused, and restoring the saved state of another process to resume its execution. State that must be saved includes CPU registers, program counter (PC), stack pointers, Memory Management Unit (MMU) page table pointers (CR3 register on x86), and execution flags. Excessive context switching degrades performance because the CPU spends more time executing kernel scheduler overhead than actual application logic, and frequent TLB (Translation Lookaside Buffer) flushes cause cache misses.",
+      "reference_answer": "A context switch occurs when the OS kernel suspends one running process/thread and activates another. State saved and restored includes: general-purpose CPU registers, program counter, stack pointer, processor status flags, and MMU page table base registers (switching virtual memory spaces). Performance degrades due to two main factors: 1) Direct CPU overhead spent executing scheduler code instead of user instructions; 2) Indirect hardware cache penalties, such as TLB invalidation and L1/L2 cache misses when switching memory address spaces.",
+      "grading_rubric": "Award 1 mark for defining context switching. Award 2 marks for listing specific saved/restored state (registers, program counter, page tables). Award 2 marks for explaining performance degradation (scheduler overhead and cache/TLB thrashing).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "os",
+          "linux"
+        ],
+        "concept_tags": [
+          "context switching",
+          "process scheduling",
+          "kernel"
+        ],
+        "prerequisite_concepts": [
+          "operating system fundamentals",
+          "cpu registers"
+        ],
+        "related_within_section": [
+          "GEN-LINUX-OS-MCQ-0001",
+          "GEN-LINUX-OS-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LINUX-OS-SCN-0004",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: A containerized Python application running in Kubernetes takes 30 seconds to shut down during rolling updates, ignoring immediate termination signals. Investigation reveals that the application script was invoked via shell form in the Dockerfile (`CMD python app.py`), making it PID 1 inside the container, where it fails to forward SIGTERM signals. Detail how you would diagnose this and refactor the Dockerfile / entrypoint to ensure proper signal propagation.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "When a command is executed in shell form (`CMD python app.py`), Docker spawns a shell process (`/bin/sh -c`) as PID 1, which in turn spawns Python as a child process. Linux shells do not automatically forward signals received from the kernel (like SIGTERM from Kubernetes) to their child processes. Consequently, Python ignores the signal, and Kubernetes must wait for the full 30-second termination grace period before forcefully killing the pod (SIGKILL). Diagnosis involves checking container process trees (`docker top`) and observing delayed shutdown logs. The fix requires switching to the JSON array execution form (`CMD [\"python\", \"app.py\"]`) so Python runs directly as PID 1, or using an init system like `tini` to properly propagate signals.",
+      "reference_answer": "Identify the shell form `CMD python app.py` issue where `/bin/sh` acts as PID 1 and swallows/fails to forward SIGTERM to Python. To fix: 1) Convert the Dockerfile CMD instruction to exec form using JSON array syntax: `CMD [\"python\", \"app.py\"]`, ensuring Python becomes PID 1 and receives kernel signals directly; 2) Alternatively, wrap execution with an init binary like `tini` or `dumb-init` configured as PID 1 to reap zombie processes and forward signals properly to child application processes.",
+      "grading_rubric": "Award 1 mark for identifying the shell form vs exec form PID 1 signal forwarding issue. Award 2 marks for explaining why `/bin/sh` fails to forward SIGTERM. Award 2 marks for providing correct remediation (exec form JSON array or init wrapper like tini) and verifying graceful shutdown.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "docker",
+          "linux",
+          "devops"
+        ],
+        "concept_tags": [
+          "pid 1",
+          "signal propagation",
+          "dockerfile"
+        ],
+        "prerequisite_concepts": [
+          "signals",
+          "dockerfile syntax"
+        ],
+        "related_within_section": [
+          "GEN-LINUX-OS-MCQ-0001",
+          "GEN-LINUX-OS-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-LINUX-OS-COD-0005",
+      "category_id": "CAT-13",
+      "subcategory": "Docker",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Write a robust, production-grade multi-stage Dockerfile for a FastAPI Python application. The build stage should install poetry, build wheels or install dependencies in a virtual environment, and the final runtime stage should copy only the virtual environment and application code into a secure non-root user container.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This coding task tests proficiency in writing secure, optimized multi-stage Dockerfiles for Python web applications. The build stage installs build dependencies and Poetry, exporting dependencies into a virtual environment (`.venv`). The final runtime stage uses a slim Python base image, creates a non-root system user for security, copies the `.venv` directory and source code, and sets an explicit entrypoint. Time complexity of image building is O(N) relative to file count, and space complexity is minimized by discarding the builder stage. Edge cases include poetry configuration settings (`poetry config virtualenvs.in-project true`) and correct PATH exports.",
+      "reference_answer": "# Stage 1: Builder\nFROM python:3.11-slim AS builder\n\nWORKDIR /app\n\nRUN pip install --no-cache-dir poetry==1.8.2\n\nCOPY pyproject.toml poetry.lock ./\n\nRUN poetry config virtualenvs.in-project true \\\n    && poetry install --no-root --no-interaction --no-ansi\n\n# Stage 2: Runtime\nFROM python:3.11-slim AS runtime\n\nWORKDIR /app\n\nRUN useradd --create-home --shell /bin/bash appuser\n\nCOPY --from=builder /app/.venv /app/.venv\nCOPY ./app /app/app\n\nUSER appuser\n\nENV PATH=\"/app/.venv/bin:$PATH\"\n\nEXPOSE 8000\n\nCMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n\nTime Complexity: O(N) build time. Space Complexity: Optimized minimal runtime image footprint. Edge cases: Non-root user permissions and virtualenv PATH configuration handled explicitly.",
+      "grading_rubric": "Award 3 marks for correct multi-stage builder setup and Poetry dependency caching. Award 3 marks for copying the virtual environment into the runtime stage. Award 3 marks for non-root user creation and security hardening. Award 1 mark for clean code, ENV PATH exports, and Uvicorn CMD configuration.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DevOps & Systems",
+        "skill_tags": [
+          "docker",
+          "linux",
+          "python"
+        ],
+        "concept_tags": [
+          "multi-stage builds",
+          "dockerfile",
+          "security"
+        ],
+        "prerequisite_concepts": [
+          "dockerfile syntax",
+          "python packaging"
+        ],
+        "related_within_section": [
+          "GEN-LINUX-OS-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DSA-COD-0001",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "Coding",
+      "difficulty_level": "Easy",
+      "question_text": "Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target. You may assume that each input would have exactly one solution, and you may not use the same element twice.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This is the classic Two Sum problem. A brute-force nested loop takes O(N^2) time. By using a Hash Map (dictionary in Python) to store each number's complement (target - num) and its index as we iterate through the array, we can find the matching complement in O(1) time, reducing the total time complexity to O(N). Time complexity is O(N) and space complexity is O(N). Edge cases include negative numbers, duplicate numbers, and arrays with exactly two elements.",
+      "reference_answer": "def twoSum(nums, target):\n    seen = {}\n    for i, num in enumerate(nums):\n        complement = target - num\n        if complement in seen:\n            return [seen[complement], i]\n        seen[num] = i\n    return []\n\nTime Complexity: O(N). Space Complexity: O(N). Edge cases: Handles negative numbers and minimum array size of 2.",
+      "grading_rubric": "Award 3 marks for correct hash map lookup logic. Award 2 marks for returning correct indices. Award 2 marks for handling edge cases and achieving O(N) time complexity.",
+      "marks": 7,
+      "time_allocation": 600,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python",
+          "arrays"
+        ],
+        "concept_tags": [
+          "hash map",
+          "two pointers"
+        ],
+        "prerequisite_concepts": [
+          "arrays",
+          "dictionaries"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DSA-COD-0002",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "Coding",
+      "difficulty_level": "Easy",
+      "question_text": "Given a string s containing just the characters '(', ')', '{', '}', '[' and ']', determine if the input string is valid. An input string is valid if open brackets are closed by the same type of brackets and in the correct order.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Valid Parentheses is a classic stack problem. As we iterate through the string, when we encounter an opening bracket, we push it onto a stack. When we encounter a closing bracket, we check if the stack is non-empty and if the top of the stack matches the corresponding opening bracket. If it matches, we pop from the stack; otherwise, the string is invalid. Time complexity is O(N) and space complexity is O(N) in the worst case of nested opening brackets.",
+      "reference_answer": "def isValid(s: str) -> bool:\n    stack = []\n    mapping = {\")\": \"(\", \"}\": \"{\", \"]\": \"[\"}\n    for char in s:\n        if char in mapping:\n            top_element = stack.pop() if stack else '#'\n            if mapping[char] != top_element:\n                return False\n        else:\n            stack.append(char)\n    return not stack\n\nTime Complexity: O(N). Space Complexity: O(N). Edge cases: Odd length strings, unmatched closing brackets at start.",
+      "grading_rubric": "Award 3 marks for correct stack push/pop logic. Award 2 marks for bracket mapping and mismatch checking. Award 2 marks for handling empty stack edge cases and O(N) complexity.",
+      "marks": 7,
+      "time_allocation": 600,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python",
+          "strings"
+        ],
+        "concept_tags": [
+          "stack",
+          "string parsing"
+        ],
+        "prerequisite_concepts": [
+          "stacks",
+          "strings"
+        ],
+        "related_within_section": [
+          "GEN-DSA-COD-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DSA-COD-0003",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Given an array of integers nums and an integer k, return the kth largest element in the array. Note that it is the kth largest element in the sorted order, not the kth distinct element.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This problem can be solved efficiently using a min-heap of size k. By iterating through the array and maintaining a heap of size k, the smallest element among the k largest elements remains at the root. This achieves O(N log k) time complexity, which is much faster than sorting the entire array in O(N log N). Alternatively, QuickSelect can achieve O(N) average time complexity.",
+      "reference_answer": "import heapq\n\ndef findKthLargest(nums, k):\n    min_heap = []\n    for num in nums:\n        heapq.heappush(min_heap, num)\n        if len(min_heap) > k:\n            heapq.heappop(min_heap)\n    return min_heap[0]\n\nTime Complexity: O(N log k). Space Complexity: O(k). Edge cases: k equals array length, duplicate elements.",
+      "grading_rubric": "Award 6 marks for correct min-heap maintenance of size k. Award 4 marks for correct root return and O(N log k) complexity.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python",
+          "sorting"
+        ],
+        "concept_tags": [
+          "heap",
+          "priority queue"
+        ],
+        "prerequisite_concepts": [
+          "heaps",
+          "arrays"
+        ],
+        "related_within_section": [
+          "GEN-DSA-COD-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DSA-COD-0004",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "Coding",
+      "difficulty_level": "Medium",
+      "question_text": "Given a string s, find the length of the longest substring without repeating characters.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "This is solved using the sliding window technique with a Hash Map storing character indices. We maintain a left pointer l and right pointer r. As r expands, if a character is already in the map and its index is greater than or equal to l, we advance l to map[char] + 1. We track the maximum window length throughout. Time complexity is O(N) and space complexity is O(min(N, charset)).",
+      "reference_answer": "def lengthOfLongestSubstring(s: str) -> int:\n    char_map = {}\n    max_len = 0\n    l = 0\n    for r in range(len(s)):\n        if s[r] in char_map and char_map[s[r]] >= l:\n            l = char_map[s[r]] + 1\n        char_map[s[r]] = r\n        max_len = max(max_len, r - l + 1)\n    return max_len\n\nTime Complexity: O(N). Space Complexity: O(min(N, charset)). Edge cases: Empty string, all identical characters.",
+      "grading_rubric": "Award 5 marks for correct sliding window pointer management and hash map index tracking. Award 3 marks for max length calculation. Award 2 marks for edge cases and O(N) time complexity.",
+      "marks": 10,
+      "time_allocation": 900,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python",
+          "strings"
+        ],
+        "concept_tags": [
+          "sliding window",
+          "hash map"
+        ],
+        "prerequisite_concepts": [
+          "strings",
+          "two pointers"
+        ],
+        "related_within_section": [
+          "GEN-DSA-COD-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DSA-MCQ-0001",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "MCQ",
+      "difficulty_level": "Easy",
+      "question_text": "What is the average and worst-case time complexity of searching for an element in a Hash Map (or Hash Table) implemented with chaining for collision resolution?",
+      "options": [
+        "Average: O(1), Worst-case: O(N)",
+        "Average: O(log N), Worst-case: O(N log N)",
+        "Average: O(1), Worst-case: O(1)",
+        "Average: O(N), Worst-case: O(N^2)"
+      ],
+      "correct_answer": "Average: O(1), Worst-case: O(N)",
+      "explanation": "In a hash map with uniform hashing, computing the hash function and accessing the bucket takes O(1) average time. In the worst-case scenario (e.g., poor hash function or malicious hash collision attacks where all keys hash to the same bucket and form a linked list of length N), searching requires traversing the entire chain, resulting in O(N) time complexity. O(log N) applies to balanced binary search trees, not hash maps. Therefore, option A is correct while B, C, and D are incorrect.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1,
+      "time_allocation": 45,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python",
+          "cpp"
+        ],
+        "concept_tags": [
+          "hash tables",
+          "time complexity",
+          "collisions"
+        ],
+        "prerequisite_concepts": [
+          "arrays",
+          "hash functions"
+        ],
+        "related_within_section": []
+      }
+    },
+    {
+      "id": "GEN-DSA-MCQ-0002",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "MCQ",
+      "difficulty_level": "Medium",
+      "question_text": "When building a binary heap from an unsorted array of N elements using the bottom-up heapify approach (Floyd's algorithm), what is the time complexity?",
+      "options": [
+        "O(N)",
+        "O(N log N)",
+        "O(N^2)",
+        "O(log N)"
+      ],
+      "correct_answer": "O(N)",
+      "explanation": "While inserting N elements one by one into an initially empty heap takes O(N log N) time, building a heap in-place using Floyd's bottom-up heapify algorithm operates in O(N) time. This is because most nodes are near the bottom of the tree and have very small heights, leading to a geometric series sum that converges to linear time. O(N log N) is the time complexity for heap sort or repeated insertions, O(N^2) is incorrect, and O(log N) describes searching/traversing a single path. Thus, option A is correct.",
+      "reference_answer": "",
+      "grading_rubric": "",
+      "marks": 1.5,
+      "time_allocation": 60,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python"
+        ],
+        "concept_tags": [
+          "heaps",
+          "time complexity",
+          "heapify"
+        ],
+        "prerequisite_concepts": [
+          "binary trees",
+          "arrays"
+        ],
+        "related_within_section": [
+          "GEN-DSA-MCQ-0001"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DSA-EXP-0003",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "Explainable",
+      "difficulty_level": "Medium",
+      "question_text": "Explain the fundamental differences between Depth-First Search (DFS) and Breadth-First Search (BFS) for graph traversal. Compare their memory footprints (space complexity) and ideal use cases.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "DFS explores as deep as possible along each branch before backtracking, utilizing a stack (either the call stack via recursion or an explicit stack). BFS explores the graph level by level, visiting all neighbor nodes at the present depth prior to moving to the next level, utilizing a queue. Space complexity for BFS is O(V) in the worst case (where V is the number of vertices), holding wide levels in memory, whereas DFS space complexity is O(H) where H is the maximum depth of the graph (call stack depth). BFS is optimal for finding the shortest path in unweighted graphs, while DFS is ideal for topological sorting, cycle detection, and traversing deep tree/maze structures.",
+      "reference_answer": "DFS uses a stack (LIFO) and dives deep into branches, storing path history with O(H) space complexity (H = max depth). BFS uses a queue (FIFO) and explores layer by layer, storing frontier nodes with O(V) space complexity (V = max width/vertices). Use BFS when finding shortest paths in unweighted graphs or navigating shallow networks. Use DFS for path existence, topological sorting, connected components, and game tree exploration.",
+      "grading_rubric": "Award 1 mark for defining DFS and BFS mechanics (stack vs queue). Award 2 marks for comparing space complexities (O(H) vs O(V)). Award 2 marks for identifying ideal use cases (shortest path vs cycle detection/topological sort).",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python"
+        ],
+        "concept_tags": [
+          "dfs",
+          "bfs",
+          "graph traversal",
+          "space complexity"
+        ],
+        "prerequisite_concepts": [
+          "stacks",
+          "queues",
+          "graphs"
+        ],
+        "related_within_section": [
+          "GEN-DSA-MCQ-0001",
+          "GEN-DSA-MCQ-0002"
+        ]
+      }
+    },
+    {
+      "id": "GEN-DSA-SCN-0004",
+      "category_id": "CAT-02",
+      "subcategory": "Data Structures & Algorithms",
+      "question_type": "Scenario-Based",
+      "difficulty_level": "Hard",
+      "question_text": "Scenario: You are asked to design an LRU (Least Recently Used) Cache that supports `get(key)` and `put(key, value)` operations in strictly O(1) average time complexity. Detail the underlying data structures required, how tie-breaking and eviction work, and how thread safety should be handled in a multi-threaded environment.",
+      "options": [],
+      "correct_answer": "",
+      "explanation": "Achieving O(1) time complexity for both `get` and `put` requires combining a Hash Map and a Doubly Linked List. The Hash Map provides O(1) key-based lookups pointing directly to nodes in the linked list. The Doubly Linked List maintains recency order, where the head represents the most recently used item and the tail represents the least recently used item. When capacity is exceeded during `put`, the node at the tail is evicted. In a multi-threaded environment, concurrent access must be synchronized using mutexes, read-write locks, or thread-safe wrapper structures to prevent race conditions during pointer updates and hash map re-hashing.",
+      "reference_answer": "Use a Hash Map combined with a Doubly Linked List. Map stores key -> Linked List Node reference, giving O(1) lookup. Linked list maintains chronological recency (head = MRU, tail = LRU). `get(key)`: check map, if present, move node to head and return value. `put(key, value)`: if key exists, update value and move to head; if new, create node, add to head, and if size > capacity, remove tail node and delete from map. For concurrency, wrap operations in a ReentrantLock / Mutex.",
+      "grading_rubric": "Award 1 mark for identifying the combination of Hash Map and Doubly Linked List. Award 2 marks for detailing O(1) get and put operations and node relocation. Award 1 mark for LRU eviction logic at capacity. Award 1 mark for multi-threaded synchronization/thread safety.",
+      "marks": 5,
+      "time_allocation": 300,
+      "status": "draft",
+      "created_by": "AI Draft - Review Required",
+      "version": 1,
+      "graph": {
+        "section": "DSA",
+        "skill_tags": [
+          "dsa",
+          "python"
+        ],
+        "concept_tags": [
+          "lru cache",
+          "hash map",
+          "linked list",
+          "concurrency"
+        ],
+        "prerequisite_concepts": [
+          "hash tables",
+          "doubly linked lists"
+        ],
+        "related_within_section": [
+          "GEN-DSA-EXP-0003"
+        ]
+      }
+    }
+  ]
+}
