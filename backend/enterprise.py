@@ -2062,8 +2062,9 @@ def admin_integrity_attempts(user=Depends(current_user), q: str = "", status: st
 
 
 @router.get("/api/admin/integrity/attempts/{attempt_id}")
-def admin_integrity_attempt_detail(attempt_id: str, user=Depends(current_user)):
+def admin_integrity_attempt_detail(attempt_id: str, response: Response, user=Depends(current_user)):
     admin_only(user, "integrity_review")
+    response.headers["Cache-Control"] = "no-store"
     row = one("""SELECT a.*,u.name AS candidate_name,u.email,
                  r.decision AS review_decision,r.reason AS review_reason,
                  r.reviewed_at,r.reviewer_id
@@ -2079,6 +2080,7 @@ def admin_integrity_attempt_detail(attempt_id: str, user=Depends(current_user)):
         state = json.loads(item["state"]) if item.get("state") else {}
     except Exception:
         state = {}
+    item["proctoring"] = state.get("proctoring", {"mode": "r0"})
     raw_answers = state.get("answers", [])
     if isinstance(raw_answers, dict):
         questions = {q.get("id"): q for q in state.get("selected_questions", [])}
@@ -2105,7 +2107,7 @@ def admin_integrity_attempt_detail(attempt_id: str, user=Depends(current_user)):
     for event in item["events"]:
         try: event["metadata"] = json.loads(event.get("metadata") or "{}")
         except Exception: event["metadata"] = {}
-    interval_pairs = {"tab_hidden": "tab_visible", "blur": "focus", "fullscreen_exit": "fullscreen_enter", "screen_share_stopped": "screen_share_started", "screen_share_unavailable": "screen_share_started"}
+    interval_pairs = {"tab_hidden": "tab_visible", "blur": "focus", "fullscreen_exit": "fullscreen_enter", "screen_share_stopped": "screen_share_started", "screen_share_unavailable": "screen_share_started", "camera_stopped": "camera_started", "microphone_stopped": "microphone_started"}
     pending = {}
     now_ts = time.time()
     for event in item["events"]:

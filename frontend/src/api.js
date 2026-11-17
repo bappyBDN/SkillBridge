@@ -51,11 +51,15 @@ export function apiUrl(path) {
   return API_BASE + normalized;
 }
 
-export async function api(path, { method = "GET", body, form, responseType, signal } = {}) {
+export async function api(path, { method = "GET", body, form, responseType, signal, headers: extraHeaders } = {}) {
   const url = apiUrl(path);
   const headers = {};
   const t = getToken();
   if (t) headers.Authorization = "Bearer " + t;
+  // Caller headers may add exam-session metadata, but never replace the bearer token.
+  for (const [key, value] of Object.entries(extraHeaders || {})) {
+    if (typeof key === "string" && typeof value === "string" && key.toLowerCase() !== "authorization") headers[key] = value;
+  }
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }

@@ -1,0 +1,10 @@
+.r1-proctoring-setup { margin: 18px 0; padding: 22px; border: 1px solid #c5d9e7; border-radius: 14px; background: #f5f9fc; color: #254452; }
+.r1-proctoring-setup > h3 { margin: 0 0 12px; font-size: 18px; }
+.r1-proctoring-setup > p { font-size: 13px; line-height: 1.75; max-width: 95ch; }
+.r1-proctoring-setup .check { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.65; margin: 16px 0; }
+.r1-proctoring-setup input[type="checkbox"] { flex: 0 0 auto; margin-top: 4px; }
+.r1-proctoring-setup .camera-float { position: static; width: min(100%, 320px); margin: 15px 0 0; }
+.r1-proctoring-setup .exam-steps { margin-top: 18px; }
+.exam2-camera > .note { font-size: 11px; line-height: 1.7; padding: 10px; }
+.exam2 .camera-status > span { display: block; }
+.exam2 .integrity-alerts.inline .integrity-alerts-note { display: block; }

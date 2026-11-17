@@ -10,13 +10,14 @@ from typing import Optional, List
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 import engine as E
+import proctoring as PROCTOR
 import identity as ID
 import security as SEC
 from content import TAXONOMY, JOB, QBYID
@@ -1339,7 +1340,7 @@ def state(u=Depends(current_user)):
     if candidate_profile:
         profile_skills = json.loads(candidate_profile["skills"] or "[]")
         skill_entries = profile_skill_entries({"skills": profile_skills})
-    atts = allr("""SELECT a.id,a.kind,a.status,a.result,a.finished,a.started,
+    atts = allr("""SELECT a.id,a.kind,a.status,a.result,a.finished,a.started,a.state,
                    r.decision AS review_decision,r.reason AS review_reason,r.reviewed_at,
                    a.appeal,d.decision AS appeal_decision,d.reason AS appeal_reason,d.decided_at AS appeal_decided_at
                    FROM attempts a LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
@@ -1361,6 +1362,7 @@ def state(u=Depends(current_user)):
             "finalized": result.get("finalized", False), "objective_summary": result.get("objective_summary"),
             "finished": a["finished"],
             "started": a["started"],
+            "proctoring": json.loads(a["state"] or "{}").get("proctoring", {"mode": "r0"}),
             "topics": result.get("topics", {}),
             "review_decision": a["review_decision"], "review_reason": a["review_reason"],
             "reviewed_at": a["reviewed_at"], "appeal": a["appeal"],
@@ -1395,6 +1397,7 @@ def state(u=Depends(current_user)):
         **avatar_metadata(u["id"]),
         "attempts": attempt_items,
         "passports": passport_items,
+        "proctoring_policy": PROCTOR.policy(),
     }
 
 
@@ -1436,6 +1439,9 @@ def export_data(u=Depends(current_user)):
     d["answer_evaluations"] = [evaluation_view(r) for r in allr(
         "SELECT * FROM answer_evaluations WHERE attempt_id IN "
         "(SELECT id FROM attempts WHERE user_id=?)", (u["id"],))]
+    d["exam_evidence"] = [{**{key: value for key, value in dict(row).items() if key != "image_data"},
+                           "image_base64": base64.b64encode(bytes(row["image_data"])).decode("ascii")}
+                          for row in allr("SELECT * FROM exam_evidence WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?) AND expires_at>?", (u["id"], time.time()))]
     audit(u["id"], "export")
     return d
 
@@ -3774,7 +3780,8 @@ def view(att, include_session=False):
     st = json.loads(att["state"])
     unlimited_time = unlimited_exam_user(att["user_id"], st)
     session = {"session_id": att.get("session_id") if include_session else None,
-               "last_event_seq": int(att.get("last_event_seq") or 0)}
+               "last_event_seq": int(att.get("last_event_seq") or 0),
+               "proctoring": st.get("proctoring", {"mode": "r0"})}
     if st.get("graphrag"):
         import graphrag as G
         questions = st["selected_questions"]
@@ -4121,7 +4128,25 @@ def get_att(att_id, uid):
     return dict(a)
 
 
-def require_screen_share(att_id):
+def require_screen_share(att_id, session_id=None):
+    attempt = one("SELECT state,session_id FROM attempts WHERE id=?", (att_id,))
+    policy = json.loads(attempt["state"]).get("proctoring", {}) if attempt else {}
+    if policy.get("mode") == "r1":
+        _check_exam_session(dict(attempt), session_id)
+        pairs = {
+            "screen_share_started": ("screen_share_started", "screen_share_stopped", "screen_share_unavailable"),
+            "fullscreen_enter": ("fullscreen_enter", "fullscreen_exit"),
+            "camera_started": ("camera_started", "camera_stopped"),
+            "microphone_started": ("microphone_started", "microphone_stopped"),
+        }
+        for required, types in pairs.items():
+            placeholders = ",".join("?" for _ in types)
+            signal = one(f"SELECT type,metadata FROM events WHERE attempt_id=? AND ts>=? AND type IN ({placeholders}) ORDER BY ts DESC,id DESC LIMIT 1",
+                         (att_id, policy.get("session_started_at", 0), *types))
+            if not signal or signal["type"] != required:
+                raise HTTPException(409, "r1_monitoring_restore_required:" + required)
+            if required == "screen_share_started" and json.loads(signal["metadata"] or "{}").get("surface") != "monitor":
+                raise HTTPException(409, "r1_entire_screen_required")
     latest = one(
         "SELECT type FROM events WHERE attempt_id=? AND type IN ('screen_share_started','screen_share_stopped','screen_share_unavailable') ORDER BY ts DESC, id DESC LIMIT 1",
         (att_id,),
@@ -4133,6 +4158,9 @@ def require_screen_share(att_id):
 class StartAttempt(BaseModel):
     blueprint_id: Optional[str] = None
     resume_attempt_id: Optional[str] = None
+    proctoring_consent: Optional[str] = Field(default=None, max_length=100)
+    proctoring_ready: dict[str, bool] = Field(default_factory=dict)
+    identity_status: Optional[str] = Field(default=None, max_length=30)
 
 
 @app.post("/api/attempts")
@@ -4155,7 +4183,13 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
             # A fresh page/session takes ownership; the previous tab is rejected from this point.
             sid = secrets.token_urlsafe(32)
             now = time.time()
-            run("UPDATE attempts SET session_id=?,last_event_seq=0,last_heartbeat=? WHERE id=?", (sid, now, act["id"]))
+            saved = json.loads(act["state"])
+            required_policy = saved.get("proctoring", {"mode": "r0"})
+            if required_policy.get("mode") == "r1":
+                updated_policy = PROCTOR.validate_start(b, required_policy, now)
+                updated_policy["consented_at"] = required_policy["consented_at"]
+                saved["proctoring"] = updated_policy
+            run("UPDATE attempts SET session_id=?,last_event_seq=0,last_heartbeat=?,state=? WHERE id=?", (sid, now, json.dumps(saved), act["id"]))
             act = get_att(act["id"], u["id"])
             return view(dict(act), include_session=True)  # resume while invalidating any older tab
     seed = secrets.randbelow(10**9)
@@ -4181,12 +4215,15 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
               "served_at": time.time(), "question_viewed_at": time.time(), "question_time_seconds": {}, "seed": seed}
         st["current"] = selected[0]["id"]
     else:
+        if PROCTOR.policy().get("mode") == "r1":
+            raise HTTPException(409, "r1_requires_an_assessment_blueprint")
         st = E.new_state(seed)
         q = E.pick_question(st, seen_before(u["id"]))
         st["current"], st["served_at"] = q["id"], time.time()
     aid = uuid.uuid4().hex[:12]
     session_id = secrets.token_urlsafe(32)
     now = time.time()
+    st["proctoring"] = PROCTOR.validate_start(b, PROCTOR.policy(), now)
     # Serialize attempt creation per candidate. This prevents double-clicks or
     # parallel requests from opening two active exams or spending one credit twice.
     with db() as conn:
@@ -4256,10 +4293,10 @@ class QuitAttempt(BaseModel):
 
 
 @app.post("/api/attempts/{aid}/answer")
-def answer(aid: str, b: Ans, u=Depends(current_user)):
+def answer(aid: str, b: Ans, request: Request, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     if att["status"] != "active": raise HTTPException(409, "Attempt already finished")
-    require_screen_share(aid)
+    require_screen_share(aid, request.headers.get("x-exam-session"))
     st = json.loads(att["state"])
     if not unlimited_exam_user(u["id"], st) and attempt_expired(att):      # server owns the timer
         finalize(att, st); return view(get_att(aid, u["id"]))
@@ -4300,12 +4337,12 @@ class NavigateQuestion(BaseModel):
 
 
 @app.post("/api/attempts/{aid}/navigate")
-def navigate_question(aid: str, b: NavigateQuestion, u=Depends(current_user)):
+def navigate_question(aid: str, b: NavigateQuestion, request: Request, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     st = json.loads(att["state"])
     if att["status"] != "active" or not st.get("graphrag"):
         raise HTTPException(409, "Question navigation is unavailable")
-    require_screen_share(aid)
+    require_screen_share(aid, request.headers.get("x-exam-session"))
     if attempt_expired(att):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
@@ -4332,7 +4369,7 @@ class GotoQuestion(BaseModel):
 
 
 @app.post("/api/attempts/{aid}/goto")
-def goto_question(aid: str, b: GotoQuestion, u=Depends(current_user)):
+def goto_question(aid: str, b: GotoQuestion, request: Request, u=Depends(current_user)):
     """Save the current answer and move to another question in one round trip.
 
     The exam UI previously called /answer and /navigate back-to-back, which made
@@ -4345,7 +4382,7 @@ def goto_question(aid: str, b: GotoQuestion, u=Depends(current_user)):
     st = json.loads(att["state"])
     if not st.get("graphrag"):
         raise HTTPException(409, "Question navigation is unavailable")
-    require_screen_share(aid)
+    require_screen_share(aid, request.headers.get("x-exam-session"))
     if attempt_expired(att):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
@@ -4380,12 +4417,12 @@ def goto_question(aid: str, b: GotoQuestion, u=Depends(current_user)):
 
 
 @app.post("/api/attempts/{aid}/submit")
-def submit_graphrag_attempt(aid: str, u=Depends(current_user)):
+def submit_graphrag_attempt(aid: str, request: Request, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     st = json.loads(att["state"])
     if att["status"] != "active" or not st.get("graphrag"):
         raise HTTPException(409, "This is not an active GraphRAG assessment")
-    require_screen_share(aid)
+    require_screen_share(aid, request.headers.get("x-exam-session"))
     if attempt_expired(att):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
@@ -4412,10 +4449,10 @@ def quit_attempt(aid: str, b: QuitAttempt, u=Depends(current_user)):
 
 
 @app.post("/api/attempts/{aid}/sql-run")
-def sql_run(aid: str, b: SqlRun, u=Depends(current_user)):
+def sql_run(aid: str, b: SqlRun, request: Request, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     st = json.loads(att["state"])
-    require_screen_share(aid)
+    require_screen_share(aid, request.headers.get("x-exam-session"))
     if st.get("graphrag"):
         q = next((x for x in st["selected_questions"] if x["id"] == st.get("current")), None)
         if att["status"] != "active" or not q or "sql" not in str(q.get("question_type", "")).lower():
@@ -4434,6 +4471,7 @@ EVENT_TYPES = {
     "identity_verified", "identity_mismatch", "identity_skipped", "microphone_stopped",
     "context_menu", "drag_start"
 }
+EVENT_TYPES.update({"camera_started", "microphone_started"})
 EVENT_META_KEYS = {"surface", "editor", "reason", "visibility", "supported", "confidence", "model", "duration_ms", "local_only", "similarity", "distance", "faces", "threshold", "level"}
 
 
@@ -4481,7 +4519,9 @@ def _accept_sequence(att, seq, aid, request, event_type, client_ts=None, metadat
             (aid, "network_ip_changed", now, None, None, None, None, json.dumps({"previous_ip_changed": True})))
     st = json.loads(att["state"])
     safe_meta = {k: (v[:100] if isinstance(v, str) else v) for k, v in list((metadata or {}).items())[:8]
-                 if k in EVENT_META_KEYS and isinstance(v, (str, int, float, bool))}
+                  if k in EVENT_META_KEYS and isinstance(v, (str, int, float, bool))}
+    if st.get("proctoring", {}).get("mode") == "r1":
+        safe_meta["review_note"] = PROCTOR.observation(event_type)["summary"]
     run("INSERT INTO events(attempt_id,type,ts,question_id,question_index,seq,client_ts,metadata) VALUES (?,?,?,?,?,?,?,?)",
         (aid, event_type, now, st.get("current"), st.get("index"), seq,
          float(client_ts) if client_ts is not None else None, json.dumps(safe_meta)))
@@ -4515,39 +4555,20 @@ def event_beacon(aid: str, b: BeaconEv, request: Request):
     return {"ok": True, "server_ts": now, "seq": b.seq}
 
 
-def _vision_review_evidence(evidence_id: str, payload: bytes):
-    """Optional Groq vision review of one stored alert snapshot (never a stream)."""
-    try:
-        import ai_providers as AIP
-        classify = getattr(AIP, "classify_exam_evidence", None)
-        if not callable(classify):
-            # The optional vision reviewer is not part of this provider build.
-            return
-        result = classify(payload)
-    except Exception:
-        log.warning("Evidence vision review failed", exc_info=True)
-        return
-    if not result:
-        return
-    try:
-        run(
-            "UPDATE exam_evidence SET vision_json=?,vision_model=?,vision_at=? WHERE id=?",
-            (json.dumps(result), AIP.evidence_vision_model(), time.time(), evidence_id),
-        )
-    except Exception:
-        log.exception("Could not store the evidence vision result")
-
-
 @app.post("/api/attempts/{aid}/evidence")
-async def upload_exam_evidence(aid: str, request: Request, background: BackgroundTasks,
-                              session_id: str = Form(...), seq: int = Form(...),
+async def upload_exam_evidence(aid: str, request: Request,
+                              session_id: str = Form(...), event_seq: int = Form(...),
                               event_type: str = Form(...), confidence: float = Form(...),
+                              source: str = Form(...),
                               image: UploadFile = File(...), u=Depends(current_user)):
     att = get_att(aid, u["id"])
     if att["status"] != "active":
         raise HTTPException(409, "attempt_not_active")
     _check_exam_session(att, session_id)
-    if event_type not in {"ai_gaze_away", "ai_multiple_faces", "ai_no_face", "ai_phone_detected"}:
+    policy = json.loads(att["state"]).get("proctoring", {})
+    if policy.get("mode") != "r1" or policy.get("consent_version") != PROCTOR.CONSENT_VERSION or not policy.get("consented_at"):
+        raise HTTPException(403, "r1_evidence_consent_required")
+    if event_type not in PROCTOR.EVIDENCE_EVENTS or source not in ("camera", "screen"):
         raise HTTPException(422, "unsupported_evidence_event")
     if not 0 <= confidence <= 1:
         raise HTTPException(422, "invalid_confidence")
@@ -4558,20 +4579,47 @@ async def upload_exam_evidence(aid: str, request: Request, background: Backgroun
         raise HTTPException(413, "evidence_too_large")
     if not payload.startswith(bytes([255, 216, 255])):
         raise HTTPException(415, "invalid_jpeg")
-    count = one("SELECT COUNT(*) AS n FROM exam_evidence WHERE attempt_id=?", (aid,))
-    if count and count["n"] >= 20:
-        raise HTTPException(429, "evidence_limit_reached")
-    att["_provided_session"] = session_id
-    server_ts = _accept_sequence(att, seq, aid, request, event_type, None,
-                                 {"confidence": round(confidence, 3), "model": "mediapipe_tasks_vision", "local_only": True})
+    # Decode and re-encode: reject malformed/oversized images and strip EXIF.
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(payload)) as frame:
+            if frame.format != "JPEG" or frame.width * frame.height > 4096 * 4096:
+                raise ValueError("invalid image dimensions")
+            clean = io.BytesIO()
+            frame.convert("RGB").save(clean, format="JPEG", quality=65)
+            payload = clean.getvalue()
+    except Exception:
+        raise HTTPException(415, "invalid_jpeg")
+    if len(payload) > MAX_EVIDENCE_BYTES:
+        raise HTTPException(413, "evidence_too_large")
+    event_row = one("SELECT id,metadata FROM events WHERE attempt_id=? AND seq=? AND type=? AND ts>=? ORDER BY id DESC LIMIT 1",
+                    (aid, event_seq, event_type, policy.get("session_started_at", 0)))
+    if not event_row:
+        raise HTTPException(409, "save_the_linked_proctoring_event_first")
+    server_ts = time.time()
     evidence_id = uuid.uuid4().hex
-    expires = server_ts + EVIDENCE_RETENTION_DAYS * 86400
-    event_row = one("SELECT id FROM events WHERE attempt_id=? AND seq=? ORDER BY id DESC LIMIT 1", (aid, seq))
-    run("INSERT INTO exam_evidence(id,attempt_id,event_id,captured_at,mime_type,image_data,size_bytes,expires_at) VALUES (?,?,?,?,?,?,?,?)",
-        (evidence_id, aid, event_row["id"] if event_row else None, server_ts, "image/jpeg", payload, len(payload), expires))
-    background.add_task(_vision_review_evidence, evidence_id, payload)
+    expires = server_ts + int(policy["retention_days"]) * 86400
+    note = PROCTOR.observation(event_type, source, json.loads(event_row["metadata"] or "{}"))
+    with db() as conn:
+        if not DATABASE_URL:
+            conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute("SELECT session_id,status FROM attempts WHERE id=?" + (" FOR UPDATE" if DATABASE_URL else ""), (aid,)).fetchone()
+        _check_exam_session(dict(current), session_id)
+        if current["status"] != "active":
+            raise HTTPException(409, "attempt_not_active")
+        for existing in conn.execute("SELECT vision_json FROM exam_evidence WHERE attempt_id=? AND event_id=?", (aid, event_row["id"])).fetchall():
+            if json.loads(existing["vision_json"] or "{}").get("source") == source:
+                raise HTTPException(409, "evidence_already_saved")
+        count = conn.execute("SELECT COUNT(*) AS n FROM exam_evidence WHERE attempt_id=?", (aid,)).fetchone()
+        if count["n"] >= policy.get("max_snapshots", 40):
+            raise HTTPException(429, "evidence_limit_reached")
+        conn.execute("INSERT INTO exam_evidence(id,attempt_id,event_id,captured_at,mime_type,image_data,size_bytes,expires_at,vision_json,vision_model,vision_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (evidence_id, aid, event_row["id"], server_ts, "image/jpeg", payload, len(payload), expires,
+             json.dumps(note), "on-device observation + factual review note", server_ts))
+    # Raw screen/camera frames never leave this application's protected storage
+    # for a remote vision/LLM provider. The AI runs in the candidate's browser.
     run("DELETE FROM exam_evidence WHERE expires_at<?", (server_ts,))
-    return {"ok": True, "evidence_id": evidence_id, "server_ts": server_ts, "size_bytes": len(payload), "retention_days": EVIDENCE_RETENTION_DAYS}
+    return {"ok": True, "evidence_id": evidence_id, "server_ts": server_ts, "size_bytes": len(payload), "retention_days": policy["retention_days"]}
 
 
 @app.get("/api/attempts/{aid}/evidence/{evidence_id}")

@@ -12,6 +12,8 @@ import SkillCredential from "./SkillCredential.jsx";
 import CandidateAccountSettings from "./CandidateAccountSettings.jsx";
 import PasswordReset from "./PasswordReset.jsx";
 import { assessmentNotificationItems, notificationTimestamp } from "./notifications.js";
+import useR1Devices, { trackLive } from "./useR1Devices.js";
+import useR1Monitoring from "./useR1Monitoring.js";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
@@ -1636,6 +1638,7 @@ function useExamIntegrity(initial, screenStream) {
   const pendingEvents = useRef([]);
   const flushPromise = useRef(null);
   const reportedStream = useRef(screenStream);
+  const evidenceHandler = useRef(null);
 
   const flushEvents = useCallback(async () => {
     if (flushPromise.current) return flushPromise.current;
@@ -1667,14 +1670,16 @@ function useExamIntegrity(initial, screenStream) {
 
   const report = useCallback(
     (type, metadata = {}) => {
-      pendingEvents.current.push({
+      const event = {
         type,
         session_id: sessionId.current,
         seq: ++sequence.current,
         client_ts: Date.now(),
         metadata,
-      });
+      };
+      pendingEvents.current.push(event);
       flushEvents();
+      evidenceHandler.current?.(event);
       const info = ALERT_MAP[type];
       if (info) {
         const now = Date.now();
@@ -1730,6 +1735,12 @@ function useExamIntegrity(initial, screenStream) {
         report("paste");
         setNotice(t("clipboardBlocked"));
       }
+      if (initial.proctoring?.mode === "r1" && (e.ctrlKey || e.metaKey) && ["tab", "t", "w", "n", "pageup", "pagedown"].includes(key)) {
+        e.preventDefault();
+        // Browser/OS shortcuts may never reach JavaScript. This is not an
+        // operating-system kiosk lock; hidden/blur events remain the evidence.
+        report("blur", { reason: "browser_navigation_shortcut_blocked" });
+      }
     };
     const context = (e) => {
       e.preventDefault();
@@ -1762,6 +1773,7 @@ function useExamIntegrity(initial, screenStream) {
     const fullscreen = () => {
       const active = Boolean(document.fullscreenElement);
       setFullscreenActive(active);
+      if (active) report("fullscreen_enter");
       if (!active) {
         setSignals((current) => ({ ...current, fullscreen: current.fullscreen + 1 }));
         report("fullscreen_exit");
@@ -1799,7 +1811,7 @@ function useExamIntegrity(initial, screenStream) {
       window.removeEventListener("blur", blur);
       window.removeEventListener("beforeunload", unload);
     };
-  }, [report, t]);
+  }, [report, t, initial.proctoring?.mode]);
   useEffect(() => {
     const track = screenStream?.getVideoTracks()[0];
     if (!track) {
@@ -1807,7 +1819,7 @@ function useExamIntegrity(initial, screenStream) {
       return;
     }
     const sync = () => {
-      const live = track.readyState === "live";
+      const live = track.readyState === "live" && (initial.proctoring?.mode !== "r1" || !track.muted);
       setShareActive(live);
       if (live) setShareError("");
     };
@@ -1831,15 +1843,17 @@ function useExamIntegrity(initial, screenStream) {
     // never stays stuck on "share off" while the screen is actually shared.
     const timer = setInterval(sync, 1000);
     track.addEventListener("ended", ended);
-    track.addEventListener("mute", sync);
-    track.addEventListener("unmute", sync);
+    const mute = () => { sync(); if (initial.proctoring?.mode === "r1") report("screen_share_unavailable", { reason: "screen_track_muted" }); };
+    const unmute = () => { sync(); if (initial.proctoring?.mode === "r1") report("screen_share_started", { surface: track.getSettings?.().displaySurface || "unknown" }); };
+    track.addEventListener("mute", mute);
+    track.addEventListener("unmute", unmute);
     return () => {
       clearInterval(timer);
       track.removeEventListener("ended", ended);
-      track.removeEventListener("mute", sync);
-      track.removeEventListener("unmute", sync);
+      track.removeEventListener("mute", mute);
+      track.removeEventListener("unmute", unmute);
     };
-  }, [screenStream, report, t]);
+  }, [screenStream, report, t, initial.proctoring?.mode]);
   const restartFullscreen = async () => {
     try {
       if (!document.documentElement.requestFullscreen)
@@ -1863,6 +1877,7 @@ function useExamIntegrity(initial, screenStream) {
     report,
     flushEvents,
     nextSeq,
+    evidenceHandler,
   };
 }
 function ExamIntegrityBanner({ integrity, onRestartShare }) {
@@ -1924,7 +1939,7 @@ function ExamIntegrityBanner({ integrity, onRestartShare }) {
 }
 
 /* ---------- exam ---------- */
-function ExamRun({ initial, onFinished, screenStream, cameraStream, micStream, onRestartShare }) {
+function ExamRun({ initial, onFinished, screenStream, cameraStream, micStream, audioContext, devicesReady, onRestartCamera, onRestartMic, onRestartShare }) {
   // An active exam owns the whole viewport: the workspace sidebar/topbar are
   // hidden so the candidate cannot wander into the app mid-assessment.
   useEffect(() => {
@@ -1940,6 +1955,10 @@ function ExamRun({ initial, onFinished, screenStream, cameraStream, micStream, o
         cameraStream={cameraStream}
         micStream={micStream}
         onRestartShare={onRestartShare}
+        audioContext={audioContext}
+        devicesReady={devicesReady}
+        onRestartCamera={onRestartCamera}
+        onRestartMic={onRestartMic}
       />
     );
   return (
@@ -1953,7 +1972,7 @@ function ExamRun({ initial, onFinished, screenStream, cameraStream, micStream, o
   );
 }
 
-function GraphRAGExamRunGate({ initial, onFinished, screenStream, cameraStream, micStream, onRestartShare }) {
+function GraphRAGExamRunGate({ initial, onFinished, screenStream, cameraStream, micStream, onRestartShare, audioContext, devicesReady, onRestartCamera, onRestartMic }) {
   const integrity = useExamIntegrity(initial, screenStream);
   return (
     <GraphRAGExamRun
@@ -1963,12 +1982,17 @@ function GraphRAGExamRunGate({ initial, onFinished, screenStream, cameraStream, 
       cameraStream={cameraStream}
       micStream={micStream}
       onRestartShare={onRestartShare}
+      screenStream={screenStream}
+      audioContext={audioContext}
+      devicesReady={devicesReady}
+      onRestartCamera={onRestartCamera}
+      onRestartMic={onRestartMic}
     />
   );
 }
 
 /* ---------- local-only AI proctoring ---------- */
-function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEventsForEvidence, inline = false, onDetections }) {
+function LocalProctor({ cameraStream, report, inline = false, onDetections }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [status, setStatus] = useState("Loading local vision models…");
@@ -1983,26 +2007,7 @@ function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEven
     if (now - (lastAlert.current[type] || 0) < 15000) return;
     lastAlert.current[type] = now;
     report(type, { confidence: Number(confidence.toFixed(2)), model: "mediapipe", local_only: true });
-    try {
-      const video = videoRef.current, canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState < 2) return;
-      canvas.width = 480; canvas.height = Math.round(480 * video.videoHeight / video.videoWidth);
-      const ctx = canvas.getContext("2d", { alpha: false });
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.55));
-      if (!blob || blob.size > 180 * 1024) return;
-      const form = new FormData();
-      form.append("session_id", sessionId.current);
-      await flushEventsForEvidence();
-      form.append("seq", String(nextSeq()));
-      form.append("event_type", type);
-      form.append("confidence", String(confidence));
-      form.append("image", blob, "evidence.jpg");
-      await api(`/attempts/${aid}/evidence`, { method: "POST", form });
-    } catch {
-      // Detection log remains in the event queue even if evidence upload fails.
-    }
-  }, [aid, nextSeq, report, sessionId, flushEventsForEvidence]);
+  }, [report]);
 
   useEffect(() => {
     let cancelled = false, timer = null;
@@ -2081,21 +2086,11 @@ function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEven
             }
             if (count === 0) {
               if (!noFaceSince.current) noFaceSince.current = now;
-              if (now - noFaceSince.current > 1200) evidence("ai_no_face", 0.8);
+              if (now - noFaceSince.current > 1500) evidence("ai_no_face", 0);
             } else {
               noFaceSince.current = 0;
             }
-            if (count > 1) evidence("ai_multiple_faces", Math.min(0.99, 0.65 + count * 0.08));
-            if (count === 1) {
-              const points = faces[0];
-              const nose = points[1], leftEye = points[33], rightEye = points[263];
-              if (nose && leftEye && rightEye) {
-                const center = (leftEye.x + rightEye.x) / 2;
-                const eyeSpan = Math.max(0.001, Math.abs(rightEye.x - leftEye.x));
-                const offset = Math.abs(nose.x - center) / eyeSpan;
-                if (offset > 0.09) evidence("ai_gaze_away", Math.min(0.9, 0.55 + offset));
-              }
-            }
+            if (count > 1) evidence("ai_multiple_faces", 0);
             if (objects) {
               if (now - lastObjectRun >= 650) {
                 lastObjectRun = now;
@@ -2183,7 +2178,7 @@ function LocalProctor({ cameraStream, aid, sessionId, nextSeq, report, flushEven
       </div>
       <div className="camera-float-foot">
         <span>Local preview</span>
-        <span>Not recorded</span>
+        <span>Flag-triggered snapshots saved</span>
       </div>
       <canvas ref={canvasRef} hidden />
     </aside>
@@ -2562,7 +2557,9 @@ function ExamCountdown({ initial, warnAt = 120 }) {
   return <b className={left < warnAt ? "low" : ""}>{fmt(left)}</b>;
 }
 
-function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStream, onRestartShare }) {
+function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStream, onRestartShare, screenStream, audioContext, devicesReady = true, onRestartCamera, onRestartMic }) {
+  const r1 = initial.proctoring?.mode === "r1";
+  const monitoring = useR1Monitoring({ enabled: r1, initial, integrity, screenStream, cameraStream, micStream, audioContext });
   const [v, setV] = useState(initial);
   const [currentIndex, setCurrentIndex] = useState(initial.question_index || 0);
   const initialAnswers = initial.answers || initial.page?.answers || {};
@@ -2639,6 +2636,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     });
   }, [q?.id, visitedKey]);
   const reportEvent = integrity.report;
+  const flushIntegrityEvents = integrity.flushEvents;
   const onVoice = useCallback(({ confidence, level, duration_ms }) => {
     setVoiceFlags((count) => count + 1);
     setVoiceActive(true);
@@ -2676,8 +2674,10 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
           : "fullscreen_required",
       );
     if (!q || !String(ans).trim()) return v;
+    await flushIntegrityEvents();
     const next = await api(`/attempts/${aid}/answer`, {
       method: "POST",
+      headers: { "X-Exam-Session": sessionId.current },
       body: { question_id: q.id, answer: String(ans) },
     });
     setV(next);
@@ -2703,7 +2703,8 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
         while (queueRef.current.length) {
           const item = queueRef.current.shift();
           try {
-            const res = await api(`/attempts/${aid}/goto`, { method: "POST", body: item });
+            await flushIntegrityEvents();
+            const res = await api(`/attempts/${aid}/goto`, { method: "POST", body: item, headers: { "X-Exam-Session": sessionId.current } });
             mergeView(res);
           } catch (e) {
             setErr(e);
@@ -2725,7 +2726,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       }
     })();
     return pumpPromise.current;
-  }, [aid, mergeView]);
+  }, [aid, mergeView, flushIntegrityEvents]);
   const flushQueue = async () => {
     while (queueRef.current.length || pumpPromise.current) {
       await pumpQueue();
@@ -2734,7 +2735,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   const goTo = (index) => {
     const previousQuestion = qRef.current;
     if (!previousQuestion || index === indexRef.current) return;
-    if (!integrity.shareActive || !integrity.fullscreenActive) {
+    if (!integrity.shareActive || !integrity.fullscreenActive || (r1 && (!devicesReady || !integrity.tabVisible))) {
       setErr(
         new Error(
           !integrity.shareActive
@@ -2770,7 +2771,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     }
   };
   const runSql = async () => {
-    if (!integrity.shareActive || !integrity.fullscreenActive) {
+    if (!integrity.shareActive || !integrity.fullscreenActive || (r1 && (!devicesReady || !integrity.tabVisible))) {
       setErr(new Error("screen_share_required"));
       return;
     }
@@ -2778,6 +2779,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       setSqlOut(
         await api(`/attempts/${aid}/sql-run`, {
           method: "POST",
+          headers: { "X-Exam-Session": sessionId.current },
           body: { sql: ans },
         }),
       );
@@ -2786,7 +2788,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     }
   };
   const submit = async () => {
-    if (!integrity.shareActive || !integrity.fullscreenActive) {
+    if (!integrity.shareActive || !integrity.fullscreenActive || (r1 && (!devicesReady || !integrity.tabVisible))) {
       setErr(new Error("screen_share_required"));
       return;
     }
@@ -2803,7 +2805,8 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     try {
       await flushQueue();
       await saveAnswer();
-      const r = await api(`/attempts/${aid}/submit`, { method: "POST" });
+      await flushIntegrityEvents();
+      const r = await api(`/attempts/${aid}/submit`, { method: "POST", headers: { "X-Exam-Session": sessionId.current } });
       if (r.status === "done") onFinished(aid);
       else setV(r);
     } catch (e) {
@@ -2846,7 +2849,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   const navigator = v.navigator || [];
   return (
     <section className="tech-exam exam2">
-      <MicMonitor stream={micStream} onVoice={onVoice} />
+      {!r1 && <MicMonitor stream={micStream} onVoice={onVoice} />}
       <div className="exam2-top">
         <div className="exam2-top-q">
           <span className="exam2-top-icon">▤</span>
@@ -2900,7 +2903,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
             <span><i className="dot skipped" /> Skipped</span>
             <span><i className="flag" /> Flagged</span>
           </div>
-          <button type="button" className="exam2-submit" onClick={submit} disabled={busy || quitting}>
+          <button type="button" className="exam2-submit" onClick={submit} disabled={busy || quitting || (r1 && (!devicesReady || !integrity.shareActive || !integrity.fullscreenActive || !integrity.tabVisible))}>
             {busy ? "Submitting…" : "Submit assessment"}
           </button>
           <button type="button" className="btn ghost exam-quit" onClick={quit} disabled={busy || quitting}>
@@ -2908,6 +2911,8 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
           </button>
         </aside>
         <main className="tech-main">
+          {r1 && (!devicesReady || !integrity.shareActive || !integrity.fullscreenActive || !integrity.tabVisible) && <div className="err" role="alert">Assessment controls are paused. Restore all four required permissions and return to this tab. Your server timer continues; you can always Quit assessment.</div>}
+          <fieldset disabled={r1 && (!devicesReady || !integrity.shareActive || !integrity.fullscreenActive || !integrity.tabVisible)} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <div className="tech-panel tech-question-panel">
             <div className="exam2-card-head">
               <span className="exam2-type">▤ Technical Question</span>
@@ -2970,7 +2975,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
                       value={ans}
                       onChange={updateAnswer}
                       defaultLanguage={codingLanguage}
-                      disabled={busy}
+                      disabled={busy || (r1 && (!devicesReady || !integrity.shareActive || !integrity.fullscreenActive || !integrity.tabVisible))}
                     />
                   </Suspense>
                 ) : (
@@ -3036,6 +3041,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
               Next Question →
             </button>
           </div>
+          </fieldset>
           <Err e={err} />
         </main>
 
@@ -3043,6 +3049,12 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
           <div className="exam2-camera-head">
             <b>Assessment setup</b>
           </div>
+          {r1 && <>
+            <LocalProctor cameraStream={cameraStream} report={integrity.report} inline />
+            <p className="note" role="status">{monitoring.evidenceStatus}</p>
+            {!trackLive(cameraStream) && <button type="button" className="btn sm" onClick={onRestartCamera}>Restore camera</button>}
+            {(!trackLive(micStream, "audio") || audioContext?.state !== "running") && <button type="button" className="btn sm" onClick={onRestartMic}>Restore microphone</button>}
+          </>}
           <IntegrityAlerts alerts={integrity.alerts} inline />
           <div className="exam2-camera-status">
             <span className={integrity.shareActive ? "ok" : "bad"}>▣ Screen</span>
@@ -3075,8 +3087,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
           <div className="exam2-tip">
             <b>Keep sharing and full-screen active</b>
             <span>
-              No camera or face analysis. Tab changes and leaving full-screen
-              are advisory signals for human review, not automatic failure.
+              {r1 ? "R1 camera observations, sound-level flags and event-triggered screenshots are saved for human review. No emotion, personality, demographics or speech content is inferred." : "No camera or face analysis. Tab changes and leaving full-screen are advisory signals for human review, not automatic failure."}
             </span>
           </div>
         </aside>
@@ -3587,7 +3598,7 @@ const ALERT_MAP = {
   ai_no_face: { title: "Face not detected", detail: "Stay centred in the camera frame.", level: "warn", icon: "◉" },
   ai_multiple_faces: { title: "Multiple faces detected", detail: "Only the candidate should be visible.", level: "warn", icon: "◉" },
   ai_phone_detected: { title: "Possible phone detected", detail: "Phones and other devices are not allowed.", level: "warn", icon: "☎" },
-  ai_audio_level: { title: "Voice detected", detail: "Sustained speech was detected by the microphone level. Only a loudness flag is computed on your device.", level: "warn", icon: "🎙" },
+  ai_audio_level: { title: "Sustained sound level detected", detail: "Local microphone loudness exceeded the threshold. This does not identify speech, speakers or intent.", level: "warn", icon: "🎙" },
   microphone_stopped: { title: "Microphone disconnected", detail: "Reconnect the microphone and enable it again. This interruption is recorded.", level: "danger", icon: "🎙" },
   ai_model_unavailable: { title: "On-device AI unavailable", detail: "Camera analysis could not start; review continues from events.", level: "info", icon: "◉" },
 };
@@ -3911,21 +3922,6 @@ function IdentityCheck({ cameraStream, avatarUrl, status, onChange, onAvatarUplo
   );
 }
 
-function SetupStep({ done, index, title, hint, actionLabel, onAction, disabled }) {
-  return (
-    <div className={"exam-step" + (done ? " ready" : "")} role="group" aria-label={`${title}: ${done ? "active" : "required"}`}>
-      <span className="exam-step-badge" aria-hidden="true">{done ? "✓" : index}</span>
-      <div className="exam-step-body">
-        <strong>{title}</strong>
-        <span>{hint}</span>
-      </div>
-      <button type="button" className="btn ghost sm" onClick={onAction} disabled={disabled}>
-        {actionLabel}
-      </button>
-    </div>
-  );
-}
-
 function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const t = useT();
   const [active, setActive] = useState(null);
@@ -3940,6 +3936,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const initialMode = kind === "pre";
   const [jobDept, setJobDept] = useState("CS/IT");
   const [jobSkills, setJobSkills] = useState([]);
+  const [showAllSkills, setShowAllSkills] = useState(false);
   const mobileDevice = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
   const browserSupported = Boolean(navigator.mediaDevices?.getDisplayMedia && document.documentElement.requestFullscreen);
   const done = st.attempts
@@ -3948,6 +3945,18 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const latestDone = done.length ? done[done.length - 1] : null;
   const mine = finishedId ? { id: finishedId } : initialMode ? latestDone : null;
   const act = st.attempts.find((a) => a.status === "active");
+  const proctoringPolicy = act?.proctoring || st.proctoring_policy || { mode: "r0" };
+  const r1 = proctoringPolicy.mode === "r1";
+  const [proctoringConsent, setProctoringConsent] = useState(false);
+  const devices = useR1Devices(r1 && proctoringConsent);
+  const avatarUrl = useAvatar(r1 && proctoringConsent && st.has_avatar, st.avatar_updated, st.user?.email || "");
+  const [identityResult, setIdentityResult] = useState({ status: "pending" });
+  const [identityAck, setIdentityAck] = useState(false);
+  const identityReady = identityResult.status === "verified" || identityAck;
+  useEffect(() => {
+    setIdentityResult({ status: "pending" });
+    setIdentityAck(false);
+  }, [devices.camera, avatarUrl]);
 
   useEffect(() => {
     const syncNetwork = () => setOnline(navigator.onLine);
@@ -4011,6 +4020,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
 
   // Ask for screen sharing in its own click so the browser can show its picker.
   const enableScreenShare = async () => {
+    if (r1 && !proctoringConsent) return;
     setErr(null);
     try {
       if (!navigator.mediaDevices?.getDisplayMedia) throw new Error(t("shareUnsupported"));
@@ -4019,6 +4029,10 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         audio: false,
       });
       const videoTrack = requestedStream.getVideoTracks()[0];
+      if (r1 && videoTrack?.getSettings?.().displaySurface !== "monitor") {
+        requestedStream.getTracks().forEach((track) => track.stop());
+        throw new Error("R1 requires sharing your entire screen. Choose Entire screen in the browser picker, not a tab or window.");
+      }
       if (!videoTrack) {
         requestedStream.getTracks().forEach((track) => track.stop());
         throw new Error("The browser did not return a screen video track. Choose a screen or window and try again.");
@@ -4054,6 +4068,10 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         video: { frameRate: 5 },
         audio: false,
       });
+      if (r1 && stream.getVideoTracks()[0]?.getSettings?.().displaySurface !== "monitor") {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("Select Entire screen to restore R1 monitoring.");
+      }
       // The exam integrity monitor detects the fresh stream and re-asserts the
       // `screen_share_started` event with its own sequence, so the server guard
       // and the on-screen status stay in sync without a sequence conflict.
@@ -4078,6 +4096,12 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     if (!navigator.onLine) missing.push("a network connection");
     if (!sharing) missing.push("screen sharing");
     if (!fullscreen) missing.push("full-screen mode");
+    if (r1) {
+      if (!proctoringConsent) missing.push("R1 monitoring consent");
+      if (!devices.cameraReady || !trackLive(devices.camera)) missing.push("camera with live frames");
+      if (!devices.microphoneReady || !trackLive(devices.microphone, "audio")) missing.push("microphone and sound-level monitoring");
+      if (!identityReady) missing.push("identity comparison or manual-review acknowledgement");
+    }
     if (missing.length) {
       setErr(new Error("Cannot start yet: " + missing.join(", ") + "."));
       return;
@@ -4122,13 +4146,22 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       }
       const v = await api("/attempts", {
         method: "POST",
-        body: act ? { resume_attempt_id: act.id } : { blueprint_id: blueprintId },
+        body: {
+          ...(act ? { resume_attempt_id: act.id } : { blueprint_id: blueprintId }),
+          ...(r1 ? { proctoring_consent: proctoringPolicy.consent_version,
+            proctoring_ready: { screen: Boolean(sharing), fullscreen, camera: devices.cameraReady, microphone: devices.microphoneReady },
+            identity_status: identityResult.status === "verified" ? "verified" : "needs_review" } : {}),
+        },
       });
       if (v.status === "active") {
-        const body = { type: "screen_share_started", session_id: v.session_id, seq: (v.last_event_seq || 0) + 1,
-          client_ts: Date.now(), metadata: { surface: screenStream.getVideoTracks()[0]?.getSettings?.().displaySurface || "unknown" } };
-        await api(`/attempts/${v.attempt_id}/event`, { method: "POST", body });
-        setActive({ ...v, last_event_seq: body.seq });
+        let seq = v.last_event_seq || 0;
+        const bootstrap = [{ type: trackLive(screenStream) ? "screen_share_started" : "screen_share_stopped", metadata: { surface: screenStream.getVideoTracks()[0]?.getSettings?.().displaySurface || "unknown" } }];
+        if (r1) bootstrap.push({ type: document.fullscreenElement ? "fullscreen_enter" : "fullscreen_exit" },
+          { type: trackLive(devices.camera) ? "camera_started" : "camera_stopped" },
+          { type: trackLive(devices.microphone, "audio") && devices.audioContext?.state === "running" ? "microphone_started" : "microphone_stopped" },
+          { type: identityResult.status === "verified" ? "identity_verified" : identityResult.status === "flagged" ? "identity_mismatch" : "identity_skipped", metadata: { local_only: true, model: "face-api", reason: "advisory_identity_check" } });
+        for (const event of bootstrap) await api(`/attempts/${v.attempt_id}/event`, { method: "POST", body: { ...event, session_id: v.session_id, seq: ++seq, client_ts: Date.now() } });
+        setActive({ ...v, last_event_seq: seq });
       } else {
         screenStream?.getTracks().forEach((track) => track.stop());
         setScreenStream(null);
@@ -4141,10 +4174,11 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     } finally {
       setSetupBusy(false);
     }
-  }, [refresh, screenStream, mobileDevice, browserSupported, act, initialMode, jobDept, jobSkills, resyncPermissions]);
+  }, [refresh, screenStream, mobileDevice, browserSupported, act, initialMode, jobDept, jobSkills, resyncPermissions, r1, proctoringConsent, devices, identityReady, identityResult.status, proctoringPolicy.consent_version]);
   const finished = async (aid, status = "done") => {
     if (status === "done") setFinishedId(aid || active?.attempt_id);
     screenStream?.getTracks().forEach((track) => track.stop());
+    devices.stop();
     setScreenStream(null);
     setActive(null);
     if (document.fullscreenElement && document.exitFullscreen)
@@ -4152,55 +4186,298 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     await refresh();
   };
 
-  if (active) return <ExamRun initial={active} screenStream={screenStream} onFinished={finished} onRestartShare={restartShare} />;
+  if (active) return <ExamRun initial={active} screenStream={screenStream} onFinished={finished} onRestartShare={restartShare}
+    cameraStream={r1 ? devices.camera : undefined} micStream={r1 ? devices.microphone : undefined}
+    audioContext={devices.audioContext} devicesReady={!r1 || (devices.cameraReady && devices.microphoneReady)}
+    onRestartCamera={devices.enableCamera} onRestartMic={devices.enableMicrophone} />;
   const setupRequirements = [
     { id: "desktop", label: "Desktop device", ok: !mobileDevice },
     { id: "browser", label: "Browser support", ok: browserSupported },
     { id: "network", label: "Network", ok: online },
     { id: "share", label: "Screen sharing", ok: shareReady },
     { id: "fullscreen", label: "Full-screen", ok: fullscreenReady },
+    ...(r1 ? [
+      { id: "consent", label: "R1 monitoring consent", ok: proctoringConsent },
+      { id: "camera", label: "Camera", ok: devices.cameraReady },
+      { id: "microphone", label: "Microphone", ok: devices.microphoneReady },
+      { id: "identity", label: "Identity / manual review", ok: identityReady },
+    ] : []),
   ];
   const setupMissing = setupRequirements.filter((item) => !item.ok).map((item) => item.label);
-  if (act) return (
-    <section className="card exam-setup">
-      <header className="exam-setup-head">
-        <span className="eyebrow">SYSTEM CHECK</span>
-        <h2>{t("resume")}</h2>
-        <p>{t("shareBeforeResume")}</p>
-      </header>
-      <div className="exam-steps">
-        <SetupStep
-          done={shareReady}
-          index={1}
-          title={t("shareSetupStep")}
-          hint={t("sharePrivacy")}
-          actionLabel={shareReady ? t("shareActive") : t("restartShare")}
-          onAction={enableScreenShare}
-          disabled={setupBusy}
-        />
-        <SetupStep
-          done={fullscreenReady}
-          index={2}
-          title={t("fullscreenSetupStep")}
-          hint={t("examSetupHint")}
-          actionLabel={fullscreenReady ? t("fullscreenActive") : t("restartFullscreen")}
-          onAction={enableFullscreen}
-          disabled={setupBusy}
-        />
+  const skillOptions = (() => {
+    const options = new Map();
+    (st.profile_skill_items || []).forEach((skill) => {
+      const id = skill.id || skill.skill_id;
+      if (id) options.set(id, skill.label || skill.name || id);
+    });
+    (st.confirmed || []).forEach((id) => {
+      if (!options.has(id)) options.set(id, String(id).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+    });
+    return [...options.entries()];
+  })();
+  const visibleSkills = showAllSkills ? skillOptions : skillOptions.slice(0, 4);
+  const progressSteps = ["Profile", "Initial Exam", "Gap", "Learn", "Profile Retake", "Passport"];
+  const currentStep = initialMode ? 1 : 4;
+  const permissions = [
+    ...(r1 ? [
+      { id: "camera", icon: "🎥", title: "Camera Access", hint: "Used for identity verification and exam monitoring.", done: devices.cameraReady,
+        actionLabel: devices.cameraReady ? "Camera active" : "Enable camera", onAction: devices.enableCamera,
+        disabled: !proctoringConsent || devices.busy || setupBusy },
+      { id: "microphone", icon: "🎙️", title: "Microphone Access", hint: "Local sound-level monitoring only; audio is not recorded.", done: devices.microphoneReady,
+        actionLabel: devices.microphoneReady ? "Microphone active" : "Enable microphone", onAction: devices.enableMicrophone,
+        disabled: !proctoringConsent || devices.busy || setupBusy },
+    ] : []),
+    { id: "share", icon: "🖥️", title: "Screen Sharing", hint: r1 ? "Share your Entire screen so review signals stay accurate." : "The screen stream is not recorded or uploaded; only event counts are saved.", done: shareReady,
+      actionLabel: shareReady ? t("shareActive") : t("restartShare"), onAction: enableScreenShare, disabled: setupBusy || (r1 && !proctoringConsent) },
+    { id: "fullscreen", icon: "⛶", title: "Full-screen Mode", hint: "Keeps the exam focused and records focus signals for review.", done: fullscreenReady,
+      actionLabel: fullscreenReady ? t("fullscreenActive") : t("restartFullscreen"), onAction: enableFullscreen, disabled: setupBusy },
+  ];
+  const identityState = identityResult.status === "verified"
+    ? { cls: "ok", mark: "✓", title: "Face verified", body: "Your face is clearly visible and matches your profile photo." }
+    : identityAck
+      ? { cls: "warn", mark: "!", title: "Manual review acknowledged", body: "A human reviewer will check your identity. This is not an automatic rejection." }
+      : { cls: "", mark: "◉", title: "Identity check pending", body: devices.cameraReady ? "Run the face scan, or acknowledge manual review." : "Enable the camera to start the face comparison." };
+  const renderSetup = ({ resume, title, intro, primaryLabel }) => (
+    <section className="ies">
+      <div className="ies-main">
+        <article className="ies-card">
+          <div className="ies-card-head">
+            <span className="ies-card-icon" aria-hidden="true">📋</span>
+            <div>
+              <span className="ies-kicker">SYSTEM CHECK</span>
+              <h2>{title}</h2>
+              <p>{intro}</p>
+            </div>
+          </div>
+          <div className="ies-chips">
+            <span className={"ies-chip " + (mobileDevice ? "bad" : "ok")}>{!mobileDevice && <i aria-hidden="true">✓</i>}{mobileDevice ? "✕ Desktop device required" : "Desktop device"}</span>
+            <span className={"ies-chip " + (browserSupported ? "ok" : "bad")}>{browserSupported && <i aria-hidden="true">✓</i>}{browserSupported ? "Browser supported" : "Screen sharing/full-screen unsupported"}</span>
+            <span className={"ies-chip " + (online ? "ok" : "bad")}>{online && <i aria-hidden="true">✓</i>}{online ? "Network stable" : "Network offline"}</span>
+          </div>
+          <div className="ies-alert">
+            <span aria-hidden="true">i</span>
+            <div>
+              <b>Important Instructions</b>
+              <p>
+                {r1
+                  ? "Allow camera, microphone, entire-screen sharing and full-screen. Keep your face visible during the exam. Do not switch tabs or open other applications."
+                  : "Allow screen sharing and full-screen. Keep sharing active until you submit or quit. In-app navigation is locked during the exam."}
+              </p>
+            </div>
+          </div>
+        </article>
+
+        {r1 && (
+          <article className="ies-card ies-consent">
+            <div className="ies-card-head">
+              <span className="ies-card-icon" aria-hidden="true">🛡️</span>
+              <div>
+                <h3>Monitoring Consent</h3>
+                <p>Explicit consent is required before camera, microphone or screenshot capture can start.</p>
+              </div>
+            </div>
+            <p>
+              Local AI detects missing/multiple faces and possible phones. A local sound-level detector
+              flags sustained noise—not words or speaker identity. Face comparison is advisory and may
+              be referred to manual review. No continuous video, raw audio or biometric templates are
+              stored, and no frames are sent to external AI providers.
+            </p>
+            <p>
+              Flag-triggered camera and screen JPEG snapshots are kept for authorized reviewers for
+              {" "}{proctoringPolicy.retention_days} days (max {proctoringPolicy.max_snapshots} snapshots).
+              Event times, numerical observations and review notes stay until account deletion. You can
+              export/delete your data at any time. Browser/OS tab switching cannot be fully disabled;
+              focus changes are logged. Flags never automatically fail you.
+            </p>
+            <label className="ies-check">
+              <input type="checkbox" checked={proctoringConsent} onChange={(event) => setProctoringConsent(event.target.checked)} disabled={setupBusy} />
+              I consent to this R1 monitoring and time-limited screenshot storage.
+            </label>
+          </article>
+        )}
+
+        {r1 && proctoringConsent && (
+          <article className="ies-card">
+            <div className="ies-card-head">
+              <span className="ies-card-icon" aria-hidden="true">🪪</span>
+              <div>
+                <h3>Identity Verification</h3>
+                <p>Verify your identity with a live face check and profile photo. Comparison runs only in this browser.</p>
+              </div>
+            </div>
+            <div className="ies-identity-grid">
+              <IdentityCheck
+                cameraStream={devices.camera}
+                avatarUrl={avatarUrl}
+                status={identityResult.status}
+                onChange={setIdentityResult}
+                onAvatarUploaded={refresh}
+                disabled={setupBusy}
+              />
+              {devices.cameraReady
+                ? <CameraPreview stream={devices.camera} note="Live · R1 snapshots on flags" />
+                : <div className="ies-verified"><span aria-hidden="true">◉</span><div><b>Camera off</b>Enable the camera to show the live preview.</div></div>}
+            </div>
+            <div className={"ies-verified " + identityState.cls} style={{ marginTop: 14 }}>
+              <span aria-hidden="true">{identityState.mark}</span>
+              <div><b>{identityState.title}</b>{identityState.body}</div>
+            </div>
+            {identityResult.status !== "verified" && (
+              <label className="ies-check" style={{ marginTop: 12 }}>
+                <input type="checkbox" checked={identityAck} onChange={(event) => setIdentityAck(event.target.checked)} />
+                If the comparison is unavailable or does not match, I acknowledge referral to human identity review; this is not an automatic rejection.
+              </label>
+            )}
+            {devices.error && <p className="err" role="alert" style={{ marginTop: 10 }}>{devices.error}</p>}
+          </article>
+        )}
+
+        <article className="ies-card">
+          <div className="ies-card-head">
+            <span className="ies-card-icon" aria-hidden="true">🛡️</span>
+            <div>
+              <h3>Required Permissions</h3>
+              <p>{r1 ? "Grant access to all four items to take the exam." : "Screen sharing and full-screen are required to begin."}</p>
+            </div>
+          </div>
+          <div className="ies-perms">
+            {permissions.map((item) => (
+              <div className={"ies-perm" + (item.done ? " done" : "")} key={item.id}>
+                <span className="ies-perm-icon" aria-hidden="true">{item.icon}</span>
+                <div className="ies-perm-text"><b>{item.title}</b><span>{item.hint}</span></div>
+                {item.done
+                  ? <button type="button" className="ies-pill" disabled>{item.actionLabel}</button>
+                  : <button type="button" className="ies-perm-btn" onClick={item.onAction} disabled={item.disabled}>{item.actionLabel}</button>}
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="ies-brief">
+          <div className="ies-brief-head">
+            <span className="ies-brief-icon" aria-hidden="true">🕐</span>
+            <div className="ies-brief-title">
+              <b>{initialMode ? "Initial Exam: CV + Fundamentals · 40 Minutes" : "Profile Retake Exam"}</b>
+              <span>
+                {initialMode
+                  ? "40 questions: 20 fundamental, 16 CV-skill questions and 4 project/scenario probes."
+                  : "25 fundamentals plus 5 questions per covered confirmed CV skill. Duration is set from the selected questions."}
+              </span>
+            </div>
+            {initialMode && <span className="ies-brief-badge">{jobSkills.length}/5 skills selected</span>}
+          </div>
+          {initialMode && (
+            <div className="ies-brief-body">
+              <label>
+                <span>Department</span>
+                <select value={jobDept} onChange={(e) => setJobDept(e.target.value)} disabled={setupBusy}>
+                  <option value="CS/IT">CS/IT</option>
+                </select>
+              </label>
+              <div>
+                <div className="ies-skill-head"><b>Skills you want verified (optional)</b><span style={{ fontSize: 11, color: "#9db8d8" }}>Confirmed from your profile</span></div>
+                <div className="ies-skill-chips">
+                  {visibleSkills.map(([id, label]) => {
+                    const on = jobSkills.includes(id);
+                    const full = jobSkills.length >= 5 && !on;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        className={"ies-skill-chip" + (on ? " on" : "")}
+                        disabled={setupBusy || full}
+                        onClick={() => setJobSkills((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id])}
+                      >
+                        {on ? "✓ " : ""}{label}
+                      </button>
+                    );
+                  })}
+                  {skillOptions.length > 4 && (
+                    <button type="button" className="ies-skill-more" onClick={() => setShowAllSkills((value) => !value)} disabled={setupBusy}>
+                      {showAllSkills ? "Show less" : "+ Add more"}
+                    </button>
+                  )}
+                  {!skillOptions.length && <span style={{ fontSize: 11.5, color: "#9db8d8" }}>Confirm skills on your profile to prioritize them here.</span>}
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        {banner
+          ? <p className="ies-ready warn" role="status"><span aria-hidden="true">i</span>{banner}</p>
+          : setupMissing.length
+            ? <p className="ies-ready warn" role="status"><span aria-hidden="true">i</span>Still required: {setupMissing.join(", ")}.</p>
+            : <p className="ies-ready" role="status"><span aria-hidden="true">✓</span>{initialMode ? "All required permissions are granted. The approved question bank is ready — you can start now." : "All checks passed. You can start your retake now."}</p>}
+
+        <Err e={err} />
+        <div className="ies-actions">
+          <button type="button" className="ies-primary" onClick={start} disabled={setupBusy || setupMissing.length > 0}>
+            <span className="ies-play" aria-hidden="true">▶</span>
+            {setupBusy ? t("saving") : primaryLabel}
+            <span aria-hidden="true">→</span>
+          </button>
+          <button type="button" className="ies-ghost" onClick={resyncPermissions} disabled={setupBusy}>
+            <span aria-hidden="true">↻</span> Re-check Permissions
+          </button>
+        </div>
+        <p className="ies-fineprint">
+          {resume
+            ? (r1 ? "All four R1 permissions are mandatory to resume. Your original exam deadline is unchanged." : "Enable screen sharing and full-screen to resume your saved exam. Answers and the original deadline are kept.")
+            : (r1 ? "Camera, microphone, entire-screen sharing and full-screen are required throughout R1. Signals are advisory evidence for human review." : "Only screen sharing and full-screen are required. No camera, face check or microphone is used.")}
+        </p>
       </div>
-      {setupMissing.length > 0 && <p className="note" role="status">Still required: {setupMissing.join(", ")}.</p>}
-      <Err e={err} />
-      <div className="exam-setup-actions">
-        <button className="btn" onClick={start} disabled={setupBusy || setupMissing.length > 0}>
-          {setupBusy ? t("saving") : t("resume")}
-        </button>
-        <button type="button" className="btn ghost" onClick={resyncPermissions} disabled={setupBusy}>
-          Re-check permissions
-        </button>
-        <small>Enable screen sharing and full-screen to resume your saved exam. No camera or microphone is required.</small>
-      </div>
+
+      <aside className="ies-side">
+        <article className="ies-card">
+          <div className="ies-tips-head"><span aria-hidden="true">💡</span><b>Quick Tips</b></div>
+          <ul className="ies-tips">
+            <li><i aria-hidden="true">✓</i>Use a modern desktop browser (Chrome, Edge, or Firefox).</li>
+            {r1 && <li><i aria-hidden="true">✓</i>Allow camera, microphone, entire-screen sharing and full-screen.</li>}
+            {!r1 && <li><i aria-hidden="true">✓</i>Allow screen sharing and stay in full-screen.</li>}
+            {r1 && <li><i aria-hidden="true">✓</i>Keep your face visible at all times.</li>}
+            <li><i aria-hidden="true">✓</i>Do not switch tabs or open other apps.</li>
+          </ul>
+          <button type="button" className="ies-help" onClick={() => document.getElementById("candidate-content")?.scrollIntoView({ behavior: "smooth" })}>Need help? <span aria-hidden="true">↗</span></button>
+        </article>
+
+        <article className="ies-card">
+          <div className="ies-progress-head">
+            <span aria-hidden="true">📈</span>
+            <div><b>Your Progress</b><small>Step {currentStep + 1} of 6</small></div>
+          </div>
+          <div className="ies-dots" aria-hidden="true">
+            {progressSteps.map((step, index) => (
+              <span key={step} style={{ display: "contents" }}>
+                <b className={index < currentStep ? "done" : index === currentStep ? "current" : ""} />
+                {index < progressSteps.length - 1 && <i className={index < currentStep ? "done" : ""} />}
+              </span>
+            ))}
+          </div>
+          <ul className="ies-progress-list">
+            <li className="done"><i aria-hidden="true">✓</i>Profile completed</li>
+            <li className="current"><i aria-hidden="true">●</i>{progressSteps[currentStep]} (current)</li>
+            <li className="pending"><i aria-hidden="true">○</i>{progressSteps[currentStep + 1] || "Passport"}</li>
+          </ul>
+        </article>
+
+        <article className={"ies-allset" + (setupMissing.length ? " warn" : "")}>
+          <div className="ies-allset-head"><span aria-hidden="true">{setupMissing.length ? "!" : "✓"}</span><b>{setupMissing.length ? "Almost ready" : "You're all set!"}</b></div>
+          <p>
+            {setupMissing.length
+              ? `Complete ${setupMissing.length} remaining step${setupMissing.length === 1 ? "" : "s"}: ${setupMissing.join(", ")}.`
+              : `All required permissions are granted. You can now start your ${initialMode ? "Initial Exam" : "retake"} with confidence.`}
+          </p>
+        </article>
+      </aside>
     </section>
-  );
+  );;
+  if (act) return renderSetup({
+    resume: true,
+    title: initialMode ? "Resume Initial Exam" : "Resume Profile Retake",
+    intro: "Restore every required permission, then continue where you left off. Your saved answers and original deadline are unchanged.",
+    primaryLabel: t("resume"),
+  });
   if (mine) return (
     <>
       <Result aid={mine.id} next={afterResult} nextLabel={afterLabel} />
@@ -4208,133 +4485,14 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     </>
   );
   if (kind === "post" && done.length === 0) return <p className="note">{t("needPre")}</p>;
-  return (
-    <section className="card exam-setup">
-      <header className="exam-setup-head">
-        <span className="eyebrow">SYSTEM CHECK</span>
-        <h2>{initialMode ? "Initial exam" : "Profile retake exam"}</h2>
-        <p>{kind === "pre" ? t("testIntro") : t("retestIntro")}</p>
-      </header>
-      <div className="system-check-strip">
-        <span className={mobileDevice ? "bad" : "ok"}>{mobileDevice ? "✕ Desktop device required" : "✓ Desktop device"}</span>
-        <span className={browserSupported ? "ok" : "bad"}>{browserSupported ? "✓ Browser APIs supported" : "✕ Screen sharing/full-screen unsupported"}</span>
-        <span className={online ? "ok" : "bad"}>{online ? "✓ Network available" : "✕ Network offline"}</span>
-      </div>
-      <p className="exam-integrity-note">{t("examIntegrityIntro")}</p>
-      <div className="exam-steps">
-        <SetupStep
-          done={shareReady}
-          index={1}
-          title={t("shareSetupStep")}
-          hint={t("sharePrivacy")}
-          actionLabel={shareReady ? t("shareActive") : t("restartShare")}
-          onAction={enableScreenShare}
-          disabled={setupBusy}
-        />
-        <SetupStep
-          done={fullscreenReady}
-          index={2}
-          title={t("fullscreenSetupStep")}
-          hint={t("examSetupHint")}
-          actionLabel={fullscreenReady ? t("fullscreenActive") : t("restartFullscreen")}
-          onAction={enableFullscreen}
-          disabled={setupBusy}
-        />
-      </div>
-      <div className="exam-mode on">
-        <div className="exam-mode-head">
-          <div>
-            <strong>{initialMode ? "Initial exam · CV + fundamentals · 40 minutes" : "Retake · Profile exam"}</strong>
-            <span>
-              {initialMode
-                ? "40 questions: 20 fundamentals, 16 CV-skill questions and 4 project/scenario probes. The server enforces a 40-minute limit."
-                : "The broad Profile exam: 25 fundamentals plus 5 questions per covered confirmed CV skill. Duration is based on the selected questions. Review approval, cooldown and retake credits still apply."}
-            </span>
-          </div>
-        </div>
-        {initialMode && (
-          <div className="exam-mode-body">
-            <label className="exam-mode-field">
-              <span>Department</span>
-              <select value={jobDept} onChange={(e) => setJobDept(e.target.value)} disabled={setupBusy}>
-                <option value="CS/IT">CS/IT</option>
-              </select>
-              <small>Other tracks are prepared but not launched yet.</small>
-            </label>
-            <div className="exam-mode-skills">
-              <div className="exam-mode-skills-head">
-                <b>Skills you most want verified</b>
-                <span>{jobSkills.length}/5 selected</span>
-              </div>
-              <p>
-                Optionally prioritize up to 5 confirmed CV skills. Other skills remain
-                claimed until they have been assessed.
-              </p>
-              <div className="exam-skill-picker">
-                {(() => {
-                  const options = new Map();
-                  (st.profile_skill_items || []).forEach((skill) => {
-                    const id = skill.id || skill.skill_id;
-                    if (id) options.set(id, skill.label || skill.name || id);
-                  });
-                  (st.confirmed || []).forEach((id) => {
-                    if (!options.has(id)) {
-                      options.set(id, String(id).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
-                    }
-                  });
-                  return [...options.entries()].map(([id, label]) => {
-                    const on = jobSkills.includes(id);
-                    const full = jobSkills.length >= 5 && !on;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        className={"skill-pick" + (on ? " on" : "")}
-                        disabled={setupBusy || full}
-                        onClick={() =>
-                          setJobSkills((prev) =>
-                            prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
-                          )
-                        }
-                      >
-                        {on ? "✓ " : ""}{label}
-                      </button>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-            <p className="exam-mode-note">
-              40 questions · 40 minutes hard limit · 1 coding task with an in-browser code
-              workspace · SQL questions are capped. Questions come only from approved,
-              stored answer keys.
-            </p>
-          </div>
-        )}
-      </div>
-      {banner && <p className="note">{banner}</p>}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 4px" }}>
-        {setupRequirements.map((item) => (
-          <span key={item.id} className={"chip " + (item.ok ? "chip-ok" : "chip-rev")}>
-            {item.ok ? "✓" : "!"} {item.label}
-          </span>
-        ))}
-      </div>
-      {setupMissing.length > 0 && (
-        <p className="err">Still required before you can start: {setupMissing.join(", ")}.</p>
-      )}
-      <Err e={err} />
-      <div className="exam-setup-actions">
-        <button className="btn" onClick={start} disabled={setupBusy || setupMissing.length > 0}>
-          {setupBusy ? t("saving") : initialMode ? "Start Initial exam · 40 minutes" : "Start Profile retake exam"}
-        </button>
-        <button type="button" className="btn ghost" onClick={resyncPermissions} disabled={setupBusy}>
-          Re-check permissions
-        </button>
-        <small>Only screen sharing and full-screen are required. No camera, face check or microphone is used.</small>
-      </div>
-    </section>
-  );
+  return renderSetup({
+    resume: false,
+    title: initialMode ? "Initial Exam Setup" : "Profile retake exam",
+    intro: initialMode
+      ? "Verify your identity, allow required permissions, and check your system before starting the exam."
+      : "Check your system and permissions before starting your confidential retake.",
+    primaryLabel: initialMode ? "Start Initial exam · 40 minutes" : "Start Profile retake exam",
+  });
 }
 /* ---------- learning path ---------- */
 function Learn({ onNext }) {
@@ -7172,7 +7330,7 @@ function AdminConsole({ onLogout }) {
     ai_multiple_faces: "Multiple faces detected",
     ai_gaze_away: "Possible gaze deviation",
     ai_phone_detected: "Possible phone detected",
-    ai_audio_level: "Voice detected (microphone)",
+    ai_audio_level: "Sustained microphone sound level",
     microphone_stopped: "Microphone disconnected",
     ai_model_unavailable: "On-device AI unavailable",
     identity_verified: "Identity verified against profile photo",
@@ -7180,7 +7338,7 @@ function AdminConsole({ onLogout }) {
     identity_skipped: "Identity check skipped",
   })[type] || String(type || "Unknown event").replaceAll("_", " ");
   const eventSource = (e) =>
-    String(e.type || "").startsWith("ai_")
+    e.type === "ai_audio_level" ? "On-device sound-level threshold (not speech recognition)" : String(e.type || "").startsWith("ai_")
       ? "Local AI · MediaPipe"
       : String(e.type || "").startsWith("identity_")
         ? "Local face check · face-api"
@@ -7213,6 +7371,7 @@ function AdminConsole({ onLogout }) {
                   <td>
                     <b>{eventLabel(e.type)}</b>
                     <small>{e.type}</small>
+                    {e.metadata?.review_note && <small>{e.metadata.review_note}</small>}
                   </td>
                   <td>
                     {e.question_id || "Before / between questions"}
@@ -10937,11 +11096,9 @@ function AdminConsole({ onLogout }) {
                           {Math.round(ev.size_bytes / 1024)} KB
                           {ev.vision && (
                             <span className="evidence-vision">
-                              {ev.vision.phone ? "Phone visible" : "No phone"} ·{" "}
-                              {ev.vision.people}{" "}
-                              {ev.vision.people === 1 ? "person" : "people"} ·{" "}
-                              {ev.vision.face ? "face visible" : "no face"}
-                              {ev.vision.summary ? " — " + ev.vision.summary : ""}
+                              {ev.vision.source ? `${ev.vision.source} snapshot · ` : "Legacy snapshot · "}
+                              {ev.vision.summary || "Model details unavailable; inspect the frame manually."}
+                              {ev.vision.advisory && " · Advisory, client-reported observation—not a misconduct finding."}
                             </span>
                           )}
                         </figcaption>

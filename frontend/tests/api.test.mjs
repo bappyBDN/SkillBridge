@@ -14,6 +14,22 @@ test("API client refuses external and protocol-relative URLs before attaching cr
   }
 });
 
+test("caller headers are sent but cannot replace the bearer token", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = { getItem: () => "test-token" };
+  let sent;
+  globalThis.fetch = async (url, options) => {
+    sent = options.headers;
+    return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    await api("/attempts/a1/answer", { method: "POST", body: { answer: "x" }, headers: { "X-Exam-Session": "session-1", Authorization: "Bearer attacker" } });
+    assert.equal(sent["X-Exam-Session"], "session-1");
+    assert.equal(sent.Authorization, "Bearer test-token");
+    assert.equal(sent["Content-Type"], "application/json");
+  } finally { globalThis.fetch = previousFetch; delete globalThis.localStorage; }
+});
+
 test("authenticated CV fetch preserves binary PDF data", async () => {
   const previousFetch = globalThis.fetch;
   globalThis.localStorage = { getItem: () => "test-token" };

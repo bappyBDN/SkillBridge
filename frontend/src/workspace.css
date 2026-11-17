@@ -185,11 +185,11 @@
 .quick-links button { font-size: 12px; padding: 14px 0; color: #405b6b; }
 .quick-links b { color: var(--ws-accent); }
 .dashboard-lower { gap: 18px; margin-top: 20px; }
-:is(.btn, .cr-primary, .tf-btn.blue, .tf-btn.green, .ad-mini-primary, .ad-action-btn) { border-radius: 9px; background: var(--ws-accent); color: #fff; border-color: var(--ws-accent); box-shadow: 0 2px 5px #0d665714; padding: 10px 16px; font-size: 12px; font-weight: 600; min-height: 38px; }
-:is(.btn, .cr-primary, .tf-btn):hover:not(:disabled) { background: var(--ws-accent-dark); transform: none; }
-.btn.ghost { color: var(--ws-accent-dark); background: #fff; border-color: #d5e2de; box-shadow: none; }
-.btn.ghost:hover:not(:disabled) { background: #f0f8f5; }
-.btn.sm, .cr-small { font-size: 11px; padding: 6px 10px; min-height: 32px; }
+:is(.candidate-shell, .cr-app, .ad-app, .cr-onboard, .skill-credential) :is(.btn, .cr-primary, .tf-btn.blue, .tf-btn.green, .ad-mini-primary, .ad-action-btn) { border-radius: 9px; background: var(--ws-accent); color: #fff; border-color: var(--ws-accent); box-shadow: 0 2px 5px #0d665714; padding: 10px 16px; font-size: 12px; font-weight: 600; min-height: 38px; }
+:is(.candidate-shell, .cr-app, .ad-app, .cr-onboard, .skill-credential) :is(.btn, .cr-primary, .tf-btn):hover:not(:disabled) { background: var(--ws-accent-dark); transform: none; }
+:is(.candidate-shell, .cr-app, .ad-app, .cr-onboard, .skill-credential) .btn.ghost { color: var(--ws-accent-dark); background: #fff; border-color: #d5e2de; box-shadow: none; }
+:is(.candidate-shell, .cr-app, .ad-app, .cr-onboard, .skill-credential) .btn.ghost:hover:not(:disabled) { background: #f0f8f5; }
+:is(.candidate-shell, .cr-app, .ad-app, .cr-onboard, .skill-credential) .btn.sm, .cr-small { font-size: 11px; padding: 6px 10px; min-height: 32px; }
 .cr-text-btn, .cr-outline-btn { font-size: 12px; color: var(--ws-accent-dark); }
 .cr-text-btn:disabled { opacity: .45; }
 .cr-outline-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border-color: #dbe5e4; border-radius: 8px; }

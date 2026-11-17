@@ -4,6 +4,8 @@ import App from "./App.jsx";
 import "./styles.css";
 import "./workspace.css";
 import "./assessment.css";
+import "./r1-proctoring.css";
+import "./initial-exam-setup.css";
 
 // Small compatibility shims for older Safari/Edge/Chromium builds.
 if (typeof String.prototype.replaceAll !== "function") {

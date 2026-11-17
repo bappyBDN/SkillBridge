@@ -83,6 +83,18 @@ textarea.code, .pre { font-family: ui-monospace, "SFMono-Regular", Menlo, Consol
 .steps button.dim { opacity: .55; }
 
 .consent li { margin-bottom: .6rem; }
+/* Consent gate outside the workspace shells: make the agree button unmistakable. */
+.card.narrow .check { margin: 14px 0 18px; align-items: flex-start; }
+.card.narrow .check input { margin-top: 4px; accent-color: var(--river); }
+.card.narrow > .btn {
+  display: block;
+  width: 100%;
+  padding: .85rem 1.2rem;
+  border-radius: 10px;
+  font-size: 1rem;
+  letter-spacing: -.01em;
+}
+.card.narrow > .btn:disabled { opacity: .55; }
 .chips { display: flex; gap: .4rem; flex-wrap: wrap; }
 .chip { display: inline-block; padding: .05rem .6rem; border-radius: 999px; font-size: .8rem; font-weight: 600; margin-left: .4rem; }
 .chips .chip { margin: 0; }
