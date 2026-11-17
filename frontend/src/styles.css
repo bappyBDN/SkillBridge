@@ -289,6 +289,8 @@ summary { cursor: pointer; font-weight: 600; margin: .4rem 0; }
 .sb-auth-note{position:relative;margin-top:14px;text-align:center;color:#82918a;font-size:.64rem}
 .sb-auth-note span{color:#c38d39;margin-right:5px}
 .sb-auth-form .err{font-size:.68rem;margin:4px 0 9px}
+.sb-forgot-link{display:inline-block;margin:-4px 0 12px;color:#126b5b;font-size:.7rem;font-weight:750;text-decoration:none}
+.sb-forgot-link:hover{text-decoration:underline}
 .sb-proof-strip{display:flex;align-items:center;justify-content:space-between;gap:25px;padding:22px clamp(24px,7vw,100px);border-top:1px solid #e8eeea;border-bottom:1px solid #e8eeea;background:#fff}
 .sb-proof-title{color:#52645c;font-size:.69rem;font-weight:800;white-space:nowrap}
 .sb-journey{display:flex;align-items:center;gap:clamp(9px,2vw,27px);color:#819089;font-size:.66rem;font-weight:700}
@@ -1372,6 +1374,14 @@ select{max-width:100%}
 .identity-check{border:1px solid #dfe7f0;border-radius:16px;background:#fff;padding:16px 18px;margin:14px 0;display:grid;gap:14px}
 .identity-check.ok{border-color:#a8d7bd;background:#f6fdf9}
 .identity-check.warn{border-color:#edc98d;background:#fffaf0}
+.cv-identity-check{margin:14px 0;padding:14px 16px;border:1px solid #e8c98f;border-radius:14px;background:#fffaf1}
+.cv-identity-check h4{margin:0 0 6px;font-size:.86rem;color:#7a4b11}
+.cv-identity-check p{margin:0 0 10px;font-size:.76rem;line-height:1.6;color:#6f5b3c}
+.cv-identity-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px 16px;margin:0 0 10px}
+.cv-identity-facts div{min-width:0}
+.cv-identity-facts dt{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:#93734d}
+.cv-identity-facts dd{margin:2px 0 0;font-size:.78rem;font-weight:700;color:#2d3b48;overflow-wrap:anywhere}
+.cv-identity-check small{display:block;margin-top:6px;color:#77664c;font-size:.68rem}
 .identity-check-head .eyebrow{display:block;margin-bottom:5px;color:#24735e;font-size:.6rem;font-weight:850;letter-spacing:.15em}
 .identity-check-head strong{display:block;font-size:.9rem;color:#1f2d3d;letter-spacing:-.01em}
 .identity-check-head span:last-child{display:block;margin-top:3px;color:#6b7c8c;font-size:.7rem;line-height:1.45}

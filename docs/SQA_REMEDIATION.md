@@ -62,17 +62,31 @@ items had already been corrected since the review; they are listed as
   rule. Tests: `backend/tests/test_cv_sharing.py`.
 
 - **Admin identity-review queue** (`Admin Console → CV identity review`): lists
-  mismatched CVs with the detected signal, account email match and name
-  similarity, and records a reasoned cleared / needs-review / escalated
-  decision.
+  CVs whose name is missing, partially matched or different from the account.
+  The candidate must explicitly confirm ownership for weak/no-match CVs before
+  continuing; a missing-name CV is queued for advisory review without blocking.
+  The queue supports status filters, search and refresh, shows the CV name,
+  similarity, email match, candidate confirmation and reasons, and records a
+  reasoned cleared / needs-review / escalated decision with reviewer and time.
+  A later matching CV supersedes the old signal instead of leaving a stale row.
 - **Security & MFA screens** in both workspaces (`Security & MFA`):
   - TOTP enrolment with secret, `otpauth://` link, one-time recovery codes and
     activation by 6-digit code.
   - Live session list with per-session revocation and a "this device" marker.
   - MFA state and whether it is required for the signed-in role.
 - **API additions**: `GET /api/auth/mfa/status`, `GET /api/auth/sessions`,
-  `DELETE /api/auth/sessions/{id}`, `GET /api/admin/identity-reviews`,
+  `DELETE /api/auth/sessions/{id}`, `POST /api/auth/change-password`,
+  `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`,
+  `POST /api/admin/console/staff/{id}/revoke`, `DELETE /api/admin/console/staff/{id}`,
+  `GET /api/admin/identity-reviews`,
   `POST /api/admin/identity-reviews/{id}/decision`.
+- **Candidate settings** (`Settings`): profile shortcut, current-password-verified
+  password change that signs out other devices, and a one-time emailed reset
+  link. Reset tokens are hashed, expire after one hour and revoke every session.
+- **Central staff administration** (Super Admin → Admin staff & roles): create
+  admins, change their scope, **revoke admin access** (account kept, sessions
+  revoked) or **delete the admin account**. Self-revocation, self-deletion and
+  removal of the last active Super Admin are blocked.
 - **Bengali coverage** for both console shells, navigation, page headings,
   overview metrics, company onboarding/verification banner, recruitment stages
   and the security/identity panels.

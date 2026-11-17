@@ -78,7 +78,7 @@ def test_every_subjective_format_has_a_draft_but_mcq_feedback_is_not_a_final_sco
     learning = client.get("/api/learning/dashboard", headers=headers).json()
     assert learning["resources"] == [] and learning["learning_plan"] is None
     assert client.get("/api/learning-path", headers=headers).status_code == 409
-    assert client.post("/api/passport", json={"attempt_id": aid}, headers=headers).status_code == 409
+    assert main.one("SELECT COUNT(*) AS n FROM passports WHERE user_id=?", (uid,))["n"] == 0
     assert main.one("SELECT COUNT(*) AS n FROM assessment_releases WHERE user_id=?", (uid,))["n"] == 0
 
 
@@ -99,6 +99,7 @@ def test_both_approval_orders_publish_matching_scores_honesty_courses_and_passpo
     assert public["signature_valid"] and not public["revoked"]
     passport = public["passport"]
     assert passport["honesty"]["score"] == 82 and passport["assessment"]["overall"] == 80
+    assert passport["holder"] == "Review Candidate"
     assert next(skill for skill in passport["skills"] if skill["skill"] == "python")["questions"] == 3
     assert workflow.sync_release(aid)["release_id"] == second["release_id"]
     assert main.one("SELECT COUNT(*) AS n FROM assessment_releases WHERE attempt_id=?", (aid,))["n"] == 1
@@ -214,3 +215,21 @@ def test_ai_study_guidance_is_blocked_before_both_reviews_and_does_not_grade(mon
     response = client.post("/api/learning/plan/explain", headers=headers)
     assert response.status_code == 200 and response.json()["status"] == "not_configured"
     assert client.get(f"/api/attempts/{aid}/result", headers=headers).json()["overall"] == 80
+
+
+def test_legacy_anonymous_passport_is_renamed_and_resigned_once():
+    uid, _headers = account()
+    payload = {"pid": "legacy-anon", "holder": "Anonymous candidate", "skills": []}
+    main.run("INSERT INTO passports(id,user_id,payload,signature,created) VALUES (?,?,?,?,?)",
+             ("legacy-anon", uid, json.dumps(payload), main.E.sign_payload(payload, main.SECRET), 1))
+
+    main.backfill_passport_holders()
+    row = main.one("SELECT payload,signature FROM passports WHERE id=?", ("legacy-anon",))
+    updated = json.loads(row["payload"])
+    assert updated["holder"] == "Review Candidate"
+    assert row["signature"] == main.E.sign_payload(updated, main.SECRET)
+
+    main.backfill_passport_holders()
+    again = main.one("SELECT payload,signature FROM passports WHERE id=?", ("legacy-anon",))
+    assert json.loads(again["payload"]) == updated
+    assert again["signature"] == row["signature"]

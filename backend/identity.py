@@ -166,9 +166,10 @@ def name_similarity(account_name: str, cv_name: str) -> float:
 def compare(account: dict, extracted: dict) -> dict:
     account_name = (account.get("name") or "").strip()
     account_email = (account.get("email") or "").strip().lower()
-    best_name = ""
-    best_score = 0.0
-    for cv_name in extracted.get("names", []):
+    names = extracted.get("names", [])
+    best_name = names[0] if names else ""
+    best_score = name_similarity(account_name, best_name) if best_name else 0.0
+    for cv_name in names[1:]:
         score = name_similarity(account_name, cv_name)
         if score > best_score:
             best_name, best_score = cv_name, score
@@ -196,7 +197,7 @@ def compare(account: dict, extracted: dict) -> dict:
         reasons.append("name_mismatch")
     return {
         "status": status,
-        "score": best_score or None,
+        "score": best_score,
         "cv_name": best_name,
         "email_match": email_match,
         "reasons": reasons,

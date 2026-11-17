@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS cv_skill_nodes(user_id INTEGER NOT NULL, skill_id TEX
 CREATE TABLE IF NOT EXISTS skill_question_edges(skill_id TEXT NOT NULL, question_id TEXT NOT NULL, PRIMARY KEY(skill_id, question_id));
 CREATE TABLE IF NOT EXISTS auth_sessions(id TEXT PRIMARY KEY, user_id INT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL, expires REAL NOT NULL, ip TEXT, ua TEXT, revoked INT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS email_verifications(token TEXT PRIMARY KEY, user_id INT NOT NULL, email TEXT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL, used REAL);
+CREATE TABLE IF NOT EXISTS password_resets(token_hash TEXT PRIMARY KEY, user_id INT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL, used REAL);
 CREATE TABLE IF NOT EXISTS auth_throttle(key TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0, first_failure REAL, last_failure REAL, locked_until REAL);
 CREATE TABLE IF NOT EXISTS identity_reviews(id TEXT PRIMARY KEY, user_id INT NOT NULL, status TEXT NOT NULL DEFAULT 'open', signal TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL, reviewed_by INT, reviewed_at REAL, note TEXT NOT NULL DEFAULT '');
 """
@@ -336,6 +337,7 @@ def init_db():
     cv_store.ensure_schema()
     import assessment_workflow
     assessment_workflow.ensure_schema()
+    backfill_passport_holders()
 
 
 def one(sql, args=()):
@@ -603,6 +605,20 @@ class EmailToken(BaseModel):
     token: str = Field(min_length=10, max_length=200)
 
 
+class ForgotPassword(BaseModel):
+    email: str = Field(min_length=5, max_length=120)
+
+
+class ResetPassword(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 # -- password reset / email verification mail ---------------------------------
 def _smtp_configured() -> bool:
     return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM"))
@@ -648,6 +664,25 @@ def _issue_verification(uid, email: str) -> str:
         "Welcome to TalentForge.\n\n"
         f"Confirm your email address within 48 hours:\n{link}\n\n"
         "If you did not create this account you can ignore this message.",
+    )
+    return token
+
+
+def _issue_password_reset(uid, email: str) -> str:
+    """Create a single-use, one-hour reset token and email its link."""
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    run("DELETE FROM password_resets WHERE user_id=? AND used IS NULL", (uid,))
+    run("INSERT INTO password_resets(token_hash,user_id,created,expires,used) VALUES (?,?,?,?,NULL)",
+        (hashlib.sha256(token.encode()).hexdigest(), uid, now, now + 3600))
+    base = os.getenv("APP_BASE_URL", "").rstrip("/")
+    link = f"{base}/#/reset-password?token={token}" if base else f"reset-password?token={token}"
+    _send_email(
+        email,
+        "Reset your TalentForge password",
+        "We received a request to reset your TalentForge password.\n\n"
+        f"Choose a new password within one hour:\n{link}\n\n"
+        "If you did not request this, you can ignore this message. Your password has not changed.",
     )
     return token
 
@@ -904,6 +939,76 @@ def resend_verification(u=Depends(current_user)):
             **({} if IS_PRODUCTION else {"verification_token": token})}
 
 
+@app.post("/api/auth/change-password")
+def change_password(b: ChangePassword, u=Depends(current_user)):
+    """Change a signed-in user's password after verifying the current one."""
+    key = f"change-password:user:{u['id']}"
+    throttle_check(key)
+    ok, _ = verify_pw(u, b.current_password)
+    if not ok:
+        throttle_fail(key)
+        audit(u["id"], "password_change_failed")
+        raise HTTPException(401, "Wrong current password")
+    same, _ = verify_pw(u, b.new_password)
+    if same:
+        raise HTTPException(422, "New password must be different from the current password")
+    problems = SEC.password_errors(b.new_password, email=u["email"], name=u["name"])
+    if problems:
+        raise HTTPException(422, " ".join(problems))
+    throttle_reset(key)
+    rehash_password(u["id"], b.new_password)
+    revoke_all_sessions(u["id"], keep=u.get("_session_id"))
+    run("DELETE FROM password_resets WHERE user_id=?", (u["id"],))
+    audit(u["id"], "password_changed")
+    return {"ok": True, "message": "Password updated. Other signed-in devices were signed out."}
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(b: ForgotPassword, request: Request):
+    """Email a reset link without revealing whether the address has an account."""
+    email = b.email.strip().lower()
+    ip_key = f"forgot-password:ip:{_client_ip(request)}"
+    email_key = f"forgot-password:email:{email}"
+    for key in (ip_key, email_key):
+        throttle_check(key)
+    result = {"ok": True, "message": "If an account uses that address, a reset link has been sent."}
+    u = one("SELECT id,email FROM users WHERE email=?", (email,))
+    if u:
+        token = _issue_password_reset(u["id"], u["email"])
+        audit(u["id"], "password_reset_requested")
+        if not IS_PRODUCTION:
+            result["reset_token"] = token
+    for key in (ip_key, email_key):
+        throttle_fail(key)
+    return result
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(b: ResetPassword, request: Request):
+    """Consume a one-time reset token and replace the account password."""
+    key = f"reset-password:ip:{_client_ip(request)}"
+    throttle_check(key)
+    row = one("SELECT * FROM password_resets WHERE token_hash=?",
+              (hashlib.sha256(b.token.strip().encode()).hexdigest(),))
+    if not row or row["used"] or row["expires"] < time.time():
+        throttle_fail(key)
+        raise HTTPException(400, "This reset link is invalid or has expired.")
+    u = one("SELECT * FROM users WHERE id=?", (row["user_id"],))
+    if not u:
+        throttle_fail(key)
+        raise HTTPException(400, "This reset link is invalid or has expired.")
+    problems = SEC.password_errors(b.password, email=u["email"], name=u["name"])
+    if problems:
+        raise HTTPException(422, " ".join(problems))
+    throttle_reset(key)
+    rehash_password(u["id"], b.password)
+    run("UPDATE password_resets SET used=? WHERE token_hash=?", (time.time(), row["token_hash"]))
+    run("DELETE FROM password_resets WHERE user_id=? AND used IS NULL", (u["id"],))
+    revoke_all_sessions(u["id"])
+    audit(u["id"], "password_reset_completed")
+    return {"ok": True, "message": "Password updated. Sign in with your new password."}
+
+
 # ------------------------------------------------------------------ state / consent / data rights
 
 # One registry of user-linked tables (SB-008). ``delete_me`` and ``export_data``
@@ -925,6 +1030,7 @@ USER_DATA_REGISTRY = (
     ("cv_extractions", "user_id", "cv_extractions"),
     ("auth_sessions", "user_id", "sessions"),
     ("email_verifications", "user_id", "email_verifications"),
+    ("password_resets", "user_id", "password_resets"),
     ("identity_reviews", "user_id", "identity_reviews"),
     ("admin_user_status", "user_id", "admin_status"),
     ("admin_staff_roles", "user_id", "admin_roles"),
@@ -2978,8 +3084,12 @@ async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None
         "ON CONFLICT(user_id) DO UPDATE SET redacted=excluded.redacted,redaction=excluded.redaction,extracted=excluded.extracted,source=excluded.source,confirmed=NULL,identity=excluded.identity",
         (u["id"], redacted, json.dumps(counts), json.dumps(skills), source, json.dumps(identity)))
     audit(u["id"], "cv_parsed", source)
-    if identity["status"] in ("weak", "no_match"):
+    if identity["status"] in ("weak", "no_match", "unknown"):
         _queue_identity_review(u["id"], identity)
+    else:
+        # A later upload can clear the underlying mismatch. Keep the old row for
+        # history but remove it from the actionable queue.
+        _supersede_identity_reviews(u["id"], "A later CV upload matched the account holder.")
     return {"redacted_preview": redacted[:1500], "redaction": counts, "skills": skills, "source": source,
             "identity": identity,
             "document": {k: document[k] for k in ("id", "filename", "size_bytes", "status")} if document else None,
@@ -3023,6 +3133,14 @@ def _queue_identity_review(uid, identity):
         (rid, uid, "open", json.dumps(identity), time.time(), ""))
     audit(uid, "cv_identity_review_queued", rid)
     return rid
+
+
+def _supersede_identity_reviews(uid, note):
+    open_rows = allr("SELECT id FROM identity_reviews WHERE user_id=? AND status='open'", (uid,))
+    for row in open_rows:
+        run("UPDATE identity_reviews SET status='superseded', reviewed_at=?, note=? WHERE id=?",
+            (time.time(), note, row["id"]))
+        audit(uid, "cv_identity_review_superseded", row["id"])
 
 
 class Confirm(BaseModel):
@@ -4488,8 +4606,17 @@ def appeal(aid: str, b: Appeal, u=Depends(current_user)):
     review = one("SELECT decision FROM admin_attempt_reviews WHERE attempt_id=?", (aid,))
     if not review or review["decision"] != "invalidated":
         raise HTTPException(409, "appeal_only_available_for_invalidated_results")
+    decision = one("SELECT decision FROM admin_appeal_decisions WHERE attempt_id=?", (aid,))
     if att.get("appeal"):
-        raise HTTPException(409, "appeal_already_submitted")
+        if not decision or decision["decision"] != "needs_more_info":
+            raise HTTPException(409, "appeal_already_submitted")
+        # The reviewer requested more information. Keep the original note and
+        # reopen the appeal so the same or another reviewer can decide it again.
+        combined = (att["appeal"].rstrip() + "\n\nAdditional information: " + b.note.strip())[:4000]
+        run("UPDATE attempts SET appeal=? WHERE id=?", (combined, aid))
+        run("DELETE FROM admin_appeal_decisions WHERE attempt_id=?", (aid,))
+        audit(u["id"], "appeal_resubmitted", aid)
+        return {"ok": True, "resubmitted": True}
     run("UPDATE attempts SET appeal=? WHERE id=?", (b.note, aid))     # queued for human review; never changes score automatically
     audit(u["id"], "appeal", aid)
     return {"ok": True}
@@ -4541,6 +4668,24 @@ def uplift(u=Depends(current_user)):
 
 
 # ------------------------------------------------------------------ Skill Passport
+def backfill_passport_holders():
+    """Replace the retired anonymous holder label on existing credentials.
+
+    The payload is re-signed so public verification stays valid. Runs at startup
+    and is idempotent; new passports store the account holder's name directly.
+    """
+    for row in allr("SELECT p.id,p.payload,u.name FROM passports p JOIN users u ON u.id=p.user_id"):
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or payload.get("holder") != "Anonymous candidate":
+            continue
+        payload["holder"] = row["name"] or "TalentForge candidate"
+        run("UPDATE passports SET payload=?,signature=? WHERE id=?",
+            (json.dumps(payload), E.sign_payload(payload, SECRET), row["id"]))
+
+
 def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approved", release_id=None):
     """Create (or reuse) a passport for a human-approved assessment attempt.
 
@@ -4589,7 +4734,7 @@ def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approve
         "pid": pid,
         "issued": time.strftime("%Y-%m-%d", time.localtime(now)),
         "expires": time.strftime("%Y-%m-%d", time.localtime(now + 365 * 86400)),
-        "holder": "Anonymous candidate",
+        "holder": row["name"] or "TalentForge candidate",
         "skills": skills,
         "overall": result.get("overall"),
         "level": result.get("level"),
@@ -4610,46 +4755,6 @@ def create_passport_for_attempt(user_id, attempt_id, *, issued_by="admin_approve
         (pid, user_id, json.dumps(payload), E.sign_payload(payload, SECRET), now, attempt_id))
     audit(user_id, "passport_auto_created", pid + ":" + attempt_id)
     return pid
-
-
-class PassBody(BaseModel):
-    attempt_id: str = Field(min_length=1, max_length=100)
-    topics: List[str] = Field(default_factory=list)
-    show_name: bool = False
-
-
-@app.post("/api/passport")
-def make_passport(b: PassBody, u=Depends(current_user)):
-    need_consent(u)
-    import assessment_workflow as workflow
-    release = workflow.current_release(b.attempt_id)
-    if not release or release["user_id"] != u["id"]:
-        raise HTTPException(409, "passport_requires_academic_and_honesty_approval")
-    a = one("""SELECT a.*,r.reviewed_at FROM attempts a JOIN admin_attempt_reviews r ON r.attempt_id=a.id
-               WHERE a.id=? AND a.user_id=? AND a.status='done' AND r.decision='approved'""",
-            (b.attempt_id, u["id"]))
-    if not a:
-        raise HTTPException(409, "passport_requires_approved_reviewed_assessment")
-    r = json.loads(a["result"])
-    topic_keys = list(b.topics) if b.topics else list((r.get("topics") or {}).keys())
-    skills = [{"skill": t, "name": TAXONOMY.get(t, {}).get("name", t.replace("_", " ").title()), "score": r["topics"][t]["score"], "level": r["topics"][t]["level"], "trust": r.get("trust"), "date": r.get("date"),
-               "questions": r["topics"][t].get("total_questions", r["topics"][t].get("n", 0)), "section": r["topics"][t].get("section")}
-              for t in topic_keys if t in (r.get("topics") or {}) and r["topics"][t].get("score") is not None]
-    if not skills: raise HTTPException(422, "Choose at least one verified skill")
-    up = uplift(u)
-    pid = secrets.token_urlsafe(9)
-    payload = {"pid": pid, "issued": time.strftime("%Y-%m-%d"), "expires": time.strftime("%Y-%m-%d", time.localtime(time.time() + 365 * 86400)),
-               "holder": u["name"] if b.show_name else "Anonymous candidate", "skills": skills,
-               "attempt_id": a["id"], "verification": "candidate_selected",
-               "release_id": release["id"], "credential_version": "skill-passport-v2",
-               "honesty": workflow.review_state(a["id"])["honesty"], "section_scores": r.get("section_scores"),
-               "assessment": {"attempt_id": a["id"], "overall": r.get("overall"), "review_decision": "approved",
-                              "reviewed_at": a["reviewed_at"], "kind": a["kind"]},
-               "uplift": up["overall"] if up["available"] else None, "issuer": "TalentForge Global R0 prototype"}
-    run("INSERT INTO passports(id,user_id,payload,signature,created,source_attempt) VALUES (?,?,?,?,?,?)",
-        (pid, u["id"], json.dumps(payload), E.sign_payload(payload, SECRET), time.time(), a["id"]))
-    audit(u["id"], "passport_create", pid)
-    return {"id": pid}
 
 
 @app.delete("/api/passport/{pid}")

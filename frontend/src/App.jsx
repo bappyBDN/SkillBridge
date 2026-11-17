@@ -9,6 +9,9 @@ import { CvPreview, WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./W
 import TeamInvitations from "./TeamInvitations.jsx";
 import AssessmentStatus from "./AssessmentStatus.jsx";
 import SkillCredential from "./SkillCredential.jsx";
+import CandidateAccountSettings from "./CandidateAccountSettings.jsx";
+import PasswordReset from "./PasswordReset.jsx";
+import { assessmentNotificationItems, notificationTimestamp } from "./notifications.js";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
@@ -1100,6 +1103,11 @@ function Landing({ onAuthed }) {
                     )}
                   </label>
                 )}
+                {!isRegister && !mfaChallenge && (
+                  <a className="sb-forgot-link" href="#/reset-password">
+                    {t("settingsForgotPassword")}
+                  </a>
+                )}
                 {isRegister && !mfaChallenge && (
                   <label>
                     {L.confirmPassword}
@@ -1213,6 +1221,7 @@ function Profile({ st, onDone, onEditProfile }) {
   const [sel, setSel] = useState([]);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [identityConfirmed, setIdentityConfirmed] = useState(false);
   const [journey, setJourney] = useState(null);
 
   useEffect(() => {
@@ -1235,6 +1244,7 @@ function Profile({ st, onDone, onEditProfile }) {
       if (file) form.append("file", file);
       const r = await api("/cv", { method: "POST", form });
       setRes(r);
+      setIdentityConfirmed(false);
       setSel(r.skills.map((s) => s.id));
     } catch (e) {
       setErr(e);
@@ -1246,7 +1256,7 @@ function Profile({ st, onDone, onEditProfile }) {
     setErr(null);
     setBusy(true);
     try {
-      await api("/skills", { method: "PUT", body: { skills: sel } });
+      await api("/skills", { method: "PUT", body: { skills: sel, cv_identity_confirmed: identityConfirmed } });
       await onDone();
     } catch (e) {
       setErr(e);
@@ -1256,6 +1266,12 @@ function Profile({ st, onDone, onEditProfile }) {
   };
   const toggle = (id) =>
     setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
+  const identity = res?.identity;
+  const identityIsUnknown = identity?.status === "unknown" && !identity.confirmed;
+  const identityNeedsConfirmation = Boolean(identity
+    && ["weak", "no_match"].includes(identity.status)
+    && !identity.confirmed);
+  const identityNeedsAttention = Boolean(identity && (identityNeedsConfirmation || identityIsUnknown));
 
   return (
     <section>
@@ -1378,6 +1394,29 @@ function Profile({ st, onDone, onEditProfile }) {
               {t("confirmHelp")} ({t("extractedBy")}:{" "}
               {res.source === "llm" ? t("llm") : t("rules")})
             </p>
+            {identityNeedsAttention && (
+              <div className="cv-identity-check" role="alert">
+                <h4>{t(identityIsUnknown ? "cvIdentityUnknownTitle" : "cvIdentityTitle")}</h4>
+                <p>{t(identityIsUnknown ? "cvIdentityUnknownHelp" : "cvIdentityHelp")}</p>
+                <dl className="cv-identity-facts">
+                  <div><dt>{t("cvIdentityStatus")}</dt><dd>{t(`cvIdentity_${identity.status}`)}</dd></div>
+                  <div><dt>{t("cvIdentityCvName")}</dt><dd>{identity.cv_name || "—"}</dd></div>
+                  <div><dt>{t("cvIdentitySimilarity")}</dt><dd>{typeof identity.score === "number" ? Math.round(identity.score * 100) + "%" : "—"}</dd></div>
+                  <div><dt>{t("cvIdentityEmailMatch")}</dt><dd>{identity.email_match ? t("yes") : t("no")}</dd></div>
+                </dl>
+                {identityNeedsConfirmation && (
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={identityConfirmed}
+                      onChange={(e) => setIdentityConfirmed(e.target.checked)}
+                    />
+                    {t("cvIdentityConfirm")}
+                  </label>
+                )}
+                <small>{t("cvIdentityReviewNote")}</small>
+              </div>
+            )}
             <ul className="skills">
               {res.taxonomy.map((s) => {
                 const found = res.skills.find((x) => x.id === s.id);
@@ -1401,7 +1440,7 @@ function Profile({ st, onDone, onEditProfile }) {
                 );
               })}
             </ul>
-            <button className="btn" onClick={confirm}>
+            <button className="btn" onClick={confirm} disabled={identityNeedsConfirmation && !identityConfirmed}>
               {t("confirmBtn")}
             </button>
           </div>
@@ -1596,6 +1635,7 @@ function useExamIntegrity(initial, screenStream) {
   const [signals, setSignals] = useState({ clipboard: 0, focus: 0, fullscreen: 0 });
   const pendingEvents = useRef([]);
   const flushPromise = useRef(null);
+  const reportedStream = useRef(screenStream);
 
   const flushEvents = useCallback(async () => {
     if (flushPromise.current) return flushPromise.current;
@@ -1766,15 +1806,39 @@ function useExamIntegrity(initial, screenStream) {
       setShareActive(false);
       return;
     }
-    const sync = () => setShareActive(track.readyState === "live");
+    const sync = () => {
+      const live = track.readyState === "live";
+      setShareActive(live);
+      if (live) setShareError("");
+    };
     const ended = () => {
       setShareActive(false);
       setShareError(t("shareStopped"));
       report("screen_share_stopped");
     };
     sync();
+    // A restored share is a fresh MediaStream: re-assert it to the server so the
+    // answer/navigation guard passes again. The initial stream is already
+    // reported by the setup flow, so skip it on first mount.
+    if (reportedStream.current !== screenStream) {
+      reportedStream.current = screenStream;
+      report("screen_share_started", {
+        surface: track.getSettings?.().displaySurface || "unknown",
+      });
+    }
+    // Some browsers report the track state a tick after the picker closes, and an
+    // interrupted share can recover without an "ended" event. Poll so the exam
+    // never stays stuck on "share off" while the screen is actually shared.
+    const timer = setInterval(sync, 1000);
     track.addEventListener("ended", ended);
-    return () => track.removeEventListener("ended", ended);
+    track.addEventListener("mute", sync);
+    track.addEventListener("unmute", sync);
+    return () => {
+      clearInterval(timer);
+      track.removeEventListener("ended", ended);
+      track.removeEventListener("mute", sync);
+      track.removeEventListener("unmute", sync);
+    };
   }, [screenStream, report, t]);
   const restartFullscreen = async () => {
     try {
@@ -2328,14 +2392,25 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
   useEffect(() => {
     const track = stream?.getVideoTracks()[0];
     if (!track) { setShareActive(false); return; }
-    setShareActive(track.readyState === "live");
+    const sync = () => setShareActive(track.readyState === "live");
     const ended = () => {
       setShareActive(false);
       setShareNotice(t("shareStopped"));
       report("screen_share_stopped");
     };
+    sync();
+    // Same robustness as the GraphRAG exam: some browsers report the track state
+    // a tick after the picker closes, so poll instead of trusting a single read.
+    const timer = setInterval(sync, 1000);
     track.addEventListener("ended", ended);
-    return () => track.removeEventListener("ended", ended);
+    track.addEventListener("mute", sync);
+    track.addEventListener("unmute", sync);
+    return () => {
+      clearInterval(timer);
+      track.removeEventListener("ended", ended);
+      track.removeEventListener("mute", sync);
+      track.removeEventListener("unmute", sync);
+    };
   }, [stream, report]);
 
   // Record webcam disconnection during the active attempt. The browser never
@@ -3033,8 +3108,6 @@ function Result({ aid, next, nextLabel }) {
   const t = useT();
   const [r, setR] = useState(null);
   const [reviewPage, setReviewPage] = useState(0);
-  const [note, setNote] = useState("");
-  const [sent, setSent] = useState(false);
   const [err, setErr] = useState(null);
   useEffect(() => {
     api(`/attempts/${aid}/result`).then(setR).catch(setErr);
@@ -3047,14 +3120,6 @@ function Result({ aid, next, nextLabel }) {
   }, [aid, waitingForResultReview]);
   if (err) return <Err e={err} />;
   if (!r) return <p>{t("loading")}</p>;
-  const sendAppeal = async () => {
-    try {
-      await api(`/attempts/${aid}/appeal`, { method: "POST", body: { note } });
-      setSent(true);
-    } catch (e) {
-      setErr(e);
-    }
-  };
   return (
     <section>
       <h2>{t("resultTitle")}</h2>
@@ -3242,24 +3307,14 @@ function Result({ aid, next, nextLabel }) {
             {r.review_reason && <p>{r.review_reason}</p>}
           </div>
         )}
-        <h3>{t("appealTitle")}</h3>
-        {r.appeal || sent ? (
-          <p className="note">{t("appealSent")}</p>
-        ) : (
-          <div className="row">
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder={t("appealPh")}
+        {(r.review_decision === "invalidated" || r.appeal) && (
+          <>
+            <h3>{t("appealTitle")}</h3>
+            <AttemptAppeal
+              attempt={{ ...r, id: r.attempt_id || aid }}
+              onSubmitted={() => api(`/attempts/${aid}/result`).then(setR).catch(setErr)}
             />
-            <button
-              className="btn ghost"
-              disabled={note.trim().length < 3}
-              onClick={sendAppeal}
-            >
-              {t("appealBtn")}
-            </button>
-          </div>
+          </>
         )}
       </div>
       {next && (
@@ -3284,7 +3339,7 @@ function AttemptAppeal({ attempt, onSubmitted }) {
     try {
       await api(`/attempts/${attempt.id || attempt.attempt_id}/appeal`, { method: "POST", body: { note } });
       setNote("");
-      await onSubmitted();
+      if (onSubmitted) await onSubmitted();
       setSubmitted(true);
     } catch (error) {
       setErr(error);
@@ -3292,10 +3347,18 @@ function AttemptAppeal({ attempt, onSubmitted }) {
       setBusy(false);
     }
   };
+  const needsMoreInfo = attempt.appeal_decision === "needs_more_info";
   if (attempt.appeal || submitted) return (
     <div className="attempt-appeal-status">
       <strong>{attempt.appeal_decision ? t(`appeal_${attempt.appeal_decision}`) : t("appealPending")}</strong>
       {attempt.appeal_reason && <p>{attempt.appeal_reason}</p>}
+      {needsMoreInfo && !submitted && (
+        <form className="attempt-appeal-form" onSubmit={submit}>
+          <label>{t("appealMoreInfoHelp")}<textarea value={note} onChange={(event) => setNote(event.target.value)} minLength={3} maxLength={1000} rows={3} required /></label>
+          {err && <Err e={err} />}
+          <button className="btn ghost sm" disabled={busy || note.trim().length < 3}>{busy ? t("saving") : t("appealUpdateBtn")}</button>
+        </form>
+      )}
     </div>
   );
   if (attempt.review_decision !== "invalidated") return null;
@@ -3310,39 +3373,50 @@ function AttemptAppeal({ attempt, onSubmitted }) {
 
 function AssessmentNotifications({ attempts, onRefresh, embedded = false }) {
   const t = useT();
+  const notifications = assessmentNotificationItems(attempts);
+  const latest = notifications[0];
+  const latestKey = latest
+    ? `${latest.id}:${latest.review_decision || ""}:${latest.reviewed_at || ""}:${latest.appeal_decision || ""}:${latest.appeal_decided_at || ""}`
+    : "";
   const [open, setOpen] = useState(embedded);
-  const latest = attempts[0];
-  const latestKey = latest ? `${latest.id}:${latest.reviewed_at}:${latest.review_decision}` : "";
   const previousKey = useRef(latestKey);
   useEffect(() => {
     if (previousKey.current && latestKey && previousKey.current !== latestKey) setOpen(true);
     previousKey.current = latestKey;
   }, [latestKey]);
-  if (!attempts.length) return null;
+  if (!notifications.length) {
+    return embedded ? <p className="assessment-notification-empty">{t("noAssessmentNotifications")}</p> : null;
+  }
   const date = (timestamp) => timestamp
     ? new Date(Number(timestamp) * 1000).toLocaleString()
     : "";
   const statusKey = (decision) => `assessmentReview_${decision}`;
+  const statusDecision = latest.review_decision || "pending";
+  const reviewedAt = Math.max(Number(latest.reviewed_at) || 0, Number(latest.appeal_decided_at) || 0);
   return (
     <aside className="assessment-notifications" aria-live="polite">
       <button className="assessment-notification-toggle" onClick={() => setOpen((value) => !value)}>
-        {t("assessmentUpdates")} <span>{attempts.length}</span>
+        {t("assessmentUpdates")} <span>{notifications.length}</span>
       </button>
       {open && <div className="assessment-notification-panel">
         <div className="assessment-notification-heading">
-          <div><small>{t("latestReviewed")}</small><strong>{latest.overall ?? "—"} / 100</strong></div>
+          <div>
+            <small>{typeof latest.overall === "number" ? t("latestReviewed") : t("latestUpdate")}</small>
+            <strong>{typeof latest.overall === "number" ? `${latest.overall} / 100` : t(statusKey(statusDecision))}</strong>
+            {reviewedAt ? <small>{date(reviewedAt)}</small> : null}
+          </div>
           <button type="button" aria-label={t("close")} onClick={() => setOpen(false)}>×</button>
         </div>
-        {attempts.slice(0, 3).map((attempt) => (
+        {notifications.slice(0, 3).map((attempt) => (
           <article className="assessment-notification-item" key={attempt.id}>
             <div className="assessment-notification-meta">
               <strong>{attempt.kind === "post" ? t("attemptRetest") : t("attemptInitial")}</strong>
               <span className={"status-pill " + (attempt.review_decision === "approved" ? "status-valid" : attempt.review_decision === "invalidated" ? "status-invalid" : "status-review")}>
-                {t(statusKey(attempt.review_decision))}
+                {t(statusKey(attempt.review_decision || "pending"))}
               </span>
-              <small>{date(attempt.reviewed_at)}</small>
+              <small>{date(notificationTimestamp(attempt))}</small>
             </div>
-            <strong className="assessment-notification-score">{attempt.overall ?? "—"} / 100</strong>
+            {typeof attempt.overall === "number" && <strong className="assessment-notification-score">{attempt.overall} / 100</strong>}
             {attempt.review_reason && <p>{attempt.review_reason}</p>}
             {attempt.review_decision === "invalidated" && <AttemptAppeal attempt={attempt} onSubmitted={onRefresh} />}
           </article>
@@ -3884,7 +3958,8 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const avatarUrl = useAvatar(st.has_avatar, st.avatar_updated, st.user?.email || "");
   const [identityResult, setIdentityResult] = useState({ status: "pending", similarity: null, distance: null, reason: "" });
   const [identityAck, setIdentityAck] = useState(false);
-  const identityPass = identityResult.status === "verified" || (identityResult.status === "flagged" && identityAck);
+  const identityPass = identityResult.status === "verified"
+    || (["flagged", "pending"].includes(identityResult.status) && identityAck);
   const [shareReady, setShareReady] = useState(false);
   const [fullscreenReady, setFullscreenReady] = useState(Boolean(document.fullscreenElement));
   const [setupBusy, setSetupBusy] = useState(false);
@@ -3917,8 +3992,17 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     }
     const syncShare = () => setShareReady(track.readyState === "live");
     syncShare();
+    // Some browsers report the track state a tick after the picker closes.
+    const timer = setInterval(syncShare, 1000);
     track.addEventListener("ended", syncShare);
-    return () => track.removeEventListener("ended", syncShare);
+    track.addEventListener("mute", syncShare);
+    track.addEventListener("unmute", syncShare);
+    return () => {
+      clearInterval(timer);
+      track.removeEventListener("ended", syncShare);
+      track.removeEventListener("mute", syncShare);
+      track.removeEventListener("unmute", syncShare);
+    };
   }, [screenStream]);
 
   // Revoke readiness immediately if the camera disconnects during setup.
@@ -3932,6 +4016,23 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
 
   // Stop pending camera capture if setup is abandoned.
   useEffect(() => () => { cameraStream?.getTracks().forEach(track => track.stop()); }, [cameraStream]);
+
+  // Re-read browser state after the candidate returns from a permission picker
+  // or exits/enters full-screen. This prevents a stale "not active" step.
+  const resyncPermissions = useCallback(() => {
+    setShareReady(Boolean(screenStream?.getVideoTracks().some((track) => track.readyState === "live")));
+    setCameraReady(Boolean(cameraStream?.getVideoTracks().some((track) => track.readyState === "live")));
+    setFullscreenReady(Boolean(document.fullscreenElement));
+  }, [screenStream, cameraStream]);
+  useEffect(() => {
+    const sync = () => resyncPermissions();
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [resyncPermissions]);
 
   const enableCamera = async () => {
     setErr(null);
@@ -4013,8 +4114,13 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         video: { frameRate: 5 },
         audio: false,
       });
+      const videoTrack = requestedStream.getVideoTracks()[0];
+      if (!videoTrack) {
+        requestedStream.getTracks().forEach((track) => track.stop());
+        throw new Error("The browser did not return a screen video track. Choose a screen or window and try again.");
+      }
       setScreenStream(requestedStream);
-      setShareReady(requestedStream.getVideoTracks().some((track) => track.readyState === "live"));
+      setShareReady(videoTrack.readyState === "live");
     } catch (e) {
       setShareReady(false);
       setErr(e?.name === "NotAllowedError" ? new Error(t("shareRequired")) : e);
@@ -4044,12 +4150,9 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         video: { frameRate: 5 },
         audio: false,
       });
-      const aid = active?.attempt_id || act?.id;
-      if (aid)
-        await api("/attempts/" + aid + "/event", {
-          method: "POST",
-          body: { type: "screen_share_started", session_id: active?.session_id, seq: (active?.last_event_seq || 0) + 1, client_ts: Date.now() },
-        });
+      // The exam integrity monitor detects the fresh stream and re-asserts the
+      // `screen_share_started` event with its own sequence, so the server guard
+      // and the on-screen status stay in sync without a sequence conflict.
       setScreenStream(stream);
       setShareReady(true);
       setErr(null);
@@ -4063,13 +4166,19 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     setErr(null);
     const sharing = screenStream?.getVideoTracks().some((track) => track.readyState === "live");
     const fullscreen = Boolean(document.fullscreenElement);
+    const cameraLive = Boolean(cameraStream?.getVideoTracks().some((track) => track.readyState === "live"));
     setShareReady(Boolean(sharing));
     setFullscreenReady(fullscreen);
-    if (mobileDevice || !browserSupported || !navigator.onLine || !sharing || !fullscreen || !cameraReady || !cameraStream?.getVideoTracks().some(track => track.readyState === "live")) {
-      setErr(new Error(mobileDevice ? "This assessment requires a supported desktop browser." :
-        !browserSupported ? "Your browser does not support the required screen-sharing and full-screen features." :
-        !navigator.onLine ? "A network connection is required to begin the assessment." :
-        !sharing ? t("shareRequired") : !fullscreen ? t("fullscreenRequired") : "Please enable your webcam before starting."));
+    const missing = [];
+    if (mobileDevice) missing.push("a supported desktop browser");
+    if (!browserSupported) missing.push("browser support for screen sharing and full-screen");
+    if (!navigator.onLine) missing.push("a network connection");
+    if (!sharing) missing.push("screen sharing");
+    if (!fullscreen) missing.push("full-screen mode");
+    if (!cameraReady || !cameraLive) missing.push("the webcam");
+    if (!identityPass) missing.push("the identity check (tick the acknowledgement if it could not run)");
+    if (missing.length) {
+      setErr(new Error("Cannot start yet: " + missing.join(", ") + "."));
       return;
     }
     setSetupBusy(true);
@@ -4130,7 +4239,9 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         await api(`/attempts/${v.attempt_id}/event`, {
           method: "POST",
           body: {
-            type: identityResult.status === "verified" ? "identity_verified" : "identity_mismatch",
+            type: identityResult.status === "verified"
+              ? "identity_verified"
+              : identityResult.status === "flagged" ? "identity_mismatch" : "identity_skipped",
             session_id: v.session_id,
             seq,
             client_ts: Date.now(),
@@ -4157,7 +4268,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     } finally {
       setSetupBusy(false);
     }
-  }, [refresh, screenStream, cameraStream, cameraReady, t, identityResult, jobMode, jobDept, jobSkills]);
+  }, [refresh, screenStream, cameraStream, cameraReady, t, identityResult, identityPass, jobMode, jobDept, jobSkills]);
   const finished = async () => {
     screenStream?.getTracks().forEach((track) => track.stop());
     cameraStream?.getTracks().forEach((track) => track.stop());
@@ -4170,6 +4281,16 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   };
 
   if (active) return <ExamRun initial={active} screenStream={screenStream} cameraStream={cameraStream} micStream={micStream} onFinished={finished} onRestartShare={restartShare} />;
+  const setupRequirements = [
+    { id: "desktop", label: "Desktop device", ok: !mobileDevice },
+    { id: "browser", label: "Browser support", ok: browserSupported },
+    { id: "network", label: "Network", ok: navigator.onLine },
+    { id: "share", label: "Screen sharing", ok: shareReady },
+    { id: "camera", label: "Webcam", ok: cameraReady },
+    { id: "fullscreen", label: "Full-screen", ok: fullscreenReady },
+    { id: "identity", label: "Identity check", ok: identityPass },
+  ];
+  const setupMissing = setupRequirements.filter((item) => !item.ok).map((item) => item.label);
   if (act && (act.kind === kind)) return (
     <section className="card exam-setup">
       <header className="exam-setup-head">
@@ -4219,6 +4340,9 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       <div className="exam-setup-actions">
         <button className="btn" onClick={start} disabled={setupBusy || mobileDevice || !browserSupported || !navigator.onLine || !shareReady || !fullscreenReady || !cameraReady}>
           {setupBusy ? t("saving") : t("resume")}
+        </button>
+        <button type="button" className="btn ghost" onClick={resyncPermissions} disabled={setupBusy}>
+          Re-check permissions
         </button>
         <small>Screen sharing, webcam and full-screen must be active before you can resume. Integrity signals are advisory and reviewed by a person.</small>
       </div>
@@ -4299,6 +4423,16 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
             onChange={(e) => setIdentityAck(e.target.checked)}
           />
           My live face did not match closely. Continue anyway and flag this attempt for human review.
+        </label>
+      )}
+      {cameraReady && identityResult.status === "pending" && (
+        <label className="identity-ack">
+          <input
+            type="checkbox"
+            checked={identityAck}
+            onChange={(e) => setIdentityAck(e.target.checked)}
+          />
+          I could not complete the facial identity check. Continue anyway and flag this attempt for human review.
         </label>
       )}
       <div className={"exam-mode" + (jobMode ? " on" : "")}>
@@ -4394,12 +4528,28 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         )}
       </div>
       {banner && <p className="note">{banner}</p>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 4px" }}>
+        {setupRequirements.map((item) => (
+          <span key={item.id} className={"chip " + (item.ok ? "chip-ok" : "chip-rev")}>
+            {item.ok ? "✓" : "!"} {item.label}
+          </span>
+        ))}
+        <span className={"chip " + (micReady ? "chip-ok" : "chip-mid")}>
+          {micReady ? "✓" : "○"} Microphone (optional)
+        </span>
+      </div>
+      {setupMissing.length > 0 && (
+        <p className="err">Still required before you can start: {setupMissing.join(", ")}.</p>
+      )}
       <Err e={err} />
       <div className="exam-setup-actions">
-        <button className="btn" onClick={start} disabled={setupBusy || mobileDevice || !browserSupported || !navigator.onLine || !shareReady || !fullscreenReady || !cameraReady || !identityPass || !micReady}>
+        <button className="btn" onClick={start} disabled={setupBusy}>
           {setupBusy ? t("saving") : jobMode ? "Start job-specific exam · 40Q" : "Start profile exam"}
         </button>
-        <small>Screen sharing, webcam, microphone, full-screen and the identity check must be complete before you can start.</small>
+        <button type="button" className="btn ghost" onClick={resyncPermissions} disabled={setupBusy}>
+          Re-check permissions
+        </button>
+        <small>Screen sharing, webcam, full-screen and the identity check must be complete. Microphone monitoring is optional.</small>
       </div>
       <CameraPreview stream={cameraStream} />
     </section>
@@ -4855,63 +5005,36 @@ function Passport({ st, refresh }) {
   const t = useT();
   const eligible = st.attempts.filter((attempt) => attempt.status === "done" && attempt.finalized === true)
     .sort((a, b) => (b.reviewed_at || 0) - (a.reviewed_at || 0));
-  const [selectedId, setSelectedId] = useState(eligible[0]?.id || "");
-  const [name, setName] = useState(false);
-  const [err, setErr] = useState(null);
   const [copied, setCopied] = useState(null);
   const [journey, setJourney] = useState(null);
   useEffect(() => {
     api("/skill-journey").then(setJourney).catch(() => {});
   }, []);
-  const selected = eligible.find((attempt) => attempt.id === selectedId) || eligible[0];
-  const topics = selected?.topics || {};
-  const create = async () => {
-    if (!selected) return;
-    setErr(null);
-    try {
-      await api("/passport", { method: "POST", body: { attempt_id: selected.id, show_name: name } });
-      await refresh();
-    } catch (e) { setErr(e); }
-  };
-  const selectAttempt = (id) => {
-    setSelectedId(id);
-    setErr(null);
-  };
+  const latest = eligible[0];
+  const topics = latest?.topics || {};
+  const passports = st.passports || [];
   const revoke = async (id) => { await api(`/passport/${id}`, { method: "DELETE" }); refresh(); };
   const link = (id) => `${location.origin}/#/p/${id}`;
   const copy = async (id) => { try { await navigator.clipboard.writeText(link(id)); setCopied(id); } catch { /* ignore */ } };
-  const autoPassports = (st.passports || []).filter((p) => p.auto && !p.revoked);
+  const autoPassports = passports.filter((p) => p.auto && !p.revoked);
   return (
     <section>
       <h2>{t("passportTitle")}</h2>
       <AssessmentStatus publication={journey?.latest_result?.publication} objective={journey?.latest_result?.objective_summary} onRefresh={refresh} />
       {autoPassports.length > 0 && (
-        <p className="success-note">
-          A verified Skill Passport was created automatically when a reviewer
-          approved your assessment marks and honesty report. You can share or revoke it below.
-        </p>
+        <p className="success-note">{t("passportAutoCreated")}</p>
       )}
       {journey?.latest_result && !journey.approved && (
-        <p className="note">
-          Your latest result is awaiting human review. A verified Skill Passport
-          will be created after both academic and honesty approval.
-        </p>
+        <p className="note">{t("passportAwaitingReview")}</p>
       )}
       <div className="card">
         <p>{t("passportHelp")}</p>
-        {!eligible.length ? <p className="assessment-pending-banner">{t("passportRequiresReviewed")}</p> : <>
-          <label className="passport-attempt-select">{t("selectReviewedAssessment")}
-            <select value={selected?.id || ""} onChange={(event) => selectAttempt(event.target.value)}>
-              {eligible.map((attempt) => <option key={attempt.id} value={attempt.id}>
-                {(attempt.kind === "post" ? t("attemptRetest") : t("attemptInitial"))} · {new Date(Number(attempt.finished) * 1000).toLocaleDateString()} · {attempt.overall ?? "—"}%
-              </option>)}
-            </select>
-          </label>
-          {selected && <div className="passport-reviewed-result">
-            <div className="passport-reviewed-summary"><span>{t("reviewedResult")}</span><strong>{selected.overall ?? "—"}<small> / 100</small></strong></div>
-            <p>{t("assessmentReview_approved")}{selected.reviewed_at ? ` · ${new Date(Number(selected.reviewed_at) * 1000).toLocaleDateString()}` : ""}</p>
-          </div>}
-          {selected?.honesty && <p className="note">Approved honesty score: <strong>{selected.honesty.score}/100</strong> · advisory and separate from technical marks.</p>}
+        {!latest ? <p className="assessment-pending-banner">{t("passportRequiresReviewed")}</p> : <>
+          <div className="passport-reviewed-result">
+            <div className="passport-reviewed-summary"><span>{t("reviewedResult")}</span><strong>{latest.overall ?? "—"}<small> / 100</small></strong></div>
+            <p>{t("assessmentReview_approved")}{latest.reviewed_at ? ` · ${new Date(Number(latest.reviewed_at) * 1000).toLocaleDateString()}` : ""}</p>
+          </div>
+          {latest?.honesty && <p className="note">Approved honesty score: <strong>{latest.honesty.score}/100</strong> · advisory and separate from technical marks.</p>}
           <p className="passport-skill-note">{t("allReviewedSkillsIncluded")}</p>
           <ul className="gaps passport-skills">{Object.entries(topics).map(([key, topic]) => (
             <li key={key}>
@@ -4923,16 +5046,13 @@ function Passport({ st, refresh }) {
               <span className="passport-skill-reviewed"><span aria-hidden="true">✓</span> {t("skillReviewed")}</span>
             </li>
           ))}</ul>
-          <label className="check"><input type="checkbox" checked={name} onChange={(e) => setName(e.target.checked)} /> {t("showName")}</label>
         </>}
-        <Err e={err} />
-        {eligible.length > 0 && <button className="btn" onClick={create}>{t("createPass")}</button>}
       </div>
-      {st.passports.length > 0 && (
+      {passports.length > 0 && (
         <div className="card">
           <h3>{t("yourPass")}</h3>
           <ul className="plist">
-            {st.passports.map((p) => (
+            {passports.map((p) => (
               <li key={p.id}>
                 <code>{link(p.id)}</code>
                 {p.auto && !p.revoked && (
@@ -5608,6 +5728,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   }, []);
   const t = useT();
   const done = (st?.attempts || []).filter((a) => a.status === "done");
+  const notificationItems = assessmentNotificationItems(st?.attempts);
   const activeAttempt = (st?.attempts || []).find((a) => a.status === "active");
   const awaitingPublication = (st?.attempts || []).some((attempt) => attempt.status === "done" && attempt.finalized === false && attempt.review_decision !== "invalidated");
   const hasActiveAttempt = Boolean(activeAttempt);
@@ -5703,7 +5824,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
           <div className="topbar-actions">
             <button type="button" className="tf-icon-btn" title={W.notifications || "Notifications"} aria-label={W.notifications || "Notifications"} aria-expanded={notificationsOpen} aria-controls="candidate-notifications" onClick={() => setNotificationsOpen((value) => !value)}>
               <WorkspaceIcon name="bell" size={19} />
-              {st.attempts?.length ? <i className="tf-dot" /> : null}
+              {notificationItems.length ? <i className="tf-dot" /> : null}
             </button>
             <div className="language-switch tf-lang">
               <select
@@ -5752,7 +5873,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
           ))}
         </nav>
         <div className="candidate-page" id="candidate-content" tabIndex={-1}>
-          {notificationsOpen && <section className="portal-panel ws-notifications" id="candidate-notifications" aria-label="Assessment notifications"><div className="panel-heading"><h2>Assessment updates</h2><button type="button" className="cr-outline-btn" onClick={() => setNotificationsOpen(false)}>Close</button></div><AssessmentNotifications attempts={st.attempts || []} onRefresh={refresh} embedded />{!st.attempts?.length && <p>No assessment updates yet. Your results and review updates will appear here.</p>}</section>}
+          {notificationsOpen && <section className="portal-panel ws-notifications" id="candidate-notifications" aria-label="Assessment notifications"><div className="panel-heading"><h2>{t("assessmentUpdates")}</h2><button type="button" className="cr-outline-btn" onClick={() => setNotificationsOpen(false)}>{t("close")}</button></div><AssessmentNotifications attempts={st.attempts || []} onRefresh={refresh} embedded /></section>}
           {section === "overview" && (
             <>
               <div className="ws-overview-heading"><div><span className="eyebrow">YOUR PERSONAL WORKSPACE</span><h1>Career overview</h1></div><span className="ws-date">{new Intl.DateTimeFormat(lang === "bn" ? "bn-BD" : "en-GB", { weekday: "short", day: "numeric", month: "long" }).format(new Date())}</span></div>
@@ -6022,11 +6143,12 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">YOUR DATA</span>
-                  <h1>Data & privacy</h1>
-                  <p>Export a copy of your data or request account deletion.</p>
+                  <span className="eyebrow">{t("settingsPageKicker")}</span>
+                  <h1>{t("settingsPageTitle")}</h1>
+                  <p>{t("settingsPageHelp")}</p>
                 </div>
               </div>
+              <CandidateAccountSettings st={st} onEditProfile={() => go("profile")} />
               <DataRights />
               <section className="portal-panel">
                 <h2>Privacy basics</h2>
@@ -6276,6 +6398,8 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [notes, setNotes] = useState({});
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6310,6 +6434,34 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
   };
 
   const signalLabel = (value) => I.signals[value] || value || "—";
+  const counts = {
+    all: items.length,
+    open: items.filter((x) => x.status === "open").length,
+    cleared: items.filter((x) => x.status === "cleared").length,
+    needs_review: items.filter((x) => x.status === "needs_review").length,
+    escalated: items.filter((x) => x.status === "escalated").length,
+    superseded: items.filter((x) => x.status === "superseded").length,
+  };
+  const query = search.trim().toLowerCase();
+  const visible = items.filter((item) => {
+    if (filter !== "all" && item.status !== filter) return false;
+    if (!query) return true;
+    const signal = item.signal || {};
+    return [item.account_name, item.account_email, signal.cv_name]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
+  const filters = [
+    ["all", I.filters.all, counts.all],
+    ["open", I.filters.open, counts.open],
+    ["cleared", I.filters.cleared, counts.cleared],
+    ["needs_review", I.filters.needsReview, counts.needs_review],
+    ["escalated", I.filters.escalated, counts.escalated],
+    ["superseded", I.filters.superseded, counts.superseded],
+  ];
+  const reasonText = (signal) => (signal.reasons || [])
+    .map((reason) => I.reasons[reason] || reason)
+    .join(" · ");
 
   return (
     <section className="ad-panel">
@@ -6319,8 +6471,29 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
           <p>{I.subtitle}</p>
         </div>
         <span className="ad-count">
-          {items.filter((x) => x.status === "open").length} {I.statuses.open}
+          {counts.open} {I.statuses.open} · {counts.all} {I.total}
         </span>
+        <button type="button" className="ad-mini-primary" onClick={load} disabled={loading}>
+          ↻ {I.refresh}
+        </button>
+      </div>
+      <div className="ad-toolbar">
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={I.searchPlaceholder}
+          aria-label={I.searchPlaceholder}
+        />
+        <select
+          className="ad-role-select"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          aria-label={I.filterLabel}
+        >
+          {filters.map(([id, label, count]) => (
+            <option key={id} value={id}>{label} ({count})</option>
+          ))}
+        </select>
       </div>
       {loading ? (
         <div className="ad-loading">{A.loading || "Loading…"}</div>
@@ -6332,47 +6505,61 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
                 <th>{I.account}</th>
                 <th>{I.cvName}</th>
                 <th>{I.status}</th>
-                <th>{I.emailMatch}</th>
-                <th>{I.similarity}</th>
                 <th>{I.submitted}</th>
                 <th>{I.decision}</th>
+                <th>{I.actions}</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {visible.map((item) => {
                 const signal = item.signal || {};
-                const pending = item.status === "open";
+                const pending = item.status === "open" || item.status === "needs_review";
+                const detected = item.created
+                  ? new Date(item.created * 1000).toLocaleString()
+                  : "—";
+                const decided = item.reviewed_at
+                  ? new Date(item.reviewed_at * 1000).toLocaleString()
+                  : "";
                 return (
                   <tr key={item.id}>
                     <td>
                       <b>{item.account_name}</b>
                       <small>{item.account_email}</small>
+                      <small>ID {item.user_id}</small>
                     </td>
-                    <td>{signal.cv_name || "—"}</td>
+                    <td>
+                      {signal.cv_name || "—"}
+                      <small>{signal.confirmed ? I.candidateConfirmed : I.notConfirmed}</small>
+                    </td>
                     <td>
                       <span className={"ad-pill " + (signal.status || "")}>
                         {signalLabel(signal.status)}
                       </span>
-                      <small>{I.statuses[item.status] || item.status}</small>
+                      <small>
+                        {I.emailMatch}: {signal.email_match ? A.yes : A.no} · {I.similarity}:{" "}
+                        {typeof signal.score === "number"
+                          ? Math.round(signal.score * 100) + "%"
+                          : "—"}
+                      </small>
+                      {reasonText(signal) && <small>{reasonText(signal)}</small>}
                     </td>
-                    <td>{signal.email_match ? A.yes : A.no}</td>
+                    <td>{detected}</td>
                     <td>
-                      {typeof signal.score === "number"
-                        ? Math.round(signal.score * 100) + "%"
-                        : "—"}
-                    </td>
-                    <td>
-                      {item.created
-                        ? new Date(item.created * 1000).toLocaleString()
-                        : "—"}
+                      <b>{I.statuses[item.status] || item.status}</b>
+                      {item.reviewed_at && (
+                        <small>
+                          {I.decidedBy}: {item.reviewed_by_name || "—"} · {decided}
+                        </small>
+                      )}
+                      {item.note && <small>{item.note}</small>}
                     </td>
                     <td>
                       {pending ? (
                         <div className="ad-identity-actions">
                           <input
                             value={notes[item.id] || ""}
-                            onChange={(e) =>
-                              setNotes((current) => ({ ...current, [item.id]: e.target.value }))
+                            onChange={(event) =>
+                              setNotes((current) => ({ ...current, [item.id]: event.target.value }))
                             }
                             placeholder={I.notePlaceholder}
                           />
@@ -6404,7 +6591,7 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
                           </div>
                         </div>
                       ) : (
-                        <span className="muted">{item.note || I.statuses[item.status]}</span>
+                        <span className="muted">{I.noAction}</span>
                       )}
                     </td>
                   </tr>
@@ -6412,7 +6599,9 @@ function IdentityReviewQueue({ A, onFlash, onError }) {
               })}
             </tbody>
           </table>
-          {!items.length && <div className="ad-empty">{I.empty}</div>}
+          {!visible.length && (
+            <div className="ad-empty">{items.length ? I.emptyFiltered : I.empty}</div>
+          )}
         </div>
       )}
     </section>
@@ -6443,6 +6632,7 @@ function AdminConsole({ onLogout }) {
   });
   const [creatingAdmin, setCreatingAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
+  const [adminId, setAdminId] = useState(null);
   const [candidateView, setCandidateView] = useState(null);
   const [integrityDetail, setIntegrityDetail] = useState(null),
     [integrityLoading, setIntegrityLoading] = useState(false);
@@ -6517,6 +6707,7 @@ function AdminConsole({ onLogout }) {
     try {
       const me = await api("/admin/console/me");
       setAdminRole(me.admin_role || "super_admin");
+      setAdminId(me.user_id ?? null);
       if (!adminEmail) {
         api("/enterprise/me")
           .then((identity) => setAdminEmail(identity?.user?.email || ""))
@@ -6591,6 +6782,34 @@ function AdminConsole({ onLogout }) {
       setError(x.message || "Could not create admin account.");
     } finally {
       setCreatingAdmin(false);
+    }
+  };
+  const revokeAdmin = async (staff) => {
+    if (!window.confirm(
+      `Revoke admin access for ${staff.name} (${staff.email})? ` +
+      "Their account and history stay, but they lose every admin permission and are signed out.",
+    )) return;
+    setError("");
+    try {
+      await api(`/admin/console/staff/${staff.id}/revoke`, { method: "POST" });
+      await load();
+      flash(`Admin access revoked for ${staff.name}.`);
+    } catch (x) {
+      setError(x.message || "Could not revoke this admin.");
+    }
+  };
+  const deleteAdmin = async (staff) => {
+    if (!window.confirm(
+      `Permanently delete ${staff.name} (${staff.email})? ` +
+      "This removes the admin account and its linked data and cannot be undone.",
+    )) return;
+    setError("");
+    try {
+      await api(`/admin/console/staff/${staff.id}`, { method: "DELETE" });
+      await load();
+      flash(`Admin account deleted: ${staff.name}.`);
+    } catch (x) {
+      setError(x.message || "Could not delete this admin.");
     }
   };
   const syncEvaluationEdits = (report) => {
@@ -6815,7 +7034,7 @@ function AdminConsole({ onLogout }) {
       }
       if (action.kind === "appeal") {
         body.decision = action.decision;
-        await api("/admin/appeals/" + action.id + "/decision", {
+        actionResult = await api("/admin/appeals/" + action.id + "/decision", {
           method: "POST",
           body,
         });
@@ -6835,12 +7054,27 @@ function AdminConsole({ onLogout }) {
         });
       }
       setAction(null);
+      const appealMessage = action.kind === "appeal"
+        ? (action.decision === "overturned"
+            ? (actionResult?.publication?.ready
+                ? (actionResult?.passport_id
+                    ? "Appeal overturned. The assessment was republished and a new Skill Passport was issued."
+                    : "Appeal overturned. The assessment was republished.")
+                : "Appeal overturned. The academic decision is restored; publication still needs honesty and evaluation approval.")
+            : action.decision === "upheld"
+              ? "Appeal upheld. The original assessment decision stands."
+              : "More information requested. The candidate can add details and the appeal returns to the queue.")
+          + (actionResult?.single_admin_override
+              ? " Single-admin override recorded in the audit trail."
+              : "")
+        : "";
       flash(
-        actionResult?.passport_id
+        appealMessage ||
+        (actionResult?.passport_id
           ? "Result approved. The learning path is now verified and a Skill Passport was created automatically."
           : actionResult?.learning_path_updated
             ? "Result approved. The candidate learning path has been updated."
-             : actionResult?.publication?.stage === "honesty_review" ? "Academic marks approved. Learning and the passport remain locked until honesty approval." : "Decision saved and recorded in the audit trail.",
+             : actionResult?.publication?.stage === "honesty_review" ? "Academic marks approved. Learning and the passport remain locked until honesty approval." : "Decision saved and recorded in the audit trail."),
       );
       await load();
     } catch (x) {
@@ -7778,7 +8012,7 @@ function AdminConsole({ onLogout }) {
                 credentials privately.
               </div>
               {table(
-                ["STAFF MEMBER", "ADMIN ROLE", "UPDATED", "ACCESS SCOPE"],
+                ["STAFF MEMBER", "ADMIN ROLE", "UPDATED", "ACCESS SCOPE", "ACTIONS"],
                 rows("staff").map((s) => (
                   <tr>
                     <td>
@@ -7823,6 +8057,24 @@ function AdminConsole({ onLogout }) {
                     <td>{stamp(s.updated_at)}</td>
                     <td>
                       <small>{s.admin_role.replaceAll("_", " ")}</small>
+                    </td>
+                    <td>
+                      {s.id === adminId ? (
+                        <small>Your account</small>
+                      ) : (
+                        <div className="ad-row-actions">
+                          <button type="button" onClick={() => revokeAdmin(s)}>
+                            Revoke admin
+                          </button>
+                          <button
+                            type="button"
+                            className="ad-danger-link"
+                            onClick={() => deleteAdmin(s)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )),
@@ -8307,38 +8559,47 @@ function AdminConsole({ onLogout }) {
                       <code>{x.attempt_id}</code>
                       <small>{stamp(x.finished)}</small>
                     </td>
-                    <td>{x.appeal}</td>
-                    <td>{pill(x.decision || "open")}</td>
+                    <td>{x.appeal}{x.original_reviewer_name && <small>Reviewed by {x.original_reviewer_name}</small>}</td>
                     <td>
-                      {!x.decision && (
-                        <div className="ad-row-actions">
-                          <button
-                            className="ad-mini-primary"
-                            onClick={() =>
-                              openAction("appeal", x.attempt_id, "upheld")
-                            }
-                          >
-                            Uphold
-                          </button>
-                          <button
-                            onClick={() =>
-                              openAction("appeal", x.attempt_id, "overturned")
-                            }
-                          >
-                            Overturn
-                          </button>
-                          <button
-                            onClick={() =>
-                              openAction(
-                                "appeal",
-                                x.attempt_id,
-                                "needs_more_info",
-                              )
-                            }
-                          >
-                            More info
-                          </button>
-                        </div>
+                      {pill(x.decision || "open")}
+                      {x.decision && x.appeal_reviewer_name && <small>Decided by {x.appeal_reviewer_name} · {stamp(x.decided_at)}</small>}
+                    </td>
+                    <td>
+                      {x.open ? (
+                        x.can_decide ? (
+                          <div className="ad-row-actions">
+                            <button
+                              className="ad-mini-primary"
+                              onClick={() =>
+                                openAction("appeal", x.attempt_id, "upheld")
+                              }
+                            >
+                              Uphold
+                            </button>
+                            <button
+                              onClick={() =>
+                                openAction("appeal", x.attempt_id, "overturned")
+                              }
+                            >
+                              Overturn
+                            </button>
+                            <button
+                              onClick={() =>
+                                openAction(
+                                  "appeal",
+                                  x.attempt_id,
+                                  "needs_more_info",
+                                )
+                              }
+                            >
+                              More info
+                            </button>
+                          </div>
+                        ) : (
+                          <small>{x.blocked_reason || "Another administrator must decide this appeal."}</small>
+                        )
+                      ) : (
+                        <small>Final decision recorded. No further action is required.</small>
                       )}
                     </td>
                   </tr>
@@ -13483,11 +13744,14 @@ export default function App() {
     return () => window.removeEventListener("hashchange", h);
   }, []);
   const m = hash.match(/^#\/p\/([\w-]+)/);
+  const resetRoute = /^#\/reset-password/.test(hash);
   return (
     <ErrorBoundary>
       <LangCtx.Provider value={lang}>
         <LangSetCtx.Provider value={setLang}>
-          {m ? (
+          {resetRoute ? (
+            <PasswordReset key={hash} hash={hash} />
+          ) : m ? (
             <PublicPassport id={m[1]} />
           ) : (
             <Shell lang={lang} setLang={setLang} />

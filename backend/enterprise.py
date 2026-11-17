@@ -7,7 +7,7 @@ from main import (current_user, one, allr, run, audit, QBYID, db, DATABASE_URL,
                   COOLDOWN_HOURS, MAX_ATTEMPTS_90D, profile_skill_entries,
                   attempt_evaluations, upsert_answer_evaluation,
                   recompute_attempt_scores, evaluation_view, require_verified_email,
-                  IS_PRODUCTION, MFA_REQUIRED_ROLES)
+                  IS_PRODUCTION, MFA_REQUIRED_ROLES, revoke_all_sessions)
 import engine as E
 from content import RESOURCES, JOB, TAXONOMY
 from urllib.parse import urlparse
@@ -914,11 +914,13 @@ def admin_users(user=Depends(current_user)):
 @router.get("/api/admin/identity-reviews")
 def admin_identity_reviews(user=Depends(current_user)):
     """Human review queue for CVs that did not clearly match the account (SB-004)."""
-    require_role(user, "admin")
+    admin_only(user, "identity_review")
     rows = allr(
         "SELECT r.id, r.user_id, r.status, r.signal, r.created, r.reviewed_at, r.note, "
+        "r.reviewed_by, ru.name AS reviewed_by_name, "
         "u.name AS account_name, u.email AS account_email "
         "FROM identity_reviews r JOIN users u ON u.id=r.user_id "
+        "LEFT JOIN users ru ON ru.id=r.reviewed_by "
         "ORDER BY CASE WHEN r.status='open' THEN 0 ELSE 1 END, r.created DESC LIMIT 200"
     )
     items = []
@@ -939,7 +941,7 @@ class IdentityReviewDecision(BaseModel):
 
 @router.post("/api/admin/identity-reviews/{review_id}/decision")
 def admin_identity_decision(review_id: str, body: IdentityReviewDecision, user=Depends(current_user)):
-    require_role(user, "admin")
+    admin_only(user, "identity_review")
     if body.decision not in ("cleared", "needs_review", "escalated"):
         raise HTTPException(422, "Decision must be cleared, needs_review or escalated")
     review = one("SELECT * FROM identity_reviews WHERE id=?", (review_id,))
@@ -1878,6 +1880,7 @@ ADMIN_SCOPE_ROLES = {
     "job_moderation": {"super_admin", "company_verification_admin"}, "assessment_review": {"super_admin", "trust_safety_reviewer"},
     "integrity_review": {"super_admin", "trust_safety_reviewer"},
     "appeals": {"super_admin", "trust_safety_reviewer"}, "phase_two": {"super_admin", "question_content_admin", "company_verification_admin"},
+    "identity_review": {"super_admin", "trust_safety_reviewer"},
     "questions": {"super_admin", "question_content_admin"}, "ai": {"super_admin", "compliance_officer"},
     "billing": {"super_admin", "finance_admin"}, "learning": {"super_admin", "question_content_admin", "finance_admin"}, "privacy": {"super_admin", "compliance_officer"},
     "quality": {"super_admin", "compliance_officer", "trust_safety_reviewer"}, "audit": {"super_admin", "compliance_officer"},
@@ -1936,7 +1939,10 @@ def admin_overview_v2(user=Depends(current_user)):
         "applications": one("SELECT COUNT(*) AS n FROM applications")["n"],
         "attempts": one("SELECT COUNT(*) AS n FROM attempts")["n"],
         "completed_attempts": one("SELECT COUNT(*) AS n FROM attempts WHERE status='done'")["n"],
-        "open_appeals": one("SELECT COUNT(*) AS n FROM attempts WHERE appeal IS NOT NULL AND appeal!=''")["n"],
+        "open_appeals": one("""SELECT COUNT(*) AS n FROM attempts a
+                              LEFT JOIN admin_appeal_decisions d ON d.attempt_id=a.id
+                              WHERE a.appeal IS NOT NULL AND a.appeal!=''
+                                AND (d.decision IS NULL OR d.decision='needs_more_info')""")["n"],
         "assessment_requests": one("SELECT COUNT(*) AS n FROM phase_two_invites WHERE status='pending_platform_review'")["n"],
         "suspended_users": one("SELECT COUNT(*) AS n FROM admin_user_status WHERE status='suspended'")["n"],
     }
@@ -2600,6 +2606,11 @@ def admin_review_attempt(attempt_id: str, body: AdminReviewInput, user=Depends(c
                         VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
                         reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
                      (attempt_id, body.decision, body.reason.strip(), user["id"], now))
+        if body.decision == "invalidated":
+            # A fresh invalidation starts a new appeal cycle. Stale appeal text or
+            # an earlier decision must not block the candidate from appealing it.
+            conn.execute("UPDATE attempts SET appeal=NULL WHERE id=?", (attempt_id,))
+            conn.execute("DELETE FROM admin_appeal_decisions WHERE attempt_id=?", (attempt_id,))
 
     import assessment_workflow as workflow
     publication = workflow.sync_release(attempt_id)
@@ -2617,15 +2628,52 @@ def admin_review_attempt(attempt_id: str, body: AdminReviewInput, user=Depends(c
 
 
 
+def _appeals_eligible_admin_ids():
+    """Admin accounts that may decide appeals (staff role defaults to super admin)."""
+    rows = allr("""SELECT DISTINCT u.id FROM users u
+                   JOIN user_roles r ON r.user_id=u.id AND r.role='admin'
+                   LEFT JOIN admin_staff_roles s ON s.user_id=u.id
+                   LEFT JOIN admin_user_status st ON st.user_id=u.id
+                   WHERE (s.admin_role IS NULL OR s.admin_role IN ('super_admin','trust_safety_reviewer'))
+                     AND (st.status IS NULL OR st.status!='suspended')""")
+    return {row["id"] for row in rows}
+
+
 @router.get("/api/admin/appeals")
 def admin_appeals(user=Depends(current_user)):
     admin_only(user, "appeals")
-    rows = allr("""SELECT a.id AS attempt_id,a.appeal,a.kind,a.finished,u.id AS user_id,u.name AS candidate_name,
-                   u.email,d.decision,d.reason AS review_reason,d.decided_at,d.reviewer_id
+    rows = allr("""SELECT a.id AS attempt_id,a.appeal,a.kind,a.finished,u.id AS user_id,
+                          u.name AS candidate_name,u.email,
+                          r.decision AS review_decision,r.reviewer_id AS original_reviewer_id,
+                          ru.name AS original_reviewer_name,
+                          d.decision,d.reason AS review_reason,d.decided_at,
+                          d.reviewer_id AS appeal_reviewer_id,au.name AS appeal_reviewer_name
                    FROM attempts a JOIN users u ON u.id=a.user_id
+                   LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
+                   LEFT JOIN users ru ON ru.id=r.reviewer_id
                    LEFT JOIN admin_appeal_decisions d ON d.attempt_id=a.id
-                   WHERE a.appeal IS NOT NULL AND a.appeal!='' ORDER BY a.started DESC LIMIT 300""")
-    return {"items":[dict(r) for r in rows]}
+                   LEFT JOIN users au ON au.id=d.reviewer_id
+                   WHERE a.appeal IS NOT NULL AND a.appeal!=''
+                   ORDER BY CASE WHEN d.decision IS NULL OR d.decision='needs_more_info' THEN 0 ELSE 1 END,
+                            a.finished DESC LIMIT 300""")
+    other_admin_available = bool(_appeals_eligible_admin_ids() - {user["id"]})
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["open"] = item["decision"] in (None, "needs_more_info")
+        separation_blocked = (item["original_reviewer_id"] == user["id"] and other_admin_available)
+        item["can_decide"] = bool(item["open"] and item["review_decision"] == "invalidated" and not separation_blocked)
+        item["blocked_reason"] = (
+            "For separation of duties, an appeal against your own review must be decided by another administrator."
+            if separation_blocked else
+            "" if item["can_decide"] else
+            "This appeal already has a final decision."
+            if not item["open"] else
+            "This assessment is no longer invalidated, so the appeal is already resolved."
+        )
+        item["other_admin_available"] = other_admin_available
+        items.append(item)
+    return {"items": items}
 
 
 @router.post("/api/admin/appeals/{attempt_id}/decision")
@@ -2633,17 +2681,79 @@ def admin_appeal_decision(attempt_id: str, body: AdminReviewInput, user=Depends(
     admin_only(user, "appeals")
     if body.decision not in ("upheld", "overturned", "needs_more_info"):
         raise HTTPException(422, "Unsupported appeal decision")
-    row=one("SELECT id FROM attempts WHERE id=? AND appeal IS NOT NULL AND appeal!=''",(attempt_id,))
-    if not row: raise HTTPException(404,"Appeal not found")
-    prior=one("SELECT reviewer_id FROM admin_attempt_reviews WHERE attempt_id=?",(attempt_id,))
-    if prior and prior["reviewer_id"]==user["id"]:
-        raise HTTPException(409,"For separation of duties, an appeal should be reviewed by a different administrator.")
-    run("""INSERT INTO admin_appeal_decisions(attempt_id,decision,reason,reviewer_id,decided_at)
-           VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
-           reason=excluded.reason,reviewer_id=excluded.reviewer_id,decided_at=excluded.decided_at""",
-        (attempt_id,body.decision,body.reason.strip(),user["id"],time.time()))
-    audit(user["id"],"candidate_appeal_decided",attempt_id+":"+body.decision+":"+body.reason.strip())
-    return {"attempt_id":attempt_id,"decision":body.decision}
+    att = one("SELECT id,result,status FROM attempts WHERE id=? AND appeal IS NOT NULL AND appeal!=''", (attempt_id,))
+    if not att:
+        raise HTTPException(404, "Appeal not found")
+    review = one("SELECT decision,reason,reviewer_id FROM admin_attempt_reviews WHERE attempt_id=?", (attempt_id,))
+    if not review or review["decision"] != "invalidated":
+        raise HTTPException(409, "This appeal is already resolved because the assessment is no longer invalidated.")
+
+    eligible_admins = _appeals_eligible_admin_ids()
+    other_admin_available = bool(eligible_admins - {user["id"]})
+    single_admin_override = False
+    if review["reviewer_id"] == user["id"]:
+        if other_admin_available:
+            raise HTTPException(409, "For separation of duties, an appeal against your own review must be decided by another administrator.")
+        # A single-admin deployment cannot satisfy separation of duties. Record the
+        # override so the audit trail shows that the same reviewer closed the case.
+        single_admin_override = True
+
+    reason = body.reason.strip()
+    now = time.time()
+    publication = None
+    if body.decision == "overturned":
+        with db() as conn:
+            conn.execute("BEGIN" if DATABASE_URL else "BEGIN IMMEDIATE")
+            locked = conn.execute("SELECT result FROM attempts WHERE id=?" + (" FOR UPDATE" if DATABASE_URL else ""), (attempt_id,)).fetchone()
+            result = json.loads(locked["result"] or "{}")
+            # Invalidation rejected every response mark. An overturn restores marks
+            # a human had already approved; drafts that never had human marks stay
+            # pending instead of being silently promoted to verified scores.
+            conn.execute("""UPDATE answer_evaluations SET status='approved',reviewed_by=?,reviewed_at=?
+                            WHERE attempt_id=? AND status='rejected' AND final_marks IS NOT NULL""",
+                         (user["id"], now, attempt_id))
+            conn.execute("""UPDATE answer_evaluations SET status='pending_approval'
+                            WHERE attempt_id=? AND status='rejected' AND final_marks IS NULL""",
+                         (attempt_id,))
+            evaluations = [evaluation_view(e) for e in conn.execute(
+                "SELECT * FROM answer_evaluations WHERE attempt_id=?", (attempt_id,)).fetchall()]
+            if result.get("question_results"):
+                result = recompute_attempt_scores(result, evaluations)
+            result.update({
+                "review_status": "approved", "human_review_decision": "approved",
+                "human_review_reason": "Appeal overturned: " + reason,
+                "reviewed_at": now, "reviewer_id": user["id"],
+                "manual_review_required": any(e["status"] == "pending_approval" for e in evaluations),
+            })
+            conn.execute("UPDATE attempts SET result=? WHERE id=?", (json.dumps(result), attempt_id))
+            conn.execute("""INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at)
+                            VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
+                            reason=excluded.reason,reviewer_id=excluded.reviewer_id,reviewed_at=excluded.reviewed_at""",
+                         (attempt_id, "approved", "Appeal overturned: " + reason, user["id"], now))
+            conn.execute("""INSERT INTO admin_appeal_decisions(attempt_id,decision,reason,reviewer_id,decided_at)
+                            VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
+                            reason=excluded.reason,reviewer_id=excluded.reviewer_id,decided_at=excluded.decided_at""",
+                         (attempt_id, body.decision, reason, user["id"], now))
+    else:
+        run("""INSERT INTO admin_appeal_decisions(attempt_id,decision,reason,reviewer_id,decided_at)
+               VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
+               reason=excluded.reason,reviewer_id=excluded.reviewer_id,decided_at=excluded.decided_at""",
+            (attempt_id, body.decision, reason, user["id"], now))
+
+    import assessment_workflow as workflow
+    if body.decision == "overturned":
+        publication = workflow.sync_release(attempt_id)
+    state = publication["publication"] if publication else workflow.review_state(attempt_id)
+    audit(user["id"], "candidate_appeal_decided", attempt_id + ":" + body.decision + ":" + reason)
+    if single_admin_override:
+        audit(user["id"], "appeal_single_admin_override", attempt_id)
+    return {
+        "attempt_id": attempt_id, "decision": body.decision,
+        "publication": state,
+        "passport_id": publication["passport_id"] if publication else None,
+        "release_id": publication["release_id"] if publication else None,
+        "single_admin_override": single_admin_override,
+    }
 
 
 @router.get("/api/admin/phase-two-requests")
@@ -3407,6 +3517,73 @@ def admin_console_set_staff_role(user_id: int, body: AdminStaffRoleInput, user=D
         (user_id,body.admin_role,user["id"],time.time()))
     audit(user["id"],"admin_staff_role_changed",str(user_id)+":"+body.admin_role)
     return {"user_id":user_id,"admin_role":body.admin_role}
+
+
+def _staff_target(user_id):
+    return one("""SELECT u.id,u.name,u.email,COALESCE(s.admin_role,'super_admin') AS admin_role
+                  FROM users u JOIN user_roles r ON r.user_id=u.id AND r.role='admin'
+                  LEFT JOIN admin_staff_roles s ON s.user_id=u.id WHERE u.id=?""", (user_id,))
+
+
+def _super_admin_ids():
+    rows = allr("""SELECT DISTINCT u.id FROM users u
+                   JOIN user_roles r ON r.user_id=u.id AND r.role='admin'
+                   LEFT JOIN admin_staff_roles s ON s.user_id=u.id
+                   LEFT JOIN admin_user_status st ON st.user_id=u.id
+                   WHERE (s.admin_role IS NULL OR s.admin_role='super_admin')
+                     AND (st.status IS NULL OR st.status!='suspended')""")
+    return {row["id"] for row in rows}
+
+
+def _guard_last_super_admin(target, action):
+    if target["admin_role"] == "super_admin" and not (_super_admin_ids() - {target["id"]}):
+        raise HTTPException(409, f"At least one active Super Admin must remain; {action} blocked.")
+
+
+@router.post("/api/admin/console/staff/{user_id}/revoke")
+def admin_console_revoke_staff(user_id: int, user=Depends(current_user)):
+    """Remove admin access while keeping the person's account and history."""
+    admin_only(user, "staff")
+    target = _staff_target(user_id)
+    if not target:
+        raise HTTPException(404, "Provisioned admin staff account not found")
+    if user_id == user["id"]:
+        raise HTTPException(409, "You cannot revoke your own admin access")
+    _guard_last_super_admin(target, "revoking this admin")
+    run("DELETE FROM user_roles WHERE user_id=? AND role='admin'", (user_id,))
+    run("DELETE FROM admin_staff_roles WHERE user_id=?", (user_id,))
+    revoke_all_sessions(user_id)
+    audit(user["id"], "admin_staff_revoked", f"{user_id}:{target['email']}:{target['admin_role']}")
+    return {"revoked": True, "user_id": user_id}
+
+
+@router.delete("/api/admin/console/staff/{user_id}")
+def admin_console_delete_staff(user_id: int, user=Depends(current_user)):
+    """Delete a provisioned admin account and its linked data."""
+    admin_only(user, "staff")
+    target = _staff_target(user_id)
+    if not target:
+        raise HTTPException(404, "Provisioned admin staff account not found")
+    if user_id == user["id"]:
+        raise HTTPException(409, "You cannot delete your own admin account")
+    _guard_last_super_admin(target, "deleting this admin")
+    import cv_store
+    from main import purge_user_data
+    try:
+        cv_store.delete_user_documents(user_id)
+    except Exception:
+        log.exception("Could not remove CV files for deleted admin %s", user_id)
+    avatar = one("SELECT storage_key FROM candidate_avatars WHERE user_id=?", (user_id,))
+    if avatar:
+        try:
+            from storage import get_storage
+            get_storage().delete(avatar["storage_key"])
+        except Exception:
+            log.exception("Could not remove avatar for deleted admin %s", user_id)
+    purge_user_data(user_id)
+    run("DELETE FROM users WHERE id=?", (user_id,))
+    audit(user["id"], "admin_staff_deleted", f"{user_id}:{target['email']}:{target['admin_role']}")
+    return {"deleted": True, "user_id": user_id}
 
 @router.get("/api/admin/console/me")
 def admin_console_me(user=Depends(current_user)):

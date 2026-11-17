@@ -289,6 +289,7 @@
 .ws-cv-error { padding: 20px; font-size: 13px; color: #9c3f3c; }
 .ws-notifications .assessment-notifications { position: static; }
 .ws-notifications .assessment-notification-panel { position: static; width: 100%; max-height: none; box-shadow: none; margin-top: 12px; }
+.ws-notifications .assessment-notification-empty { margin: 10px 0 0; font-size: 12px; color: #5c7480; }
 .cr-onboard { padding: 90px 20px 35px; background: radial-gradient(ellipse at 50% 0, #dcece5, transparent 65%), #f5f7fa; }
 .cr-onboard-card { width: min(600px, 100%); padding: 32px; }
 .cr-onboard-card h1 { max-width: none; }

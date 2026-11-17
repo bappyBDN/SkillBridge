@@ -9,7 +9,7 @@
 | Consent screen | `Consent` component, `POST /api/consent` (INTG-01) |
 | Learning path with sources, honest empty | `engine.build_path` (LRN-01/02/03) |
 | Re-test, uplift, immutable result per attempt | `/api/uplift`, attempts stored separately (LRN-06, ASM-12) |
-| Skill Passport shareable/revocable/signed | `/api/passport`, `/api/public/passport/{id}` (PSP-01/03) |
+| Skill Passport auto-issued after review, shareable/revocable/signed | `assessment_workflow.sync_release`, `main.create_passport_for_attempt`, `DELETE /api/passport/{id}`, `/api/public/passport/{id}` (PSP-01/03) |
 | Bangla/English toggle | `frontend/src/i18n.js` (L10N-01) |
 | Data export/delete | `/api/me/export`, `DELETE /api/me` (AUTH-08) |
 | Mock items labelled | Banner + `chip-mock` |
