@@ -3269,13 +3269,14 @@ def generate_assessment_blueprint(u=Depends(current_user)):
     coverage = G.skill_coverage(rows)
     blueprint_id = uuid.uuid4().hex
     snapshot = {**result, "user_id": u["id"], "blueprint_id": blueprint_id,
+                "mode": "profile_retake",
                 "skill_coverage": {s.skill_id: coverage.get(s.skill_id, {}) for s in skills}}
     run("INSERT INTO assessment_blueprints(id,user_id,status,payload,created) VALUES (?,?,?,?,?)",
         (blueprint_id, u["id"], result["status"], json.dumps(snapshot), time.time()))
     audit(u["id"], "assessment_blueprint_generated",
           f"{blueprint_id};questions={result['total_questions']};status={result['status']};ms={result['retrieval_ms']};excluded={len(result.get('excluded_ids') or [])};uncovered={len(result.get('uncovered_skills') or [])}")
     return {
-        "blueprint_id": blueprint_id, "status": result["status"],
+        "blueprint_id": blueprint_id, "status": result["status"], "mode": "profile_retake",
         "fundamental_count": result["fundamental_count"], "cv_count": result["cv_count"],
         "total_questions": result["total_questions"], "skills": result["skills"],
         "covered_skill_ids": result.get("covered_skill_ids", []),
@@ -3299,8 +3300,9 @@ class JobBlueprintRequest(BaseModel):
 
 
 @app.post("/api/assessment/job-blueprint")
+@app.post("/api/assessment/initial-blueprint")
 def generate_job_blueprint(body: Optional[JobBlueprintRequest] = None, u=Depends(current_user)):
-    """Build the 40-question job-specific blueprint from approved questions only.
+    """Build the Initial CV + fundamentals exam (old job-blueprint URL is an alias).
 
     No question is fabricated: the policy selector returns ``question_bank_incomplete``
     with explicit shortages when a quota cannot be met. The client never receives
@@ -3309,7 +3311,7 @@ def generate_job_blueprint(body: Optional[JobBlueprintRequest] = None, u=Depends
     need_consent(u)
     prof = one("SELECT redacted,confirmed FROM profiles WHERE user_id=?", (u["id"],))
     if not prof or not prof["redacted"]:
-        raise HTTPException(409, "Upload and analyse your CV before generating a job-specific assessment")
+        raise HTTPException(409, "Upload and analyse your CV before generating the Initial exam")
     confirmed = set(json.loads(prof["confirmed"] or "[]")) if prof["confirmed"] else set()
     if not confirmed:
         raise HTTPException(409, "Confirm your CV skills before generating the assessment")
@@ -3338,16 +3340,17 @@ def generate_job_blueprint(body: Optional[JobBlueprintRequest] = None, u=Depends
     if not track:
         raise HTTPException(422, f"No assessment budget is configured for {department}")
 
-    job_skills = [entry["skill"] for entry in JOB.get("required", []) if entry.get("skill")]
+    import enterprise as admin_data
+    admin_data._seed_question_bank()
     rows = allr("SELECT * FROM question_bank WHERE status='active' AND subcategory != 'Legacy curated'")
     result = exam_policy.plan_job_exam(
         rows, profile_data, department=department, track=track,
-        confirmed_skills=sorted(confirmed), job_skills=job_skills,
+        confirmed_skills=sorted(confirmed), job_skills=[],
         requested_skill_ids=(body.requested_skill_ids if body else []),
     )
     if result["status"] != "ready":
         return {
-            "status": result["status"], "department": department,
+            "status": result["status"], "department": department, "mode": "initial_cv_fundamentals",
             "total_questions": result["total_questions"],
             "sections": result["sections"], "shortages": result["shortages"],
             "message": "The approved question bank cannot fill every quota yet. No questions were fabricated.",
@@ -3357,13 +3360,15 @@ def generate_job_blueprint(body: Optional[JobBlueprintRequest] = None, u=Depends
     # The 40-minute window is a hard product budget. Per-question allocation is
     # planning metadata, not the attempt timer.
     snapshot = {**result, "user_id": u["id"], "blueprint_id": blueprint_id,
-                "mode": "job_specific", "estimated_duration_seconds": result["time_budget_seconds"]}
+                 "mode": "initial_cv_fundamentals", "estimated_duration_seconds": exam_policy.TIME_BUDGET_SECONDS,
+                 "policy": {"version": "initial_cv_fundamentals_v1", "question_count": exam_policy.TOTAL_QUESTIONS,
+                            "duration_seconds": exam_policy.TIME_BUDGET_SECONDS, "sections": result["sections"]}}
     run("INSERT INTO assessment_blueprints(id,user_id,status,payload,created) VALUES (?,?,?,?,?)",
         (blueprint_id, u["id"], result["status"], json.dumps(snapshot), time.time()))
     audit(u["id"], "job_assessment_blueprint_generated",
           f"{blueprint_id};department={department};questions={result['total_questions']};coding={result['coding_tasks']};clusters={len(result['clusters'])}")
     return {
-        "blueprint_id": blueprint_id, "status": result["status"], "mode": "job_specific",
+        "blueprint_id": blueprint_id, "status": result["status"], "mode": "initial_cv_fundamentals",
         "department": department, "total_questions": result["total_questions"],
         "sections": result["sections"], "time_budget_seconds": result["time_budget_seconds"],
         "coding_tasks": result["coding_tasks"], "sql_questions": result["sql_questions"],
@@ -3427,11 +3432,14 @@ def get_assessment_blueprint(blueprint_id: str, u=Depends(current_user)):
     if not row:
         raise HTTPException(404, "Assessment blueprint not found")
     payload = json.loads(row["payload"])
+    sections = payload.get("sections", {})
     return {"blueprint_id": blueprint_id, "status": row["status"],
+            "mode": payload.get("mode"), "department": payload.get("department"),
             "total_questions": payload["total_questions"],
-            "fundamental_count": payload["fundamental_count"], "cv_count": payload["cv_count"],
+            "fundamental_count": payload.get("fundamental_count", sections.get("fundamentals", 0)),
+            "cv_count": payload.get("cv_count", sections.get("cv_clusters", 0)), "sections": sections,
             "estimated_duration_seconds": payload["estimated_duration_seconds"],
-            "retrieval_ms": payload["retrieval_ms"], "shortages": payload["shortages"],
+            "retrieval_ms": payload.get("retrieval_ms"), "shortages": payload.get("shortages", []),
             "created": row["created"]}
 
 
@@ -3722,7 +3730,11 @@ def sync_skill_question_edges():
     return len(edges)
 
 
-def unlimited_exam_user(uid):
+def unlimited_exam_user(uid, state=None):
+    # New Initial exams always use the fixed budget, including demo accounts.
+    # Existing saved exams keep their previous timing behavior.
+    if state and state.get("mode") == "initial_cv_fundamentals":
+        return False
     user = one("SELECT email FROM users WHERE id=?", (uid,))
     return bool(user and (user["email"] or "").strip().lower() in UNLIMITED_EXAM_EMAILS)
 
@@ -3760,7 +3772,7 @@ def attempt_expired(att) -> bool:
 
 def view(att, include_session=False):
     st = json.loads(att["state"])
-    unlimited_time = unlimited_exam_user(att["user_id"])
+    unlimited_time = unlimited_exam_user(att["user_id"], st)
     session = {"session_id": att.get("session_id") if include_session else None,
                "last_event_seq": int(att.get("last_event_seq") or 0)}
     if st.get("graphrag"):
@@ -3793,6 +3805,7 @@ def view(att, include_session=False):
             "graphrag": True, "blueprint_id": st["blueprint_id"], "question": public,
             "all_questions": all_questions, "answers": st.get("answers", {}),
             "page": page, "question_index": index, "duration_seconds": duration,
+            "mode": st.get("mode"), "department": st.get("department"),
             "navigator": [
                 {
                     "number": position + 1,
@@ -4119,16 +4132,25 @@ def require_screen_share(att_id):
 
 class StartAttempt(BaseModel):
     blueprint_id: Optional[str] = None
+    resume_attempt_id: Optional[str] = None
 
 
 @app.post("/api/attempts")
 def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
     need_consent(u)
-    unlimited_time = (u.get("email") or "").strip().lower() in UNLIMITED_EXAM_EMAILS
+    if b and b.resume_attempt_id:
+        requested = get_att(b.resume_attempt_id, u["id"])
+        if requested["status"] != "active":
+            return view(requested)
     act = one("SELECT * FROM attempts WHERE user_id=? AND status='active'", (u["id"],))
+    if b and b.resume_attempt_id and (not act or act["id"] != b.resume_attempt_id):
+        raise HTTPException(409, "The saved attempt is no longer active. Refresh your assessment status.")
     if act:
+        unlimited_time = unlimited_exam_user(u["id"], json.loads(act["state"]))
         if not unlimited_time and attempt_expired(dict(act)):
             finalize(dict(act), json.loads(act["state"]))
+            if b and b.resume_attempt_id:
+                return view(get_att(act["id"], u["id"]))
         else:
             # A fresh page/session takes ownership; the previous tab is rejected from this point.
             sid = secrets.token_urlsafe(32)
@@ -4148,8 +4170,14 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
         selected = payload.get("questions") or []
         if not selected or len(selected) != payload.get("total_questions"):
             raise HTTPException(409, "Assessment blueprint validation failed")
+        initial_mode = payload.get("mode") in ("initial_cv_fundamentals", "job_specific")
+        import exam_policy
+        if initial_mode and len(selected) != exam_policy.TOTAL_QUESTIONS:
+            raise HTTPException(409, "Initial exam requires exactly 40 approved questions")
         st = {"graphrag": True, "blueprint_id": b.blueprint_id, "selected_questions": selected,
-              "question_index": 0, "answers": {}, "duration_seconds": int(payload["estimated_duration_seconds"]),
+              "mode": payload.get("mode", "profile_retake"), "department": payload.get("department"),
+              "sections": payload.get("sections", {}), "policy": payload.get("policy", {}),
+              "question_index": 0, "answers": {}, "duration_seconds": exam_policy.TIME_BUDGET_SECONDS if initial_mode else int(payload["estimated_duration_seconds"]),
               "served_at": time.time(), "question_viewed_at": time.time(), "question_time_seconds": {}, "seed": seed}
         st["current"] = selected[0]["id"]
     else:
@@ -4233,7 +4261,7 @@ def answer(aid: str, b: Ans, u=Depends(current_user)):
     if att["status"] != "active": raise HTTPException(409, "Attempt already finished")
     require_screen_share(aid)
     st = json.loads(att["state"])
-    if not unlimited_exam_user(u["id"]) and attempt_expired(att):      # server owns the timer
+    if not unlimited_exam_user(u["id"], st) and attempt_expired(att):      # server owns the timer
         finalize(att, st); return view(get_att(aid, u["id"]))
     if st.get("graphrag"):
         question = next((q for q in st["selected_questions"] if q["id"] == b.question_id), None)

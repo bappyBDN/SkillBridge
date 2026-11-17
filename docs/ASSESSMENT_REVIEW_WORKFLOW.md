@@ -1,5 +1,13 @@
 # Assessment evaluation, review and publication
 
+## Exam setup and placement
+
+- **Initial exam** replaces the former job-specific option: 40 approved questions (20 fundamentals, 16 CV-skill questions, 4 project/scenario probes), with a 2,400-second server budget, including for demo accounts. Selection uses the confirmed CV/profile and department, not the prototype job's skill list. `POST /api/assessment/initial-blueprint` is the descriptive URL; `/job-blueprint` remains an alias for older clients.
+- **Profile exam** is now the retake flow: 25 fundamentals plus 5 questions per covered confirmed CV skill. Its duration is calculated from its selected questions. Academic/honesty review, cooldown, attempt caps and credit requirements are unchanged. Previously saved exams retain their questions and deadline.
+- Setup has exactly two browser permission steps: screen sharing and full-screen, each triggered by its own user click. Start remains disabled until both are active on a supported, online desktop browser. No webcam, facial identity check, microphone or live camera monitoring is used in R0. Cancelling permission shows retry instructions; browser permissions cannot be granted automatically by the app.
+- Resume posts the saved attempt ID directly without generating another blueprint. It preserves answers, question position and the original timer; an expired saved attempt finishes rather than starting an adaptive replacement. A completed earlier retake no longer hides setup for a later eligible retake.
+- Missing bank quotas are displayed explicitly. Neither exam silently falls back to the old 10-question adaptive format. The live assessment provides a **Quit assessment** action even if screen sharing has stopped; quitting ends without a score.
+
 ## Authoritative flow
 
 1. Submitting an assessment stores the original answers and finishes the attempt. MCQ and reference-query SQL checks run immediately. Explanation, coding, scenario and other descriptive responses receive deterministic stored-rubric drafts from `backend/engine.py`, stored in `answer_evaluations` as `pending_approval`.

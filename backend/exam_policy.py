@@ -23,6 +23,7 @@ from collections import Counter
 import graphrag as G
 
 TOTAL_QUESTIONS = 40
+TIME_BUDGET_SECONDS = 40 * 60
 FUNDAMENTAL_QUESTIONS = 20
 CV_QUESTIONS = 16
 PROJECT_PROBES = 4
@@ -640,7 +641,7 @@ def plan_job_exam(
         "total_questions": len(selected),
         "hard_maximum": TOTAL_QUESTIONS,
         "duration_minutes": 40,
-        "time_budget_seconds": 40 * 60,
+        "time_budget_seconds": TIME_BUDGET_SECONDS,
         "estimated_duration_seconds": planned_seconds,
         "authoring_duration_seconds": authoring_seconds,
         "over_time_budget": planned_seconds > 40 * 60,

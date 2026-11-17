@@ -2484,7 +2484,7 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
     setErr(null);
     try {
       await api(`/attempts/${aid}/quit`, { method: "POST", body: { session_id: sessionId.current } });
-      await onFinished(aid);
+      await onFinished(aid, "quit");
     } catch (e) {
       setErr(e);
       setQuitting(false);
@@ -2507,7 +2507,6 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
         <progress value={q.index} max={q.total} />
         <span className={"timer" + (!unlimitedTime && left < 120 ? " low" : "")}>{t("timeLeft")}: {unlimitedTime ? "Unlimited" : fmt(left)}</span>
       </div>
-      <LocalProctor cameraStream={cameraStream} aid={aid} sessionId={sessionId} nextSeq={nextSeq} report={report} flushEventsForEvidence={flushEvents} />
       <div className={"exam-integrity-banner" + (shareActive ? " active" : " warning")} role="status">
         <strong>{shareActive ? t("shareActive") : t("shareStopped")}</strong>
         <span>{t("sharePrivacy")}</span>
@@ -2572,11 +2571,11 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   );
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [quitting, setQuitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [sqlOut, setSqlOut] = useState(null);
   const [voiceFlags, setVoiceFlags] = useState(0);
   const [voiceActive, setVoiceActive] = useState(false);
-  const [cameraDetections, setCameraDetections] = useState({ face: "Checking", objects: "Checking" });
   const voiceTimer = useRef(null);
   const [marked, setMarked] = useState(() => {
     try {
@@ -2813,6 +2812,16 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       setBusy(false);
     }
   };
+  const quit = async () => {
+    if (!window.confirm("Quit this assessment? It will end without a score and cannot be resumed.")) return;
+    setQuitting(true);
+    setErr(null);
+    try {
+      await api(`/attempts/${aid}/quit`, { method: "POST", body: { session_id: sessionId.current } });
+      await onFinished(aid, "quit");
+    } catch (e) { setErr(e); }
+    finally { setQuitting(false); }
+  };
   if (!q) return <p>Loading assessment…</p>;
   const isChoice = ["mcq", "multiple choice"].includes(
     String(q.question_type).toLowerCase(),
@@ -2835,15 +2844,13 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     ? "javascript"
     : "python";
   const navigator = v.navigator || [];
-  const cameraLive = Boolean(
-    cameraStream?.getVideoTracks?.().some((track) => track.readyState === "live"),
-  );
   return (
     <section className="tech-exam exam2">
       <MicMonitor stream={micStream} onVoice={onVoice} />
       <div className="exam2-top">
         <div className="exam2-top-q">
           <span className="exam2-top-icon">▤</span>
+          <span>{initial.mode === "initial_cv_fundamentals" || initial.mode === "job_specific" ? "Initial exam" : initial.mode === "profile_retake" ? "Profile retake exam" : "Assessment"}</span>
           <b>Question {currentNumber} of {v.total}</b>
           {syncing && <span className="exam2-syncing">saving…</span>}
         </div>
@@ -2893,8 +2900,11 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
             <span><i className="dot skipped" /> Skipped</span>
             <span><i className="flag" /> Flagged</span>
           </div>
-          <button type="button" className="exam2-submit" onClick={submit} disabled={busy}>
+          <button type="button" className="exam2-submit" onClick={submit} disabled={busy || quitting}>
             {busy ? "Submitting…" : "Submit assessment"}
+          </button>
+          <button type="button" className="btn ghost exam-quit" onClick={quit} disabled={busy || quitting}>
+            {quitting ? "Quitting…" : "Quit assessment"}
           </button>
         </aside>
         <main className="tech-main">
@@ -3031,41 +3041,12 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
 
         <aside className="tech-side exam2-camera">
           <div className="exam2-camera-head">
-            <b><span className="exam2-cam-dot" /> Camera Monitoring</b>
-            <span className={"exam2-active" + (cameraLive ? "" : " off")}>
-              {cameraLive ? "Active" : "Offline"}
-            </span>
-          </div>
-          <LocalProctor
-            inline
-            cameraStream={cameraStream}
-            aid={aid}
-            sessionId={sessionId}
-            nextSeq={integrity.nextSeq}
-            report={integrity.report}
-            flushEventsForEvidence={integrity.flushEvents}
-            onDetections={setCameraDetections}
-          />
-          <div className={"exam2-face " + (cameraDetections.face === "One face" ? "ok" : "warn")}>
-            <span className="exam2-face-icon" aria-hidden="true">
-              {cameraDetections.face === "One face" ? "✓" : "◉"}
-            </span>
-            <div>
-              <b>
-                {cameraDetections.face === "One face"
-                  ? "Face detected"
-                  : cameraDetections.face === "No face"
-                    ? "Face not detected"
-                    : "Checking your camera…"}
-              </b>
-              <span>You are being monitored for fairness.</span>
-            </div>
+            <b>Assessment setup</b>
           </div>
           <IntegrityAlerts alerts={integrity.alerts} inline />
           <div className="exam2-camera-status">
             <span className={integrity.shareActive ? "ok" : "bad"}>▣ Screen</span>
             <span className={integrity.fullscreenActive ? "ok" : "bad"}>⛶ Full screen</span>
-            <span className={micStream ? "ok" : "bad"}>🎙 Voice</span>
             <span className={integrity.tabVisible ? "ok" : "warn"}>◱ Tab</span>
             <span className="ok">⧉ Clipboard off</span>
             {voiceActive && <span className="warn live">Voice detected</span>}
@@ -3092,10 +3073,10 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
             </div>
           )}
           <div className="exam2-tip">
-            <b>Keep your face in view</b>
+            <b>Keep sharing and full-screen active</b>
             <span>
-              You are being monitored for fairness. Switching tabs or leaving
-              full-screen is logged for review.
+              No camera or face analysis. Tab changes and leaving full-screen
+              are advisory signals for human review, not automatic failure.
             </span>
           </div>
         </aside>
@@ -3932,7 +3913,7 @@ function IdentityCheck({ cameraStream, avatarUrl, status, onChange, onAvatarUplo
 
 function SetupStep({ done, index, title, hint, actionLabel, onAction, disabled }) {
   return (
-    <div className={"exam-step" + (done ? " ready" : "")}>
+    <div className={"exam-step" + (done ? " ready" : "")} role="group" aria-label={`${title}: ${done ? "active" : "required"}`}>
       <span className="exam-step-badge" aria-hidden="true">{done ? "✓" : index}</span>
       <div className="exam-step-body">
         <strong>{title}</strong>
@@ -3951,19 +3932,12 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const [err, setErr] = useState(null);
   const [banner, setBanner] = useState("");
   const [screenStream, setScreenStream] = useState(null);
-  const [cameraStream, setCameraStream] = useState(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [micStream, setMicStream] = useState(null);
-  const [micReady, setMicReady] = useState(false);
-  const avatarUrl = useAvatar(st.has_avatar, st.avatar_updated, st.user?.email || "");
-  const [identityResult, setIdentityResult] = useState({ status: "pending", similarity: null, distance: null, reason: "" });
-  const [identityAck, setIdentityAck] = useState(false);
-  const identityPass = identityResult.status === "verified"
-    || (["flagged", "pending"].includes(identityResult.status) && identityAck);
+  const [finishedId, setFinishedId] = useState(null);
   const [shareReady, setShareReady] = useState(false);
   const [fullscreenReady, setFullscreenReady] = useState(Boolean(document.fullscreenElement));
   const [setupBusy, setSetupBusy] = useState(false);
-  const [jobMode, setJobMode] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
+  const initialMode = kind === "pre";
   const [jobDept, setJobDept] = useState("CS/IT");
   const [jobSkills, setJobSkills] = useState([]);
   const mobileDevice = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -3972,9 +3946,18 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     .filter((a) => a.status === "done")
     .sort((a, b) => (a.finished || 0) - (b.finished || 0));
   const latestDone = done.length ? done[done.length - 1] : null;
-  const unlimitedCandidate = (st.user?.email || "").trim().toLowerCase() === "i@gmail.com";
-  const mine = unlimitedCandidate ? null : (kind === "pre" ? latestDone : done.length > 1 ? latestDone : null);
+  const mine = finishedId ? { id: finishedId } : initialMode ? latestDone : null;
   const act = st.attempts.find((a) => a.status === "active");
+
+  useEffect(() => {
+    const syncNetwork = () => setOnline(navigator.onLine);
+    window.addEventListener("online", syncNetwork);
+    window.addEventListener("offline", syncNetwork);
+    return () => {
+      window.removeEventListener("online", syncNetwork);
+      window.removeEventListener("offline", syncNetwork);
+    };
+  }, []);
 
   // Keep the setup status in sync if the candidate exits full-screen.
   useEffect(() => {
@@ -4005,25 +3988,12 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     };
   }, [screenStream]);
 
-  // Revoke readiness immediately if the camera disconnects during setup.
-  useEffect(() => {
-    const track = cameraStream?.getVideoTracks()[0];
-    if (!track) return;
-    const onEnded = () => { setCameraReady(false); setCameraStream(null); setErr(new Error("Your webcam disconnected. Reconnect it and verify the camera before starting.")); };
-    track.addEventListener("ended", onEnded);
-    return () => track.removeEventListener("ended", onEnded);
-  }, [cameraStream]);
-
-  // Stop pending camera capture if setup is abandoned.
-  useEffect(() => () => { cameraStream?.getTracks().forEach(track => track.stop()); }, [cameraStream]);
-
   // Re-read browser state after the candidate returns from a permission picker
   // or exits/enters full-screen. This prevents a stale "not active" step.
   const resyncPermissions = useCallback(() => {
     setShareReady(Boolean(screenStream?.getVideoTracks().some((track) => track.readyState === "live")));
-    setCameraReady(Boolean(cameraStream?.getVideoTracks().some((track) => track.readyState === "live")));
     setFullscreenReady(Boolean(document.fullscreenElement));
-  }, [screenStream, cameraStream]);
+  }, [screenStream]);
   useEffect(() => {
     const sync = () => resyncPermissions();
     window.addEventListener("focus", sync);
@@ -4034,76 +4004,10 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     };
   }, [resyncPermissions]);
 
-  const enableCamera = async () => {
-    setErr(null);
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera access is not supported in this browser.");
-      const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-      // Permission + a live track are not enough: verify that the browser can
-      // actually decode camera frames before allowing the assessment to start.
-      const probe = document.createElement("video");
-      probe.muted = true;
-      probe.autoplay = true;
-      probe.playsInline = true;
-      probe.srcObject = media;
-      try {
-        await probe.play();
-        await new Promise((resolve, reject) => {
-          const deadline = Date.now() + 7000;
-          const checkFrame = () => {
-            if (probe.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && probe.videoWidth > 0 && probe.videoHeight > 0) return resolve();
-            if (Date.now() >= deadline) return reject(new Error("Camera permission was granted, but no live video frames were received. Check that your webcam is not being used by another application."));
-            requestAnimationFrame(checkFrame);
-          };
-          checkFrame();
-        });
-      } catch (probeError) {
-        media.getTracks().forEach(track => track.stop());
-        throw probeError;
-      } finally {
-        probe.pause();
-        probe.srcObject = null;
-      }
-      setCameraStream(media);
-      setCameraReady(true);
-    } catch (e) { setCameraReady(false); setErr(new Error(e?.name === "NotAllowedError" ? "Camera permission is required for this assessment." : e.message || "Unable to start camera.")); }
-  };
-
   // Stop a pending screen capture if the candidate leaves the setup screen.
   useEffect(() => () => {
     screenStream?.getTracks().forEach((track) => track.stop());
   }, [screenStream]);
-
-  // Optional microphone monitoring: an on-device loudness flag only.
-  const toggleMic = async () => {
-    setErr(null);
-    if (micStream) {
-      micStream.getTracks().forEach((track) => track.stop());
-      setMicStream(null);
-      setMicReady(false);
-      return;
-    }
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone access is not supported in this browser.");
-      const media = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      setMicStream(media);
-      setMicReady(true);
-    } catch (e) {
-      setMicReady(false);
-      setMicStream(null);
-      setErr(new Error(e?.name === "NotAllowedError" ? "Microphone permission was denied. Speaking alerts stay off." : e.message || "Unable to start the microphone."));
-    }
-  };
-  useEffect(() => {
-    const track = micStream?.getAudioTracks?.()[0];
-    if (!track) return;
-    const onEnded = () => { setMicReady(false); setMicStream(null); };
-    track.addEventListener("ended", onEnded);
-    return () => track.removeEventListener("ended", onEnded);
-  }, [micStream]);
-  useEffect(() => () => {
-    micStream?.getTracks().forEach((track) => track.stop());
-  }, [micStream]);
 
   // Ask for screen sharing in its own click so the browser can show its picker.
   const enableScreenShare = async () => {
@@ -4123,7 +4027,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       setShareReady(videoTrack.readyState === "live");
     } catch (e) {
       setShareReady(false);
-      setErr(e?.name === "NotAllowedError" ? new Error(t("shareRequired")) : e);
+      setErr(e?.name === "NotAllowedError" ? new Error(t("sharePermissionDenied")) : e);
     }
   };
 
@@ -4166,7 +4070,6 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     setErr(null);
     const sharing = screenStream?.getVideoTracks().some((track) => track.readyState === "live");
     const fullscreen = Boolean(document.fullscreenElement);
-    const cameraLive = Boolean(cameraStream?.getVideoTracks().some((track) => track.readyState === "live"));
     setShareReady(Boolean(sharing));
     setFullscreenReady(fullscreen);
     const missing = [];
@@ -4175,8 +4078,6 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     if (!navigator.onLine) missing.push("a network connection");
     if (!sharing) missing.push("screen sharing");
     if (!fullscreen) missing.push("full-screen mode");
-    if (!cameraReady || !cameraLive) missing.push("the webcam");
-    if (!identityPass) missing.push("the identity check (tick the acknowledgement if it could not run)");
     if (missing.length) {
       setErr(new Error("Cannot start yet: " + missing.join(", ") + "."));
       return;
@@ -4184,83 +4085,55 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     setSetupBusy(true);
     setBanner("");
     try {
-      // Prefer the CV-based GraphRAG assessment; fall back to adaptive.
+      // Resume the saved attempt directly; never build or substitute an exam.
       let blueprintId = null;
-      if (jobMode) {
-        const bp = await api("/assessment/job-blueprint", {
+      if (!act && initialMode) {
+        const bp = await api("/assessment/initial-blueprint", {
           method: "POST",
           body: { department: jobDept, requested_skill_ids: jobSkills },
         });
         if (!bp || bp.status !== "ready") {
           setBanner(
-            bp?.message ||
-              "The 40-question job-specific bank cannot fill every quota yet. No questions were fabricated; try the profile exam or ask an admin to activate more approved questions.",
+            (bp?.message || "The Initial exam needs more approved questions. No questions were fabricated.") +
+              (bp?.shortages?.length ? " Gaps: " + bp.shortages.map((gap) => `${gap.topic || gap.section}: ${gap.available ?? 0}/${gap.required ?? "?"}`).join("; ") + "." : ""),
           );
           return;
         }
         blueprintId = bp.blueprint_id;
-      } else {
-        try {
-          const bp = await api("/assessment/blueprint", { method: "POST" });
-          if (bp && bp.status === "ready") {
-            blueprintId = bp.blueprint_id;
-            if (bp.uncovered_skills?.length) {
-              setBanner(
-                "Some confirmed skills have no approved practice questions yet: " +
-                  bp.uncovered_skills.map((x) => x.label).join(", ") +
-                  ". The assessment will cover the available skills.",
-              );
-            }
-          } else if (bp) {
+      } else if (!act) {
+        const bp = await api("/assessment/blueprint", { method: "POST" });
+        if (bp && bp.status === "ready") {
+          blueprintId = bp.blueprint_id;
+          if (bp.uncovered_skills?.length) {
             setBanner(
-              "The GraphRAG question bank is not complete yet (" +
-                (bp.shortages?.length || 0) +
-                " coverage gaps). Using the standard adaptive assessment so you can still verify your skills.",
+              "Some confirmed skills have no approved practice questions yet: " +
+                bp.uncovered_skills.map((x) => x.label).join(", ") +
+                ". The assessment will cover the available skills.",
             );
           }
-        } catch (e) {
-          if (st?.confirmed?.length) {
-            setBanner(
-              "GraphRAG assessment is unavailable for this profile (" +
-                (e.message || "unknown error") +
-                "). Using the standard adaptive assessment.",
-            );
-          }
-          blueprintId = null;
+        } else {
+          setBanner(bp?.message || "The Profile retake needs more approved questions. Ask an admin to complete the bank.");
+          return;
         }
+      }
+      if (!document.fullscreenElement || !screenStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+        resyncPermissions();
+        throw new Error("Screen sharing or full-screen stopped during setup. Restore both steps, then start again.");
       }
       const v = await api("/attempts", {
         method: "POST",
-        body: blueprintId ? { blueprint_id: blueprintId } : undefined,
+        body: act ? { resume_attempt_id: act.id } : { blueprint_id: blueprintId },
       });
       if (v.status === "active") {
-        let seq = v.last_event_seq || 0;
-        seq += 1;
-        await api(`/attempts/${v.attempt_id}/event`, {
-          method: "POST",
-          body: {
-            type: identityResult.status === "verified"
-              ? "identity_verified"
-              : identityResult.status === "flagged" ? "identity_mismatch" : "identity_skipped",
-            session_id: v.session_id,
-            seq,
-            client_ts: Date.now(),
-            metadata: {
-              similarity: identityResult.similarity ?? null,
-              distance: identityResult.distance ?? null,
-              reason: identityResult.reason || "",
-              model: "face-api",
-              local_only: true,
-            },
-          },
-        });
-        const body = { type: "screen_share_started", session_id: v.session_id, seq: seq + 1,
+        const body = { type: "screen_share_started", session_id: v.session_id, seq: (v.last_event_seq || 0) + 1,
           client_ts: Date.now(), metadata: { surface: screenStream.getVideoTracks()[0]?.getSettings?.().displaySurface || "unknown" } };
         await api(`/attempts/${v.attempt_id}/event`, { method: "POST", body });
         setActive({ ...v, last_event_seq: body.seq });
       } else {
         screenStream?.getTracks().forEach((track) => track.stop());
         setScreenStream(null);
+        if (v.status === "done") setFinishedId(v.attempt_id);
+        if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
         await refresh();
       }
     } catch (e) {
@@ -4268,11 +4141,10 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     } finally {
       setSetupBusy(false);
     }
-  }, [refresh, screenStream, cameraStream, cameraReady, t, identityResult, identityPass, jobMode, jobDept, jobSkills]);
-  const finished = async () => {
+  }, [refresh, screenStream, mobileDevice, browserSupported, act, initialMode, jobDept, jobSkills, resyncPermissions]);
+  const finished = async (aid, status = "done") => {
+    if (status === "done") setFinishedId(aid || active?.attempt_id);
     screenStream?.getTracks().forEach((track) => track.stop());
-    cameraStream?.getTracks().forEach((track) => track.stop());
-    micStream?.getTracks().forEach((track) => track.stop());
     setScreenStream(null);
     setActive(null);
     if (document.fullscreenElement && document.exitFullscreen)
@@ -4280,18 +4152,16 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     await refresh();
   };
 
-  if (active) return <ExamRun initial={active} screenStream={screenStream} cameraStream={cameraStream} micStream={micStream} onFinished={finished} onRestartShare={restartShare} />;
+  if (active) return <ExamRun initial={active} screenStream={screenStream} onFinished={finished} onRestartShare={restartShare} />;
   const setupRequirements = [
     { id: "desktop", label: "Desktop device", ok: !mobileDevice },
     { id: "browser", label: "Browser support", ok: browserSupported },
-    { id: "network", label: "Network", ok: navigator.onLine },
+    { id: "network", label: "Network", ok: online },
     { id: "share", label: "Screen sharing", ok: shareReady },
-    { id: "camera", label: "Webcam", ok: cameraReady },
     { id: "fullscreen", label: "Full-screen", ok: fullscreenReady },
-    { id: "identity", label: "Identity check", ok: identityPass },
   ];
   const setupMissing = setupRequirements.filter((item) => !item.ok).map((item) => item.label);
-  if (act && (act.kind === kind)) return (
+  if (act) return (
     <section className="card exam-setup">
       <header className="exam-setup-head">
         <span className="eyebrow">SYSTEM CHECK</span>
@@ -4309,17 +4179,8 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           disabled={setupBusy}
         />
         <SetupStep
-          done={cameraReady}
-          index={2}
-          title="Enable webcam for local AI analysis"
-          hint="Face, gaze and phone checks run in your browser. No video is uploaded or recorded."
-          actionLabel={cameraReady ? "Camera ready" : "Enable camera"}
-          onAction={enableCamera}
-          disabled={setupBusy}
-        />
-        <SetupStep
           done={fullscreenReady}
-          index={3}
+          index={2}
           title={t("fullscreenSetupStep")}
           hint={t("examSetupHint")}
           actionLabel={fullscreenReady ? t("fullscreenActive") : t("restartFullscreen")}
@@ -4327,26 +4188,17 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           disabled={setupBusy}
         />
       </div>
-      <div className={"exam-optional" + (micReady ? " on" : "")}>
-        <div>
-          <strong>Microphone monitoring <span className="optional-tag">ADVISORY</span></strong>
-          <span>Optional. Uses an on-device loudness level only; audio is never recorded, stored or uploaded. Signals are advisory and never fail you automatically.</span>
-        </div>
-        <button type="button" className="btn ghost sm" onClick={toggleMic} disabled={setupBusy}>
-          {micReady ? "Microphone on · turn off" : "Enable microphone"}
-        </button>
-      </div>
+      {setupMissing.length > 0 && <p className="note" role="status">Still required: {setupMissing.join(", ")}.</p>}
       <Err e={err} />
       <div className="exam-setup-actions">
-        <button className="btn" onClick={start} disabled={setupBusy || mobileDevice || !browserSupported || !navigator.onLine || !shareReady || !fullscreenReady || !cameraReady}>
+        <button className="btn" onClick={start} disabled={setupBusy || setupMissing.length > 0}>
           {setupBusy ? t("saving") : t("resume")}
         </button>
         <button type="button" className="btn ghost" onClick={resyncPermissions} disabled={setupBusy}>
           Re-check permissions
         </button>
-        <small>Screen sharing, webcam and full-screen must be active before you can resume. Integrity signals are advisory and reviewed by a person.</small>
+        <small>Enable screen sharing and full-screen to resume your saved exam. No camera or microphone is required.</small>
       </div>
-      <CameraPreview stream={cameraStream} />
     </section>
   );
   if (mine) return (
@@ -4360,13 +4212,13 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     <section className="card exam-setup">
       <header className="exam-setup-head">
         <span className="eyebrow">SYSTEM CHECK</span>
-        <h2>{kind === "pre" ? t("startTest") : t("steps").retest}</h2>
+        <h2>{initialMode ? "Initial exam" : "Profile retake exam"}</h2>
         <p>{kind === "pre" ? t("testIntro") : t("retestIntro")}</p>
       </header>
       <div className="system-check-strip">
         <span className={mobileDevice ? "bad" : "ok"}>{mobileDevice ? "✕ Desktop device required" : "✓ Desktop device"}</span>
         <span className={browserSupported ? "ok" : "bad"}>{browserSupported ? "✓ Browser APIs supported" : "✕ Screen sharing/full-screen unsupported"}</span>
-        <span className={navigator.onLine ? "ok" : "bad"}>{navigator.onLine ? "✓ Network available" : "✕ Network offline"}</span>
+        <span className={online ? "ok" : "bad"}>{online ? "✓ Network available" : "✕ Network offline"}</span>
       </div>
       <p className="exam-integrity-note">{t("examIntegrityIntro")}</p>
       <div className="exam-steps">
@@ -4380,17 +4232,8 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           disabled={setupBusy}
         />
         <SetupStep
-          done={cameraReady}
-          index={2}
-          title="Enable webcam for local AI analysis"
-          hint="The webcam is analysed in this browser only. Only alert logs and limited JPEG evidence snapshots may be uploaded; no continuous video or audio is recorded."
-          actionLabel={cameraReady ? "Camera ready" : "Enable camera"}
-          onAction={enableCamera}
-          disabled={setupBusy}
-        />
-        <SetupStep
           done={fullscreenReady}
-          index={3}
+          index={2}
           title={t("fullscreenSetupStep")}
           hint={t("examSetupHint")}
           actionLabel={fullscreenReady ? t("fullscreenActive") : t("restartFullscreen")}
@@ -4398,76 +4241,18 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           disabled={setupBusy}
         />
       </div>
-      <div className={"exam-optional" + (micReady ? " on" : "")}>
-        <div>
-          <strong>Microphone monitoring <span className="optional-tag">ADVISORY</span></strong>
-          <span>Optional. Uses an on-device loudness level only; audio is never recorded, stored or uploaded. Signals are advisory and reviewed by a person.</span>
-        </div>
-        <button type="button" className="btn ghost sm" onClick={toggleMic} disabled={setupBusy}>
-          {micReady ? "Microphone on · turn off" : "Enable microphone"}
-        </button>
-      </div>
-      <IdentityCheck
-        cameraStream={cameraStream}
-        avatarUrl={avatarUrl}
-        status={identityResult.status}
-        onChange={setIdentityResult}
-        onAvatarUploaded={refresh}
-        disabled={!cameraReady || setupBusy}
-      />
-      {identityResult.status === "flagged" && (
-        <label className="identity-ack">
-          <input
-            type="checkbox"
-            checked={identityAck}
-            onChange={(e) => setIdentityAck(e.target.checked)}
-          />
-          My live face did not match closely. Continue anyway and flag this attempt for human review.
-        </label>
-      )}
-      {cameraReady && identityResult.status === "pending" && (
-        <label className="identity-ack">
-          <input
-            type="checkbox"
-            checked={identityAck}
-            onChange={(e) => setIdentityAck(e.target.checked)}
-          />
-          I could not complete the facial identity check. Continue anyway and flag this attempt for human review.
-        </label>
-      )}
-      <div className={"exam-mode" + (jobMode ? " on" : "")}>
+      <div className="exam-mode on">
         <div className="exam-mode-head">
           <div>
-            <strong>Assessment mode</strong>
+            <strong>{initialMode ? "Initial exam · CV + fundamentals · 40 minutes" : "Retake · Profile exam"}</strong>
             <span>
-              <b>Profile exam</b> = the broad CV assessment: 25 core fundamentals plus
-              5 questions per confirmed CV skill, used for your skill passport and gap
-              report. <b>Job-specific exam</b> = a stricter 40-question / 40-minute
-              exam with 20 department fundamentals, 16 CV-cluster questions and 4
-              project probes, including one coding task.
+              {initialMode
+                ? "40 questions: 20 fundamentals, 16 CV-skill questions and 4 project/scenario probes. The server enforces a 40-minute limit."
+                : "The broad Profile exam: 25 fundamentals plus 5 questions per covered confirmed CV skill. Duration is based on the selected questions. Review approval, cooldown and retake credits still apply."}
             </span>
           </div>
-          <div className="exam-mode-switch" role="group" aria-label="Assessment mode">
-            <button
-              type="button"
-              className={!jobMode ? "on" : ""}
-              onClick={() => { setJobMode(false); setBanner(""); }}
-              disabled={setupBusy}
-            >
-              Profile exam
-            </button>
-            <button
-              type="button"
-              className={jobMode ? "on" : ""}
-              onClick={() => { setJobMode(true); setBanner(""); }}
-              disabled={setupBusy || !(st.confirmed?.length)}
-              title={!(st.confirmed?.length) ? "Confirm your CV skills first" : ""}
-            >
-              Job-specific exam
-            </button>
-          </div>
         </div>
-        {jobMode && (
+        {initialMode && (
           <div className="exam-mode-body">
             <label className="exam-mode-field">
               <span>Department</span>
@@ -4482,8 +4267,8 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
                 <span>{jobSkills.length}/5 selected</span>
               </div>
               <p>
-                Pick up to 5. The rest stay claimed and can be checked later in optional
-                short modules.
+                Optionally prioritize up to 5 confirmed CV skills. Other skills remain
+                claimed until they have been assessed.
               </p>
               <div className="exam-skill-picker">
                 {(() => {
@@ -4534,24 +4319,20 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
             {item.ok ? "✓" : "!"} {item.label}
           </span>
         ))}
-        <span className={"chip " + (micReady ? "chip-ok" : "chip-mid")}>
-          {micReady ? "✓" : "○"} Microphone (optional)
-        </span>
       </div>
       {setupMissing.length > 0 && (
         <p className="err">Still required before you can start: {setupMissing.join(", ")}.</p>
       )}
       <Err e={err} />
       <div className="exam-setup-actions">
-        <button className="btn" onClick={start} disabled={setupBusy}>
-          {setupBusy ? t("saving") : jobMode ? "Start job-specific exam · 40Q" : "Start profile exam"}
+        <button className="btn" onClick={start} disabled={setupBusy || setupMissing.length > 0}>
+          {setupBusy ? t("saving") : initialMode ? "Start Initial exam · 40 minutes" : "Start Profile retake exam"}
         </button>
         <button type="button" className="btn ghost" onClick={resyncPermissions} disabled={setupBusy}>
           Re-check permissions
         </button>
-        <small>Screen sharing, webcam, full-screen and the identity check must be complete. Microphone monitoring is optional.</small>
+        <small>Only screen sharing and full-screen are required. No camera, face check or microphone is used.</small>
       </div>
-      <CameraPreview stream={cameraStream} />
     </section>
   );
 }
