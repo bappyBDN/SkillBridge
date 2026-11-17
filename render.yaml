@@ -30,6 +30,12 @@ services:
         value: "false"
       - key: ENV
         value: production
+      # R1 proctored exam: camera, microphone, entire-screen and full-screen are
+      # mandatory. Set to r0 to serve the camera-free assessment instead.
+      - key: ASSESSMENT_PROCTORING_MODE
+        value: r1
+      - key: EVIDENCE_RETENTION_DAYS
+        value: "30"
       # CV extraction provider (LLM) with automatic failover.
       - key: AI_PROVIDER
         value: groq

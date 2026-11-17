@@ -9,6 +9,8 @@ EVIDENCE_RETENTION_DAYS=30
 
 Restart the backend (or recreate its Docker Compose service) after changing the environment. Compose already reads `.env`; direct Uvicorn deployments must set these environment variables in their service configuration. No AI provider key is required: camera models run on the candidate's device. Set `ASSESSMENT_PROCTORING_MODE=r0` to keep new attempts camera-free. Existing attempts retain their own policy snapshot.
 
+The Docker/Render entrypoint (`backend/start.sh`) enables R1 by default so the deployed product exposes camera, microphone, entire-screen and full-screen setup. The Python default remains `r0` for direct local runs and tests; an explicit `ASSESSMENT_PROCTORING_MODE=r0` still opts a deployment out.
+
 ## Mandatory setup
 
 1. Read the dedicated R1 notice and explicitly accept `r1-proctoring-v1` consent. Camera/microphone controls are disabled before consent.

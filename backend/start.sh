@@ -2,6 +2,13 @@
 # SkillBridge start script (Render / single container).
 set -e
 
+# The deployed product runs the consented R1 proctored exam: camera,
+# microphone, entire-screen sharing and full-screen are required. Set
+# ASSESSMENT_PROCTORING_MODE=r0 explicitly to serve the camera-free variant.
+export ASSESSMENT_PROCTORING_MODE="${ASSESSMENT_PROCTORING_MODE:-r1}"
+export EVIDENCE_RETENTION_DAYS="${EVIDENCE_RETENTION_DAYS:-30}"
+echo "[start] assessment proctoring mode: ${ASSESSMENT_PROCTORING_MODE}"
+
 ENVIRONMENT="${ENV:-${ENVIRONMENT:-development}}"
 
 # Seed demo accounts only for an explicitly enabled, non-production deployment
