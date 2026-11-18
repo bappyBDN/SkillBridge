@@ -14,6 +14,7 @@ import PasswordReset from "./PasswordReset.jsx";
 import { assessmentNotificationItems, notificationTimestamp } from "./notifications.js";
 import useR1Devices, { trackLive } from "./useR1Devices.js";
 import useR1Monitoring from "./useR1Monitoring.js";
+import { loadFaceApi, preloadProctorModels, preloadVisionModels, useProctorModelStatus } from "./proctorModels.js";
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
@@ -1635,6 +1636,7 @@ function useExamIntegrity(initial, screenStream) {
   const [alerts, setAlerts] = useState([]);
   const [tabVisible, setTabVisible] = useState(document.visibilityState !== "hidden");
   const [signals, setSignals] = useState({ clipboard: 0, focus: 0, fullscreen: 0 });
+  const [away, setAway] = useState(false);
   const pendingEvents = useRef([]);
   const flushPromise = useRef(null);
   const reportedStream = useRef(screenStream);
@@ -1715,31 +1717,64 @@ function useExamIntegrity(initial, screenStream) {
     return () => clearTimeout(timer);
   }, [alerts]);
   useEffect(() => {
-    const clipboard = (e) => {
-      e.preventDefault();
+    const blockClipboard = (type) => {
       setSignals((current) => ({ ...current, clipboard: current.clipboard + 1 }));
-      report(e.type);
+      report(type);
       setNotice(t("clipboardBlocked"));
+    };
+    const clipboard = (e) => {
+      // Capture phase + stopPropagation so editors (CodeMirror, textareas)
+      // never receive the clipboard data.
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      blockClipboard(e.type);
+    };
+    const beforeInput = (e) => {
+      if (["insertFromPaste", "insertFromPasteAsQuotation", "insertFromDrop", "insertFromYank"].includes(e.inputType)) {
+        e.preventDefault();
+        e.stopPropagation();
+        blockClipboard("paste");
+      }
+    };
+    const drop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      blockClipboard("paste");
     };
     const keydown = (e) => {
       const key = String(e.key || "").toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && ["c", "v", "x"].includes(key)) {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && ["c", "v", "x"].includes(key)) {
         e.preventDefault();
-        setSignals((current) => ({ ...current, clipboard: current.clipboard + 1 }));
-        report(key === "c" ? "copy" : key === "x" ? "cut" : "paste");
-        setNotice(t("clipboardBlocked"));
+        e.stopPropagation();
+        blockClipboard(key === "c" ? "copy" : key === "x" ? "cut" : "paste");
+        return;
       }
       if (e.shiftKey && key === "insert") {
         e.preventDefault();
-        setSignals((current) => ({ ...current, clipboard: current.clipboard + 1 }));
-        report("paste");
-        setNotice(t("clipboardBlocked"));
+        e.stopPropagation();
+        blockClipboard("paste");
+        return;
       }
-      if (initial.proctoring?.mode === "r1" && (e.ctrlKey || e.metaKey) && ["tab", "t", "w", "n", "pageup", "pagedown"].includes(key)) {
+      // Developer tools, view-source, print and save are not needed in an exam.
+      if (key === "f12" || (mod && e.shiftKey && ["i", "j", "c", "k"].includes(key)) || (mod && ["u", "s", "p"].includes(key))) {
         e.preventDefault();
-        // Browser/OS shortcuts may never reach JavaScript. This is not an
-        // operating-system kiosk lock; hidden/blur events remain the evidence.
+        e.stopPropagation();
+        return;
+      }
+      // Tab/window switching shortcuts. With Keyboard Lock active (Chromium,
+      // full-screen) these reach the page and are blocked here; otherwise the
+      // browser handles them first and the visibility/blur events are the
+      // evidence. Not an OS kiosk lock.
+      const switching = (mod && ["tab", "t", "w", "n", "pageup", "pagedown"].includes(key))
+        || (e.altKey && ["tab", "f4"].includes(key))
+        || key === "meta" || key === "os" || key === "f11";
+      if (switching) {
+        e.preventDefault();
+        e.stopPropagation();
         report("blur", { reason: "browser_navigation_shortcut_blocked" });
+        setNotice("Switching tabs or windows is not allowed during the exam.");
       }
     };
     const context = (e) => {
@@ -1767,13 +1802,17 @@ function useExamIntegrity(initial, screenStream) {
       setTabVisible(visible);
       if (!visible) {
         setSignals((current) => ({ ...current, focus: current.focus + 1 }));
+        setAway(true);
       }
       report(visible ? "tab_visible" : "tab_hidden");
     };
     const fullscreen = () => {
       const active = Boolean(document.fullscreenElement);
       setFullscreenActive(active);
-      if (active) report("fullscreen_enter");
+      if (active) {
+        report("fullscreen_enter");
+        lockExamKeyboard();
+      }
       if (!active) {
         setSignals((current) => ({ ...current, fullscreen: current.fullscreen + 1 }));
         report("fullscreen_exit");
@@ -1785,9 +1824,12 @@ function useExamIntegrity(initial, screenStream) {
       e.returnValue = "";
       return "";
     };
+    if (document.fullscreenElement) lockExamKeyboard();
     document.addEventListener("copy", clipboard, true);
     document.addEventListener("cut", clipboard, true);
     document.addEventListener("paste", clipboard, true);
+    document.addEventListener("beforeinput", beforeInput, true);
+    document.addEventListener("drop", drop, true);
     document.addEventListener("keydown", keydown, true);
     document.addEventListener("contextmenu", context, true);
     document.addEventListener("dragstart", drag, true);
@@ -1801,6 +1843,8 @@ function useExamIntegrity(initial, screenStream) {
       document.removeEventListener("copy", clipboard, true);
       document.removeEventListener("cut", clipboard, true);
       document.removeEventListener("paste", clipboard, true);
+      document.removeEventListener("beforeinput", beforeInput, true);
+      document.removeEventListener("drop", drop, true);
       document.removeEventListener("keydown", keydown, true);
       document.removeEventListener("contextmenu", context, true);
       document.removeEventListener("dragstart", drag, true);
@@ -1810,8 +1854,9 @@ function useExamIntegrity(initial, screenStream) {
       document.removeEventListener("fullscreenchange", fullscreen);
       window.removeEventListener("blur", blur);
       window.removeEventListener("beforeunload", unload);
+      try { navigator.keyboard?.unlock?.(); } catch { /* unsupported */ }
     };
-  }, [report, t, initial.proctoring?.mode]);
+  }, [report, t]);
   useEffect(() => {
     const track = screenStream?.getVideoTracks()[0];
     if (!track) {
@@ -1872,6 +1917,8 @@ function useExamIntegrity(initial, screenStream) {
     alerts,
     tabVisible,
     signals,
+    away,
+    dismissAway: () => setAway(false),
     setNotice,
     restartFullscreen,
     report,
@@ -2040,27 +2087,10 @@ function LocalProctor({ cameraStream, report, inline = false, onDetections }) {
     }
     const load = async () => {
       try {
-        const vision = await import("@mediapipe/tasks-vision");
-        const files = await vision.FilesetResolver.forVisionTasks(
-          "/mediapipe/wasm"
-        );
-        const faceOptions = {
-          baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" },
-          runningMode: "VIDEO", numFaces: 3
-        };
-        let face;
-        try { face = await vision.FaceLandmarker.createFromOptions(files, { ...faceOptions, baseOptions: { ...faceOptions.baseOptions, delegate: "GPU" } }); }
-        catch { face = await vision.FaceLandmarker.createFromOptions(files, { ...faceOptions, baseOptions: { ...faceOptions.baseOptions, delegate: "CPU" } }); }
-        let objects = null;
-        const objectOptions = {
-          baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite" },
-          runningMode: "VIDEO", scoreThreshold: 0.45, maxResults: 10
-        };
-        try {
-          try { objects = await vision.ObjectDetector.createFromOptions(files, { ...objectOptions, baseOptions: { ...objectOptions.baseOptions, delegate: "GPU" } }); }
-          catch { objects = await vision.ObjectDetector.createFromOptions(files, { ...objectOptions, baseOptions: { ...objectOptions.baseOptions, delegate: "CPU" } }); }
-        } catch { /* Face/gaze checks can still run when object model fails. */ }
-        if (cancelled) { face.close(); objects?.close(); return; }
+        // Shared models: already preloaded and warmed on the verify page, and
+        // kept alive across setup → exam so monitoring starts instantly.
+        const { face, objects } = await preloadVisionModels();
+        if (cancelled) return;
         modelRef.current = { face, objects };
         setStatus(objects ? "Local AI monitoring active" : "Face analysis active; object model unavailable");
         let lastVideoTime = -1;
@@ -2126,8 +2156,6 @@ function LocalProctor({ cameraStream, report, inline = false, onDetections }) {
       video.removeEventListener("waiting", onWaiting);
       video.pause();
       video.srcObject = null;
-      modelRef.current?.face?.close();
-      modelRef.current?.objects?.close();
       modelRef.current = null;
     };
   }, [cameraStream, evidence, report]);
@@ -2849,6 +2877,37 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   const navigator = v.navigator || [];
   return (
     <section className="tech-exam exam2">
+      {(integrity.away || !integrity.fullscreenActive) && (
+        <div className="exam-lock-overlay" role="alertdialog" aria-modal="true" aria-labelledby="exam-lock-title">
+          <div className="exam-lock-card">
+            <span className="exam-lock-icon" aria-hidden="true">!</span>
+            <h3 id="exam-lock-title">{!integrity.fullscreenActive ? "You left full-screen" : "You left the exam tab"}</h3>
+            <p>
+              Switching tabs, windows or leaving full-screen is not allowed. This has been recorded for human review
+              {integrity.signals.focus + integrity.signals.fullscreen > 0 ? ` (${integrity.signals.focus + integrity.signals.fullscreen} time${integrity.signals.focus + integrity.signals.fullscreen === 1 ? "" : "s"} so far)` : ""}.
+              It never fails you automatically. Your timer keeps running.
+            </p>
+            <div className="exam-lock-actions">
+              {!integrity.shareActive && (
+                <button type="button" className="btn ghost" onClick={() => onRestartShare?.()}>Restore screen share</button>
+              )}
+              <button
+                type="button"
+                className="btn"
+                onClick={async () => {
+                  if (!document.fullscreenElement) await integrity.restartFullscreen();
+                  if (document.fullscreenElement) integrity.dismissAway();
+                }}
+              >
+                {!integrity.fullscreenActive ? "Return to full-screen exam" : "Return to exam"}
+              </button>
+              <button type="button" className="btn ghost exam-quit" onClick={quit} disabled={busy || quitting}>
+                {quitting ? "Quitting…" : "Quit assessment"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {!r1 && <MicMonitor stream={micStream} onVoice={onVoice} />}
       <div className="exam2-top">
         <div className="exam2-top-q">
@@ -3547,40 +3606,6 @@ function Uplift() {
 }
 
 /* ---------- shared camera preview ---------- */
-function CameraPreview({ stream, label = "Camera preview", note = "Local preview · not recorded" }) {
-  const videoRef = useRef(null);
-  const live = Boolean(stream?.getVideoTracks?.().some((track) => track.readyState === "live"));
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return undefined;
-    video.srcObject = stream || null;
-    if (!stream) return undefined;
-    video.play().catch(() => {});
-    return () => {
-      video.pause();
-      video.srcObject = null;
-    };
-  }, [stream]);
-  return (
-    <aside className={"camera-float" + (live ? " live" : " off")} aria-label={label}>
-      <div className="camera-float-head">
-        <i className="camera-dot" aria-hidden="true" />
-        <span>{live ? "LIVE" : "OFF"}</span>
-        <span>{label}</span>
-      </div>
-      <div className="camera-frame">
-        <video ref={videoRef} muted playsInline autoPlay aria-label="Live webcam preview" />
-        {!live && <div className="camera-placeholder">Your camera preview appears here once the webcam is enabled.</div>}
-      </div>
-      <div className="camera-float-foot">
-        <span>{live ? "You are visible" : "Camera off"}</span>
-        <span>{note}</span>
-      </div>
-    </aside>
-  );
-}
-
-/* ---------- realtime integrity alerts ---------- */
 const ALERT_MAP = {
   copy: { title: "Copy attempt blocked", detail: "Clipboard actions are recorded as review signals.", level: "warn", icon: "⧉" },
   cut: { title: "Cut attempt blocked", detail: "Clipboard actions are recorded as review signals.", level: "warn", icon: "⧉" },
@@ -3681,49 +3706,53 @@ function MicMonitor({ stream, onVoice }) {
   return null;
 }
 
-/* ---------- pre-exam identity check (profile photo vs live webcam) ---------- */
-let faceApiPromise = null;
+/* ---------- verify-page helpers ---------- */
+const noopReport = () => {};
 
-function loadFaceApi() {
-  if (!faceApiPromise) {
-    faceApiPromise = (async () => {
-      const faceapi = await import("@vladmandic/face-api");
-      // The bundled tfjs picks its "highest priority" backend lazily. If a
-      // detection op runs first, tfjs throws "backend 'wasm' has not yet been
-      // initialized". Initialise a concrete backend (WebGL, then CPU) and wait
-      // for it before loading or running any model.
-      const tf = faceapi.tf;
-      if (tf?.setBackend) {
-        let ready = false;
-        for (const backend of ["webgl", "cpu"]) {
-          try {
-            const selected = await tf.setBackend(backend);
-            if (selected === false) continue;
-            await tf.ready();
-            ready = true;
-            break;
-          } catch {
-            // Try the next backend (WebGL can be unavailable in some browsers).
-          }
-        }
-        if (!ready) {
-          throw new Error(
-            "Face analysis could not start in this browser. Use Chrome or Edge with hardware acceleration enabled, or continue with the manual identity check.",
-          );
-        }
-      }
-      await faceapi.nets.tinyFaceDetector.loadFromUri("/face-api/model");
-      await faceapi.nets.faceLandmark68TinyNet.loadFromUri("/face-api/model");
-      await faceapi.nets.faceRecognitionNet.loadFromUri("/face-api/model");
-      return faceapi;
-    })().catch((error) => {
-      faceApiPromise = null;
-      throw error;
-    });
-  }
-  return faceApiPromise;
+// In Chromium, Keyboard Lock routes browser/OS shortcuts (Alt+Tab, Ctrl+Tab,
+// Ctrl+W, Ctrl+T, Windows key…) to the page while full-screen, so the exam's
+// key handler can block them, and Esc must be held to leave full-screen. Other
+// browsers ignore this; focus/visibility events remain the fallback evidence.
+function lockExamKeyboard() {
+  try { navigator.keyboard?.lock?.().catch(() => {}); } catch { /* unsupported */ }
 }
 
+// Live microphone level bar so the candidate can see the mic is working. Drawn
+// via a ref (no React re-render per frame). Nothing is recorded.
+function MicLevel({ stream, context }) {
+  const barRef = useRef(null);
+  useEffect(() => {
+    if (!stream || !context) return undefined;
+    let source, analyser, frame;
+    try {
+      source = context.createMediaStreamSource(stream);
+      analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+    } catch { return undefined; }
+    const data = new Float32Array(analyser.fftSize || 1024);
+    const draw = () => {
+      analyser.getFloatTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      const level = Math.min(1, Math.sqrt(sum / data.length) * 6);
+      if (barRef.current) barRef.current.style.width = Math.round(level * 100) + "%";
+      frame = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => {
+      cancelAnimationFrame(frame);
+      try { source.disconnect(); } catch { /* already disconnected */ }
+    };
+  }, [stream, context]);
+  return (
+    <span className="ies-mic-meter" aria-label="Microphone level">
+      <i ref={barRef} />
+    </span>
+  );
+}
+
+/* ---------- pre-exam identity check (profile photo vs live webcam) ---------- */
 function loadImageElement(src) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -3854,6 +3883,25 @@ function IdentityCheck({ cameraStream, avatarUrl, status, onChange, onAvatarUplo
     }
   };
 
+  // Run the comparison automatically as soon as the camera and the profile
+  // photo are both ready (models are preloaded), retrying a couple of times
+  // while the candidate settles in front of the camera. Manual "Scan again"
+  // stays available.
+  const scanRef = useRef(scan);
+  scanRef.current = scan;
+  const autoTries = useRef(0);
+  useEffect(() => { autoTries.current = 0; }, [cameraStream, avatarUrl]);
+  useEffect(() => {
+    if (disabled || busy || !cameraStream || reference.state !== "ready") return undefined;
+    if (status === "verified" || status === "flagged") return undefined;
+    if (!["idle", "error"].includes(live.state) || autoTries.current >= 3) return undefined;
+    const timer = setTimeout(() => {
+      autoTries.current += 1;
+      scanRef.current();
+    }, autoTries.current === 0 ? 700 : 2000);
+    return () => clearTimeout(timer);
+  }, [disabled, busy, cameraStream, reference.state, status, live.state]);
+
   const uploadPhoto = async (file) => {
     if (!file) return;
     setUploadBusy(true);
@@ -3903,7 +3951,7 @@ function IdentityCheck({ cameraStream, avatarUrl, status, onChange, onAvatarUplo
             {live.state === "match" && `Match ${live.similarity}% · distance ${live.distance?.toFixed?.(3) ?? live.distance}`}
             {live.state === "mismatch" && `Mismatch ${live.similarity}% · distance ${live.distance?.toFixed?.(3) ?? live.distance}`}
             {live.state === "error" && live.message}
-            {(live.state === "idle") && (reference.message || "Enable the webcam, then scan your face.")}
+            {(live.state === "idle") && (cameraStream && reference.state === "ready" ? "Look at the camera — checking automatically…" : (reference.message || "Enable the webcam, then scan your face."))}
           </p>
           <button
             type="button"
@@ -3957,6 +4005,13 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     setIdentityResult({ status: "pending" });
     setIdentityAck(false);
   }, [devices.camera, avatarUrl]);
+  // Start downloading and warming the on-device AI models the moment the verify
+  // page opens, in parallel with the candidate reading the consent and granting
+  // permissions. Only model files load here; no media is captured.
+  const modelStatus = useProctorModelStatus();
+  useEffect(() => {
+    if (r1) preloadProctorModels({ identity: Boolean(st.has_avatar) });
+  }, [r1, st.has_avatar]);
 
   useEffect(() => {
     const syncNetwork = () => setOnline(navigator.onLine);
@@ -4053,6 +4108,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       await document.documentElement.requestFullscreen();
       setFullscreenReady(Boolean(document.fullscreenElement));
       if (!document.fullscreenElement) throw new Error(t("fullscreenRequired"));
+      lockExamKeyboard();
     } catch (e) {
       setFullscreenReady(Boolean(document.fullscreenElement));
       setErr(e?.name === "NotAllowedError"
@@ -4190,20 +4246,28 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     cameraStream={r1 ? devices.camera : undefined} micStream={r1 ? devices.microphone : undefined}
     audioContext={devices.audioContext} devicesReady={!r1 || (devices.cameraReady && devices.microphoneReady)}
     onRestartCamera={devices.enableCamera} onRestartMic={devices.enableMicrophone} />;
+  // Ordered exactly as the candidate should complete them: full-screen is last
+  // because opening the screen-share picker can drop full-screen.
   const setupRequirements = [
     { id: "desktop", label: "Desktop device", ok: !mobileDevice },
     { id: "browser", label: "Browser support", ok: browserSupported },
     { id: "network", label: "Network", ok: online },
-    { id: "share", label: "Screen sharing", ok: shareReady },
-    { id: "fullscreen", label: "Full-screen", ok: fullscreenReady },
     ...(r1 ? [
       { id: "consent", label: "R1 monitoring consent", ok: proctoringConsent },
       { id: "camera", label: "Camera", ok: devices.cameraReady },
       { id: "microphone", label: "Microphone", ok: devices.microphoneReady },
       { id: "identity", label: "Identity / manual review", ok: identityReady },
     ] : []),
+    { id: "share", label: "Screen sharing", ok: shareReady },
+    { id: "fullscreen", label: "Full-screen", ok: fullscreenReady },
   ];
   const setupMissing = setupRequirements.filter((item) => !item.ok).map((item) => item.label);
+  const nextStep = setupRequirements.find((item) => !item.ok)?.id || null;
+  const checklist = setupRequirements.filter((item) => !["desktop", "browser", "network"].includes(item.id));
+  const aiModels = !r1 ? null
+    : modelStatus.vision === "ready" ? { cls: "ok", text: "AI models ready" }
+      : modelStatus.vision === "error" ? { cls: "bad", text: "AI models unavailable — reviewer will be notified" }
+        : { cls: "", text: "Preparing AI models…" };
   const skillOptions = (() => {
     const options = new Map();
     (st.profile_skill_items || []).forEach((skill) => {
@@ -4218,25 +4282,34 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
   const visibleSkills = showAllSkills ? skillOptions : skillOptions.slice(0, 4);
   const progressSteps = ["Profile", "Initial Exam", "Gap", "Learn", "Profile Retake", "Passport"];
   const currentStep = initialMode ? 1 : 4;
-  const permissions = [
-    ...(r1 ? [
-      { id: "camera", icon: "🎥", title: "Camera Access", hint: "Used for identity verification and exam monitoring.", done: devices.cameraReady,
-        actionLabel: devices.cameraReady ? "Camera active" : "Enable camera", onAction: devices.enableCamera,
-        disabled: !proctoringConsent || devices.busy || setupBusy },
-      { id: "microphone", icon: "🎙️", title: "Microphone Access", hint: "Local sound-level monitoring only; audio is not recorded.", done: devices.microphoneReady,
-        actionLabel: devices.microphoneReady ? "Microphone active" : "Enable microphone", onAction: devices.enableMicrophone,
-        disabled: !proctoringConsent || devices.busy || setupBusy },
-    ] : []),
-    { id: "share", icon: "🖥️", title: "Screen Sharing", hint: r1 ? "Share your Entire screen so review signals stay accurate." : "The screen stream is not recorded or uploaded; only event counts are saved.", done: shareReady,
-      actionLabel: shareReady ? t("shareActive") : t("restartShare"), onAction: enableScreenShare, disabled: setupBusy || (r1 && !proctoringConsent) },
-    { id: "fullscreen", icon: "⛶", title: "Full-screen Mode", hint: "Keeps the exam focused and records focus signals for review.", done: fullscreenReady,
-      actionLabel: fullscreenReady ? t("fullscreenActive") : t("restartFullscreen"), onAction: enableFullscreen, disabled: setupBusy },
-  ];
+  const cameraPerm = { id: "camera", icon: "🎥", title: "Camera", hint: "Used for the identity check and on-device monitoring.", done: devices.cameraReady,
+    actionLabel: devices.cameraReady ? "Camera active" : "Enable camera", onAction: devices.enableCamera,
+    disabled: !proctoringConsent || devices.busy || setupBusy };
+  const micPerm = { id: "microphone", icon: "🎙️", title: "Microphone", hint: "Local sound-level check only; audio is never recorded.", done: devices.microphoneReady,
+    actionLabel: devices.microphoneReady ? "Microphone active" : "Enable microphone", onAction: devices.enableMicrophone,
+    disabled: !proctoringConsent || devices.busy || setupBusy,
+    extra: devices.microphoneReady ? <MicLevel stream={devices.microphone} context={devices.audioContext} /> : null };
+  const sharePerm = { id: "share", icon: "🖥️", title: "Screen sharing", hint: r1 ? "Choose “Entire screen” in the browser picker." : "The screen stream is not recorded or uploaded; only event counts are saved.", done: shareReady,
+    actionLabel: shareReady ? t("shareActive") : t("restartShare"), onAction: enableScreenShare, disabled: setupBusy || (r1 && !proctoringConsent) };
+  const fullscreenPerm = { id: "fullscreen", icon: "⛶", title: "Full-screen mode", hint: "Do this last. Leaving full-screen or switching tabs pauses the exam.", done: fullscreenReady,
+    actionLabel: fullscreenReady ? t("fullscreenActive") : t("restartFullscreen"), onAction: enableFullscreen, disabled: setupBusy };
+  const renderPerm = (item) => (
+    <div className={"ies-perm" + (item.done ? " done" : "") + (nextStep === item.id ? " next" : "")} key={item.id} id={"ies-step-" + item.id}>
+      <span className="ies-perm-icon" aria-hidden="true">{item.icon}</span>
+      <div className="ies-perm-text">
+        <b>{item.title}</b><span>{item.hint}</span>
+        {item.extra}
+      </div>
+      {item.done
+        ? <button type="button" className="ies-pill" disabled>{item.actionLabel}</button>
+        : <button type="button" className="ies-perm-btn" onClick={item.onAction} disabled={item.disabled}>{item.actionLabel}</button>}
+    </div>
+  );
   const identityState = identityResult.status === "verified"
     ? { cls: "ok", mark: "✓", title: "Face verified", body: "Your face is clearly visible and matches your profile photo." }
     : identityAck
       ? { cls: "warn", mark: "!", title: "Manual review acknowledged", body: "A human reviewer will check your identity. This is not an automatic rejection." }
-      : { cls: "", mark: "◉", title: "Identity check pending", body: devices.cameraReady ? "Run the face scan, or acknowledge manual review." : "Enable the camera to start the face comparison." };
+      : { cls: "", mark: "◉", title: "Identity check pending", body: devices.cameraReady ? "The face check runs automatically. You can also acknowledge manual review." : "Enable the camera to start the face comparison." };
   const renderSetup = ({ resume, title, intro, primaryLabel }) => (
     <section className="ies">
       <div className="ies-main">
@@ -4253,6 +4326,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
             <span className={"ies-chip " + (mobileDevice ? "bad" : "ok")}>{!mobileDevice && <i aria-hidden="true">✓</i>}{mobileDevice ? "✕ Desktop device required" : "Desktop device"}</span>
             <span className={"ies-chip " + (browserSupported ? "ok" : "bad")}>{browserSupported && <i aria-hidden="true">✓</i>}{browserSupported ? "Browser supported" : "Screen sharing/full-screen unsupported"}</span>
             <span className={"ies-chip " + (online ? "ok" : "bad")}>{online && <i aria-hidden="true">✓</i>}{online ? "Network stable" : "Network offline"}</span>
+            {aiModels && <span className={"ies-chip " + aiModels.cls} role="status">{aiModels.cls === "ok" ? <i aria-hidden="true">✓</i> : aiModels.cls === "" ? <i className="ies-spin" aria-hidden="true" /> : null}{aiModels.text}</span>}
           </div>
           <div className="ies-alert">
             <span aria-hidden="true">i</span>
@@ -4260,18 +4334,19 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
               <b>Important Instructions</b>
               <p>
                 {r1
-                  ? "Allow camera, microphone, entire-screen sharing and full-screen. Keep your face visible during the exam. Do not switch tabs or open other applications."
-                  : "Allow screen sharing and full-screen. Keep sharing active until you submit or quit. In-app navigation is locked during the exam."}
+                  ? "Complete the steps below in order. Keep your face visible during the exam. Copy, paste and tab switching are blocked; leaving the exam pauses it."
+                  : "Allow screen sharing and full-screen. Keep sharing active until you submit or quit. Copy, paste and tab switching are blocked during the exam."}
               </p>
             </div>
           </div>
         </article>
 
         {r1 && (
-          <article className="ies-card ies-consent">
+          <article className={"ies-card ies-consent" + (proctoringConsent ? " done" : " next")} id="ies-step-consent">
             <div className="ies-card-head">
               <span className="ies-card-icon" aria-hidden="true">🛡️</span>
               <div>
+                <span className="ies-kicker">STEP 1</span>
                 <h3>Monitoring Consent</h3>
                 <p>Explicit consent is required before camera, microphone or screenshot capture can start.</p>
               </div>
@@ -4286,8 +4361,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
               Flag-triggered camera and screen JPEG snapshots are kept for authorized reviewers for
               {" "}{proctoringPolicy.retention_days} days (max {proctoringPolicy.max_snapshots} snapshots).
               Event times, numerical observations and review notes stay until account deletion. You can
-              export/delete your data at any time. Browser/OS tab switching cannot be fully disabled;
-              focus changes are logged. Flags never automatically fail you.
+              export/delete your data at any time. Focus changes are logged. Flags never automatically fail you.
             </p>
             <label className="ies-check">
               <input type="checkbox" checked={proctoringConsent} onChange={(event) => setProctoringConsent(event.target.checked)} disabled={setupBusy} />
@@ -4296,16 +4370,40 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           </article>
         )}
 
-        {r1 && proctoringConsent && (
+        {r1 && (
           <article className="ies-card">
+            <div className="ies-card-head">
+              <span className="ies-card-icon" aria-hidden="true">🎥</span>
+              <div>
+                <span className="ies-kicker">STEP 2</span>
+                <h3>Camera &amp; Microphone</h3>
+                <p>{proctoringConsent ? "Allow access when the browser asks. The live preview confirms the AI can see you." : "Give consent above to unlock these."}</p>
+              </div>
+            </div>
+            <div className="ies-perms">
+              {renderPerm(cameraPerm)}
+              {renderPerm(micPerm)}
+            </div>
+            {devices.cameraReady && (
+              <div className="ies-live-preview">
+                <LocalProctor cameraStream={devices.camera} report={noopReport} inline />
+              </div>
+            )}
+            {devices.error && <p className="err" role="alert" style={{ marginTop: 10 }}>{devices.error}</p>}
+          </article>
+        )}
+
+        {r1 && proctoringConsent && (
+          <article className="ies-card" id="ies-step-identity">
             <div className="ies-card-head">
               <span className="ies-card-icon" aria-hidden="true">🪪</span>
               <div>
+                <span className="ies-kicker">STEP 3</span>
                 <h3>Identity Verification</h3>
-                <p>Verify your identity with a live face check and profile photo. Comparison runs only in this browser.</p>
+                <p>Your live face is compared with your profile photo automatically. Comparison runs only in this browser.</p>
               </div>
             </div>
-            <div className="ies-identity-grid">
+            <div className="ies-identity-grid ies-identity-single">
               <IdentityCheck
                 cameraStream={devices.camera}
                 avatarUrl={avatarUrl}
@@ -4314,9 +4412,6 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
                 onAvatarUploaded={refresh}
                 disabled={setupBusy}
               />
-              {devices.cameraReady
-                ? <CameraPreview stream={devices.camera} note="Live · R1 snapshots on flags" />
-                : <div className="ies-verified"><span aria-hidden="true">◉</span><div><b>Camera off</b>Enable the camera to show the live preview.</div></div>}
             </div>
             <div className={"ies-verified " + identityState.cls} style={{ marginTop: 14 }}>
               <span aria-hidden="true">{identityState.mark}</span>
@@ -4328,28 +4423,21 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
                 If the comparison is unavailable or does not match, I acknowledge referral to human identity review; this is not an automatic rejection.
               </label>
             )}
-            {devices.error && <p className="err" role="alert" style={{ marginTop: 10 }}>{devices.error}</p>}
           </article>
         )}
 
         <article className="ies-card">
           <div className="ies-card-head">
-            <span className="ies-card-icon" aria-hidden="true">🛡️</span>
+            <span className="ies-card-icon" aria-hidden="true">🖥️</span>
             <div>
-              <h3>Required Permissions</h3>
-              <p>{r1 ? "Grant access to all four items to take the exam." : "Screen sharing and full-screen are required to begin."}</p>
+              {r1 && <span className="ies-kicker">STEP 4</span>}
+              <h3>Screen Sharing &amp; Full-screen</h3>
+              <p>Share your screen first, then enter full-screen.</p>
             </div>
           </div>
           <div className="ies-perms">
-            {permissions.map((item) => (
-              <div className={"ies-perm" + (item.done ? " done" : "")} key={item.id}>
-                <span className="ies-perm-icon" aria-hidden="true">{item.icon}</span>
-                <div className="ies-perm-text"><b>{item.title}</b><span>{item.hint}</span></div>
-                {item.done
-                  ? <button type="button" className="ies-pill" disabled>{item.actionLabel}</button>
-                  : <button type="button" className="ies-perm-btn" onClick={item.onAction} disabled={item.disabled}>{item.actionLabel}</button>}
-              </div>
-            ))}
+            {renderPerm(sharePerm)}
+            {renderPerm(fullscreenPerm)}
           </div>
         </article>
 
@@ -4429,6 +4517,18 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
       </div>
 
       <aside className="ies-side">
+        <article className="ies-card">
+          <div className="ies-tips-head"><span aria-hidden="true">☑</span><b>Setup checklist</b></div>
+          <ol className="ies-checklist">
+            {checklist.map((item) => (
+              <li key={item.id} className={item.ok ? "done" : nextStep === item.id ? "current" : ""}>
+                <button type="button" onClick={() => document.getElementById("ies-step-" + item.id)?.scrollIntoView({ behavior: "smooth", block: "center" })}>
+                  <i aria-hidden="true">{item.ok ? "✓" : ""}</i>{item.label}
+                </button>
+              </li>
+            ))}
+          </ol>
+        </article>
         <article className="ies-card">
           <div className="ies-tips-head"><span aria-hidden="true">💡</span><b>Quick Tips</b></div>
           <ul className="ies-tips">
@@ -5645,6 +5745,20 @@ function CandidateApplications() {
 function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   const lang = useLangValue();
   const setLang = useSetLang();
+  // Warm the on-device proctoring models in the background while the candidate
+  // is still browsing, so the verify page is ready almost instantly. Only model
+  // files are fetched; no camera/microphone is touched here.
+  const proctoredMode = (st.attempts || []).find((a) => a.status === "active")?.proctoring?.mode || st.proctoring_policy?.mode;
+  useEffect(() => {
+    if (proctoredMode !== "r1") return undefined;
+    const run = () => preloadProctorModels({ identity: Boolean(st.has_avatar) });
+    if (window.requestIdleCallback) {
+      const id = window.requestIdleCallback(run, { timeout: 4000 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const timer = setTimeout(run, 1500);
+    return () => clearTimeout(timer);
+  }, [proctoredMode, st.has_avatar]);
   const [section, setSection] = useState("overview");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [journeyView, setJourneyView] = useState(() => {

@@ -266,3 +266,21 @@ test("denying a mandatory R1 microphone blocks start without opening an attempt"
   await expect(page.getByRole("button", { name: "Start Initial exam · 40 minutes" })).toBeDisabled();
   expect(calls.some((call) => call.path === "/attempts")).toBe(false);
 });
+
+test("leaving full-screen locks the exam behind an overlay and paste is blocked and recorded", async ({ page }) => {
+  const { calls, errors } = await examWorkspace(page);
+  await permissions(page);
+  await page.getByRole("button", { name: "Start Initial exam · 40 minutes" }).click();
+  await expect(page.getByRole("heading", { name: "MOCK Fundamental test question 0" })).toBeVisible();
+  await page.evaluate(() => {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(event);
+  });
+  await expect.poll(() => calls.some((call) => call.path.endsWith("/event") && call.body?.type === "paste")).toBe(true);
+  await page.evaluate(() => document.exitFullscreen());
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "You left full-screen" })).toBeVisible();
+  await page.getByRole("button", { name: "Return to full-screen exam" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
