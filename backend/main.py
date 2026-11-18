@@ -4950,3 +4950,18 @@ init_db()
 # PRD expansion: company, job and recruiter/admin APIs.
 from enterprise import router as enterprise_router
 app.include_router(enterprise_router)
+
+# ------------------------------------------------------------------ MCP (additive, flag-guarded)
+# The REST bridge that powers the in-app MCP console is always registered; the
+# real MCP transport (stdio + Streamable HTTP) is mounted only when MCP_ENABLED
+# is on. Imports are lazy and guarded so an optional dependency can never stop
+# the app from booting.
+from mcp_api import router as mcp_router
+app.include_router(mcp_router)
+
+if os.getenv("MCP_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+    try:
+        from mcp_server import mount_mcp
+        mount_mcp(app)
+    except Exception:  # pragma: no cover - MCP must never break boot
+        log.exception("MCP transport could not be mounted; the REST bridge stays available")

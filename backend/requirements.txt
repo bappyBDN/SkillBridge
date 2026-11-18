@@ -12,3 +12,8 @@ neo4j==5.27.0
 PyMuPDF==1.25.3
 pytesseract==0.3.13
 Pillow==11.1.0
+# MCP server (M1 verification + M2 candidate learning). Pinned so the MCP SDK
+# keeps starlette 0.41.x, which FastAPI 0.115.6 requires; newer sse-starlette
+# pulls starlette 1.x and breaks FastAPI.
+mcp==1.9.4
+sse-starlette==2.1.3

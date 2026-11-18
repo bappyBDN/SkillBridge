@@ -14,6 +14,7 @@ import PasswordReset from "./PasswordReset.jsx";
 import { assessmentNotificationItems, notificationTimestamp } from "./notifications.js";
 import useExamDevices, { trackLive } from "./useExamDevices.js";
 import useExamMonitoring from "./useExamMonitoring.js";
+import McpConsole from "./McpConsole.jsx";
 
 // Every exam is proctored (camera, microphone, screen share, full-screen).
 // Only attempts saved before proctoring existed are marked otherwise.
@@ -5828,6 +5829,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
     { id: "exams", label: W.exams, icon: "◎", group: "GROWTH" },
     { id: "journey", label: W.journey, icon: "⌁", group: "GROWTH" },
     { id: "learning", label: W.learning, icon: "↗", group: "GROWTH" },
+    { id: "mcp", label: "MCP tools", icon: "mcp", group: "GROWTH" },
     { id: "passport", label: W.passport, icon: "◇", group: "GROWTH" },
     { id: "privacy", label: W.privacy, icon: "▣", group: "ACCOUNT" },
   ];
@@ -6212,6 +6214,21 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                 </div>
               </div>
               <Passport st={st} refresh={refresh} />
+            </>
+          )}
+          {section === "mcp" && (
+            <>
+              <div className="page-title">
+                <div>
+                  <span className="eyebrow">AI ACCESS · MODEL CONTEXT PROTOCOL</span>
+                  <h1>MCP tools</h1>
+                  <p>
+                    Verify signed Skill Passports and read your learning data through the same
+                    read-only tools exposed to AI agents.
+                  </p>
+                </div>
+              </div>
+              <McpConsole />
             </>
           )}
           {section === "privacy" && (

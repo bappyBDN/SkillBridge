@@ -21,6 +21,7 @@ const ICONS = {
   menu: "M4 6h16 M4 12h16 M4 18h16",
   refresh: "M20 7V3l-4 4 M20 7a9 9 0 1 0 1 9",
   file: "M14 2H4v20h16V8Z M14 2v6h6 M8 13h8 M8 17h5",
+  mcp: "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M7 7l3 3 M14 14l3 3 M17 7l-3 3 M10 14l-3 3",
 };
 const ALIASES = { applicants: "team", users: "team", candidates: "profile", companies: "jobs", assessments: "exams", security: "privacy", integrity: "privacy", appeals: "applications", questions: "learning", resources: "learning", reports: "analytics" };
 
