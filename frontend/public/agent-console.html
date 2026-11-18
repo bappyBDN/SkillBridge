@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SkillBridge · Agent console</title>
+  <style>
+    :root { --ink:#12263a; --muted:#65738a; --line:#e4e9f2; --green:#0c6558; --green2:#0f7a68; --paper:#f6f8fc; --purple:#6b4df6; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:Inter,"Segoe UI",system-ui,sans-serif; background:var(--paper); color:var(--ink); }
+    header { background:radial-gradient(120% 160% at 0% 0%,#0f7a68 0%,#0c6558 55%,#083f38 100%); color:#fff; padding:22px clamp(16px,4vw,44px); }
+    header h1 { margin:0 0 6px; font-size:24px; letter-spacing:-.02em; }
+    header p { margin:0; color:#cfeae3; font-size:13px; max-width:760px; line-height:1.5; }
+    header .meta { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
+    .pill { padding:4px 10px; border-radius:999px; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.25); font-size:12px; font-weight:600; }
+    .pill.on { background:rgba(107,77,246,.35); border-color:rgba(107,77,246,.7); }
+    main { max-width:1080px; margin:0 auto; padding:22px clamp(14px,3vw,32px) 60px; display:flex; flex-direction:column; gap:18px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px 20px; box-shadow:0 10px 26px rgba(24,43,67,.05); }
+    .card h2 { margin:0 0 12px; font-size:16px; }
+    .row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+    label { display:flex; flex-direction:column; gap:5px; font-size:12px; color:var(--muted); font-weight:600; }
+    input, select, textarea { padding:9px 11px; border:1px solid var(--line); border-radius:9px; font-size:14px; color:var(--ink); background:#fff; min-width:170px; }
+    textarea { min-width:320px; min-height:64px; resize:vertical; }
+    button { padding:9px 16px; border-radius:9px; border:0; background:var(--green); color:#fff; font-weight:700; font-size:13.5px; cursor:pointer; }
+    button:hover { background:var(--green2); }
+    button.ghost { background:#fff; color:var(--green); border:1px solid var(--line); }
+    button.reject { background:#fff; color:#8a3524; border:1px solid #f1d2c8; }
+    .muted { color:var(--muted); font-size:12.5px; }
+    .err { background:#fdf5f2; border:1px solid #f1d2c8; color:#8a3524; padding:10px 12px; border-radius:10px; font-size:13px; }
+    .ok { background:#f2fbf7; border:1px solid #bfe8d6; color:#0f6b4f; padding:10px 12px; border-radius:10px; font-size:13px; }
+    .out { margin-top:14px; display:flex; flex-direction:column; gap:12px; }
+    .summary { font-size:15px; line-height:1.55; }
+    .usage { display:flex; flex-wrap:wrap; gap:8px; }
+    .usage span { background:#f3f0ff; color:#4b2fd1; border-radius:999px; padding:3px 10px; font-size:12px; font-weight:600; }
+    .tools { display:flex; flex-wrap:wrap; gap:6px; }
+    .tools span { background:#eef2f7; color:#31507a; border-radius:7px; padding:3px 8px; font-size:11.5px; font-family:ui-monospace,Menlo,monospace; }
+    pre { background:#0f1722; color:#d7e2f0; padding:12px; border-radius:10px; overflow:auto; font-size:12px; max-height:320px; }
+    .artifact { border:1px solid var(--line); border-radius:12px; padding:12px 14px; background:#fafbff; }
+    .artifact h3 { margin:0 0 4px; font-size:14px; }
+    .artifact .kind { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--purple); font-weight:700; }
+    .badge { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:3px 8px; border-radius:999px; background:#fff6e0; color:#8a6512; }
+    .badge.approved { background:#e7f6ef; color:#0f7a55; }
+    .badge.rejected { background:#fdeeea; color:#8a3524; }
+    .empty { color:var(--muted); font-size:13px; }
+    a { color:var(--green); font-weight:600; }
+    .hint { font-size:12.5px; color:var(--muted); margin-top:6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SkillBridge · Agent console</h1>
+    <p>One orchestrator, three role copilots (candidate · company · admin). Read-only or draft-only:
+      every output is advisory and every write is a draft awaiting human approval. Scores are never changed.</p>
+    <div class="meta" id="meta"></div>
+  </header>
+  <main>
+    <div id="auth-notice"></div>
+
+    <section class="card" id="run-card" hidden>
+      <h2>Run a copilot</h2>
+      <div class="row">
+        <label>Intent <select id="intent"></select></label>
+        <span id="fields" class="row"></span>
+        <button id="run-btn">Run agent</button>
+      </div>
+      <p class="hint" id="intent-hint"></p>
+      <div class="out" id="output"></div>
+    </section>
+
+    <section class="card" id="queue-card" hidden>
+      <h2>Approval queue <span class="muted" id="queue-count"></span></h2>
+      <div id="queue"></div>
+    </section>
+  </main>
+
+  <script>
+    const token = localStorage.getItem("sb_token");
+    const authHeaders = token ? { Authorization: "Bearer " + token } : {};
+
+    const INTENTS = {
+      study_plan:        { label: "Study plan", fields: [] },
+      gap_explain:       { label: "Gap explainer", fields: [] },
+      practice_hint:     { label: "Practice questions", fields: [["topic","Topic","python"],["count","Count",3,"number"]] },
+      application_draft: { label: "Application draft", fields: [["job_id","Job ID",""]] },
+      job_skills:        { label: "Job → skills", fields: [["description","Job description","","textarea"]] },
+      shortlist:         { label: "Consent-gated shortlist", fields: [] },
+      evidence_summary:  { label: "Evidence summary", fields: [] },
+      feedback_draft:    { label: "Feedback draft", fields: [["application_id","Application ID",""]] },
+      question_coverage: { label: "Coverage report", fields: [] },
+      question_draft:    { label: "Question drafts", fields: [["skill","Skill","python"],["count","Count",3,"number"]] },
+      integrity_summary: { label: "Integrity summary", fields: [["attempt_id","Attempt ID",""]] },
+    };
+
+    document.getElementById("meta").innerHTML = token
+      ? '<span class="pill on">Signed in</span><span class="pill">live agent platform</span>'
+      : '<span class="pill">Not signed in</span>';
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts,
+        headers: { "Content-Type": "application/json", ...authHeaders, ...(opts.headers || {}) },
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (!res.ok) throw new Error((data && (data.detail || data.message)) || res.statusText);
+      return data;
+    }
+
+    function el(tag, props = {}, ...kids) {
+      const node = Object.assign(document.createElement(tag), props);
+      for (const kid of kids) node.append(kid);
+      return node;
+    }
+
+    function fieldRow([key, label, value, type]) {
+      const wrap = el("label", {});
+      wrap.append(document.createTextNode(label));
+      const input = type === "textarea" ? el("textarea") : el("input", { type: type || "text" });
+      input.dataset.key = key;
+      input.value = value ?? "";
+      wrap.append(input);
+      return wrap;
+    }
+
+    let status = null;
+
+    async function load() {
+      if (!token) {
+        document.getElementById("auth-notice").innerHTML =
+          '<div class="card"><h2>Sign in first</h2><p class="muted">Open the <a href="/">SkillBridge app</a>, sign in, then return to this page. The console uses your existing session token.</p></div>';
+        return;
+      }
+      try {
+        status = await api("/api/agent/status");
+      } catch (e) {
+        document.getElementById("auth-notice").innerHTML = '<div class="err">Could not load agent status: ' + e.message + "</div>";
+        return;
+      }
+      document.getElementById("meta").innerHTML =
+        '<span class="pill on">' + status.role + '</span>' +
+        '<span class="pill">' + (status.enabled ? "platform enabled" : "platform disabled") + '</span>' +
+        '<span class="pill">' + (status.llm_drafts ? "LLM drafts on" : "deterministic drafts") + '</span>' +
+        '<span class="pill">budget: ' + status.budget.max_tool_calls + ' tools / ' + status.budget.max_seconds + 's</span>';
+
+      if (!status.enabled) {
+        document.getElementById("auth-notice").innerHTML =
+          '<div class="err">The agent platform is disabled (AGENT_PLATFORM_ENABLED=false). Enable it on the backend to run agents.</div>';
+        return;
+      }
+
+      const select = document.getElementById("intent");
+      select.replaceChildren();
+      for (const intent of status.intents) {
+        if (!INTENTS[intent]) continue;
+        select.append(el("option", { value: intent }, INTENTS[intent].label));
+      }
+      select.onchange = renderFields;
+      renderFields();
+      document.getElementById("run-card").hidden = false;
+      document.getElementById("queue-card").hidden = false;
+      loadQueue();
+    }
+
+    function renderFields() {
+      const intent = document.getElementById("intent").value;
+      const spec = INTENTS[intent] || { fields: [] };
+      const fields = document.getElementById("fields");
+      fields.replaceChildren();
+      for (const f of spec.fields) fields.append(fieldRow(f));
+      document.getElementById("intent-hint").textContent =
+        intent === "practice_hint" ? "Questions come from the approved bank; answers stay hidden."
+        : intent === "application_draft" ? "Needs a job id from the published jobs list."
+        : intent === "integrity_summary" ? "Needs an attempt id; output is advisory and never fails anyone."
+        : intent === "question_draft" ? "Creates pending-approval question drafts; nothing becomes active until a curator approves."
+        : "Draft-only. Review the output before using it.";
+    }
+
+    function renderArtifact(artifact) {
+      const wrap = el("div", { className: "artifact" });
+      const head = el("div", { className: "row" });
+      head.style.justifyContent = "space-between";
+      head.append(el("div", {}, el("div", { className: "kind" }, artifact.kind), el("h3", {}, artifact.title)));
+      head.append(el("span", { className: "badge " + artifact.status.replace("pending_approval","").trim() }, artifact.status));
+      wrap.append(head);
+      const pre = el("pre", {});
+      pre.textContent = JSON.stringify(artifact.body, null, 2);
+      wrap.append(pre);
+      return wrap;
+    }
+
+    async function runAgent() {
+      const intent = document.getElementById("intent").value;
+      const payload = {};
+      for (const input of document.querySelectorAll("#fields [data-key]")) {
+        let value = input.value;
+        if (input.type === "number") value = Number(value || 0);
+        if (value !== "") payload[input.dataset.key] = value;
+      }
+      const output = document.getElementById("output");
+      output.replaceChildren(el("div", { className: "muted" }, "Running…"));
+      try {
+        const result = await api("/api/agent/run", { method: "POST", body: JSON.stringify({ intent, payload }) });
+        output.replaceChildren();
+        const status = el("div", { className: result.status === "ok" ? "ok" : "err" }, result.status === "ok" ? "Run complete" : "Run failed");
+        output.append(status);
+        output.append(el("div", { className: "summary" }, result.summary || ""));
+        const usage = el("div", { className: "usage" });
+        usage.append(el("span", {}, "tools: " + result.usage.tool_calls), el("span", {}, "tokens in: " + result.usage.tokens_in), el("span", {}, "tokens out: " + result.usage.tokens_out), el("span", {}, "latency: " + result.usage.latency_ms + "ms"));
+        output.append(usage);
+        const tools = el("div", { className: "tools" });
+        for (const call of result.tool_calls) tools.append(el("span", {}, call.tool + (call.ok ? " ✓" : " ✕")));
+        output.append(tools);
+        for (const artifact of result.artifacts) output.append(renderArtifact(artifact));
+        if (result.data && Object.keys(result.data).length && !result.artifacts.length) {
+          const pre = el("pre", {}); pre.textContent = JSON.stringify(result.data, null, 2); output.append(pre);
+        }
+        loadQueue();
+      } catch (e) {
+        output.replaceChildren(el("div", { className: "err" }, e.message));
+      }
+    }
+
+    async function loadQueue() {
+      try {
+        const queue = await api("/api/agent/artifacts?status=pending_approval");
+        const target = document.getElementById("queue");
+        target.replaceChildren();
+        document.getElementById("queue-count").textContent = queue.count ? "(" + queue.count + ")" : "";
+        if (!queue.count) { target.append(el("p", { className: "empty" }, "Nothing pending approval.")); return; }
+        for (const artifact of queue.items) {
+          const card = renderArtifact(artifact);
+          const actions = el("div", { className: "row" });
+          const approve = el("button", {}, "Approve");
+          approve.onclick = async () => { await api("/api/agent/artifacts/" + artifact.id + "/approve", { method: "POST" }); loadQueue(); };
+          const reject = el("button", { className: "reject" }, "Reject");
+          reject.onclick = async () => { await api("/api/agent/artifacts/" + artifact.id, { method: "DELETE" }); loadQueue(); };
+          actions.append(approve, reject);
+          card.append(actions);
+          target.append(card);
+        }
+      } catch (e) {
+        document.getElementById("queue").replaceChildren(el("div", { className: "err" }, e.message));
+      }
+    }
+
+    document.getElementById("run-btn").onclick = runAgent;
+    load();
+  </script>
+</body>
+</html>

@@ -4965,3 +4965,15 @@ if os.getenv("MCP_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on
         mount_mcp(app)
     except Exception:  # pragma: no cover - MCP must never break boot
         log.exception("MCP transport could not be mounted; the REST bridge stays available")
+
+# ------------------------------------------------------------------ Agent features (additive, flag-guarded)
+# F-A integrity analyst + F-B question assist. Routes are always registered and
+# return 503 when their flag is off; no existing route or table is touched.
+from agent_api import router as agent_router
+app.include_router(agent_router)
+
+# ------------------------------------------------------------------ Agent platform (additive)
+# One orchestrator for the candidate/company/admin copilots. Draft-only writes
+# go to the new agent_artifacts queue; no existing route or table is touched.
+from agent_console_api import router as agent_console_router
+app.include_router(agent_console_router)

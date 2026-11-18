@@ -15,6 +15,8 @@ import { assessmentNotificationItems, notificationTimestamp } from "./notificati
 import useExamDevices, { trackLive } from "./useExamDevices.js";
 import useExamMonitoring from "./useExamMonitoring.js";
 import McpConsole from "./McpConsole.jsx";
+import AgentConsole from "./AgentConsole.jsx";
+import AiUsagePanel from "./AiUsagePanel.jsx";
 
 // Every exam is proctored (camera, microphone, screen share, full-screen).
 // Only attempts saved before proctoring existed are marked otherwise.
@@ -5830,6 +5832,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
     { id: "journey", label: W.journey, icon: "⌁", group: "GROWTH" },
     { id: "learning", label: W.learning, icon: "↗", group: "GROWTH" },
     { id: "mcp", label: "MCP tools", icon: "mcp", group: "GROWTH" },
+    { id: "agent", label: "AI Copilot", icon: "agent", group: "GROWTH" },
     { id: "passport", label: W.passport, icon: "◇", group: "GROWTH" },
     { id: "privacy", label: W.privacy, icon: "▣", group: "ACCOUNT" },
   ];
@@ -6229,6 +6232,21 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                 </div>
               </div>
               <McpConsole />
+            </>
+          )}
+          {section === "agent" && (
+            <>
+              <div className="page-title">
+                <div>
+                  <span className="eyebrow">AGENT PLATFORM · COPILOT</span>
+                  <h1>AI Copilot</h1>
+                  <p>
+                    Run your career coach, inspect telemetry and review every draft before you
+                    use it.
+                  </p>
+                </div>
+              </div>
+              <AgentConsole />
             </>
           )}
           {section === "privacy" && (
@@ -6787,6 +6805,7 @@ function AdminConsole({ onLogout }) {
     ["questions", A.nav.questions, "◇"],
     ["learning", A.nav.learning, "↗"],
     ["ai", A.nav.ai, "✳"],
+    ["agent", "AI Agents", "agent"],
     ["billing", A.nav.billing, "৳"],
     ["privacy", A.nav.privacy, "◈"],
     ["quality", A.nav.quality, "▥"],
@@ -7614,6 +7633,7 @@ function AdminConsole({ onLogout }) {
       "questions",
       "learning",
       "ai",
+      "agent",
       "billing",
       "privacy",
       "quality",
@@ -7627,12 +7647,14 @@ function AdminConsole({ onLogout }) {
       "identity",
       "appeals",
       "quality",
+      "agent",
     ],
     question_content_admin: [
       "questions",
       "learning",
       "assessments",
       "integrity",
+      "agent",
     ],
     company_verification_admin: [
       "companies",
@@ -7642,7 +7664,7 @@ function AdminConsole({ onLogout }) {
     ],
     support_agent: ["users"],
     finance_admin: ["billing", "learning"],
-    compliance_officer: ["ai", "privacy", "quality", "audit"],
+    compliance_officer: ["ai", "agent", "privacy", "quality", "audit"],
   };
   const visibleNav = nav.filter(([id]) =>
     (scopePages[adminRole] || []).includes(id),
@@ -9483,6 +9505,7 @@ function AdminConsole({ onLogout }) {
               </div>
             </section>
           )}
+          {page === "agent" && <AgentConsole />}
           {page === "billing" && (
             <section className="ad-billing">
               <div className="ad-billing-hero">
@@ -9556,6 +9579,7 @@ function AdminConsole({ onLogout }) {
                   <span>Awaiting Finance review</span>
                 </article>
               </div>
+              <AiUsagePanel />
               <div className="ad-panel">
                 <div className="ad-panel-head">
                   <div>
@@ -11854,6 +11878,7 @@ function HiringWorkspace({ role, onLogout }) {
     ...(canManagePipeline ? [["applicants", CO.nav.applicants, "♙"]] : []),
     ["assessments", CO.nav.assessments, "◎"],
     ["analytics", CO.nav.analytics, "▥"],
+    ["agent", "AI Copilot", "agent"],
     ...(canManageTeam ? [["team", CO.nav.team, "♧"]] : []),
     ["settings", CO.nav.settings, "⚙"],
     ["security", CO.nav.security, "◈"],
@@ -13291,6 +13316,7 @@ function HiringWorkspace({ role, onLogout }) {
               </div>
             </section>
           )}
+          {page === "agent" && <AgentConsole />}
           {page === "settings" && (
             <section>
               <div className="cr-page-heading">
