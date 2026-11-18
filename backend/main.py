@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form, Request
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
@@ -1362,7 +1363,7 @@ def state(u=Depends(current_user)):
             "finalized": result.get("finalized", False), "objective_summary": result.get("objective_summary"),
             "finished": a["finished"],
             "started": a["started"],
-            "proctoring": json.loads(a["state"] or "{}").get("proctoring", {"mode": "r0"}),
+            "proctoring": json.loads(a["state"] or "{}").get("proctoring", {"mode": "legacy_unproctored"}),
             "topics": result.get("topics", {}),
             "review_decision": a["review_decision"], "review_reason": a["review_reason"],
             "reviewed_at": a["reviewed_at"], "appeal": a["appeal"],
@@ -2811,41 +2812,12 @@ def _profile_value_for_evidence(profile: dict, field: str):
     return str(value) if value not in (None, "") else None
 
 
-@app.post("/api/cv/profile-extract")
-async def upload_cv_profile(
-    file: UploadFile = File(...),
-    u=Depends(current_user),
-):
-    need_consent(u)
-    require_verified_email(u)
+def _extract_cv_upload(u: dict, filename: str, file_bytes: bytes) -> dict:
+    """Parse, extract and store one uploaded CV. Blocking: run it in a worker thread.
 
-    role = one(
-        "SELECT role FROM user_roles WHERE user_id=?",
-        (u["id"],),
-    )
-
-    if role and role["role"] != "candidate":
-        raise HTTPException(403, "Only candidates can create candidate profiles")
-
-    # A confirmed profile must be updated through the normal profile endpoint.
-    existing = one(
-        "SELECT user_id FROM candidate_profiles WHERE user_id=?",
-        (u["id"],),
-    )
-
-    if existing:
-        raise HTTPException(
-            409,
-            "Your profile is already confirmed. Update it from My Profile.",
-        )
-
-    filename = file.filename or "cv"
-
-    # Parse first. Do not store files that fail basic validation/parsing.
-    file_bytes = await file.read(5_000_001)
-    if len(file_bytes) > 5_000_000:
-        raise HTTPException(413, "CV file must be 5 MB or smaller")
-
+    Shared by first-time profile creation and later CV updates. The CV text is
+    PII-redacted before it reaches any AI provider and is treated as data only.
+    """
     raw_text, parser_info = read_profile_cv(filename, file_bytes)
 
     identity = {
@@ -2980,6 +2952,83 @@ async def upload_cv_profile(
             "Could not store the CV. Please try again.",
         )
 
+    return {
+        "profile": profile,
+        "document": document,
+        "stored_evidence": stored_evidence,
+        "method": method,
+        "message": message,
+        "parser_info": parser_info,
+        "ai_provider": ai_provider,
+        "ai_model": ai_model,
+        "ai_error": ai_error,
+    }
+
+
+def _extraction_payload(result: dict) -> dict:
+    parser_info = result["parser_info"]
+    return {
+        "parser": parser_info["parser"],
+        "ocr_used": parser_info["ocr_used"],
+        "ocr_pages": parser_info["ocr_pages"],
+        "ai_provider": result["ai_provider"],
+        "ai_model": result["ai_model"],
+        "ai_error": result["ai_error"],
+        "fields_found": len(result["stored_evidence"]),
+        **profile_review_summary(result["profile"], result["stored_evidence"]),
+    }
+
+
+def _document_payload(document: dict) -> dict:
+    return {k: document[k] for k in ("id", "filename", "size_bytes", "status")}
+
+
+async def _read_cv_upload(file: UploadFile) -> tuple[str, bytes]:
+    filename = file.filename or "cv"
+
+    # Parse first. Do not store files that fail basic validation/parsing.
+    file_bytes = await file.read(5_000_001)
+    if len(file_bytes) > 5_000_000:
+        raise HTTPException(413, "CV file must be 5 MB or smaller")
+
+    return filename, file_bytes
+
+
+@app.post("/api/cv/profile-extract")
+async def upload_cv_profile(
+    file: UploadFile = File(...),
+    u=Depends(current_user),
+):
+    need_consent(u)
+    require_verified_email(u)
+
+    role = one(
+        "SELECT role FROM user_roles WHERE user_id=?",
+        (u["id"],),
+    )
+
+    if role and role["role"] != "candidate":
+        raise HTTPException(403, "Only candidates can create candidate profiles")
+
+    # A confirmed profile must be updated through the normal profile endpoint.
+    existing = one(
+        "SELECT user_id FROM candidate_profiles WHERE user_id=?",
+        (u["id"],),
+    )
+
+    if existing:
+        raise HTTPException(
+            409,
+            "Your profile is already confirmed. Update it from My Profile.",
+        )
+
+    filename, file_bytes = await _read_cv_upload(file)
+    # Parsing, OCR and the AI call are blocking; keep them off the event loop.
+    result = await run_in_threadpool(_extract_cv_upload, u, filename, file_bytes)
+    profile, document, method, message = (
+        result["profile"], result["document"], result["method"], result["message"],
+    )
+
     now = time.time()
 
     # Store the extracted profile as a private draft.
@@ -3024,24 +3073,56 @@ async def upload_cv_profile(
         "status": "draft",
         "method": method,
         "profile": profile,
-        "document": {
-            "id": document["id"],
-            "filename": document["filename"],
-            "size_bytes": document["size_bytes"],
-            "status": document["status"],
-        },
-        "extraction": {
-            "parser": parser_info["parser"],
-            "ocr_used": parser_info["ocr_used"],
-            "ocr_pages": parser_info["ocr_pages"],
-            "ai_provider": ai_provider,
-            "ai_model": ai_model,
-            "ai_error": ai_error,
-            "fields_found": len(stored_evidence),
-            **profile_review_summary(profile, stored_evidence),
-        },
+        "document": _document_payload(document),
+        "extraction": _extraction_payload(result),
         "completeness": profile_completeness(profile),
         "message": message,
+    }
+
+
+@app.post("/api/cv/profile-update")
+async def update_cv_profile(
+    file: UploadFile = File(...),
+    u=Depends(current_user),
+):
+    """Upload a newer CV after the profile is confirmed. Can be repeated.
+
+    The file is parsed and stored like the first upload, but the confirmed
+    profile is never overwritten here: the extracted values come back as a
+    suggestion that the candidate reviews and saves from My Profile.
+    """
+    need_consent(u)
+    require_verified_email(u)
+    role = one("SELECT role FROM user_roles WHERE user_id=?", (u["id"],))
+    if role and role["role"] != "candidate":
+        raise HTTPException(403, "Only candidates can update a candidate CV")
+    if not one("SELECT user_id FROM candidate_profiles WHERE user_id=?", (u["id"],)):
+        raise HTTPException(409, "Create your profile first, then update your CV.")
+
+    filename, file_bytes = await _read_cv_upload(file)
+    result = await run_in_threadpool(_extract_cv_upload, u, filename, file_bytes)
+    audit(u["id"], "candidate_cv_updated", result["document"]["id"])
+    return {
+        "ok": True,
+        "status": "suggestion",
+        "method": result["method"],
+        "profile": result["profile"],
+        "document": _document_payload(result["document"]),
+        "extraction": _extraction_payload(result),
+        "message": result["message"],
+    }
+
+
+@app.get("/api/cv/documents")
+def list_my_cv_documents(u=Depends(current_user)):
+    """The candidate's own stored CV uploads, newest first (metadata only)."""
+    import cv_store
+    return {
+        "documents": [
+            {k: doc[k] for k in ("id", "filename", "size_bytes", "status", "created")}
+            for doc in cv_store.list_documents(u["id"])
+        ],
+        "keep": cv_store.KEEP_DOCUMENTS_PER_USER,
     }
 
 
@@ -3781,7 +3862,7 @@ def view(att, include_session=False):
     unlimited_time = unlimited_exam_user(att["user_id"], st)
     session = {"session_id": att.get("session_id") if include_session else None,
                "last_event_seq": int(att.get("last_event_seq") or 0),
-               "proctoring": st.get("proctoring", {"mode": "r0"})}
+               "proctoring": st.get("proctoring", {"mode": "legacy_unproctored"})}
     if st.get("graphrag"):
         import graphrag as G
         questions = st["selected_questions"]
@@ -4131,7 +4212,7 @@ def get_att(att_id, uid):
 def require_screen_share(att_id, session_id=None):
     attempt = one("SELECT state,session_id FROM attempts WHERE id=?", (att_id,))
     policy = json.loads(attempt["state"]).get("proctoring", {}) if attempt else {}
-    if policy.get("mode") == "r1":
+    if PROCTOR.is_proctored(policy):
         _check_exam_session(dict(attempt), session_id)
         pairs = {
             "screen_share_started": ("screen_share_started", "screen_share_stopped", "screen_share_unavailable"),
@@ -4144,9 +4225,9 @@ def require_screen_share(att_id, session_id=None):
             signal = one(f"SELECT type,metadata FROM events WHERE attempt_id=? AND ts>=? AND type IN ({placeholders}) ORDER BY ts DESC,id DESC LIMIT 1",
                          (att_id, policy.get("session_started_at", 0), *types))
             if not signal or signal["type"] != required:
-                raise HTTPException(409, "r1_monitoring_restore_required:" + required)
+                raise HTTPException(409, "monitoring_restore_required:" + required)
             if required == "screen_share_started" and json.loads(signal["metadata"] or "{}").get("surface") != "monitor":
-                raise HTTPException(409, "r1_entire_screen_required")
+                raise HTTPException(409, "entire_screen_required")
     latest = one(
         "SELECT type FROM events WHERE attempt_id=? AND type IN ('screen_share_started','screen_share_stopped','screen_share_unavailable') ORDER BY ts DESC, id DESC LIMIT 1",
         (att_id,),
@@ -4184,8 +4265,8 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
             sid = secrets.token_urlsafe(32)
             now = time.time()
             saved = json.loads(act["state"])
-            required_policy = saved.get("proctoring", {"mode": "r0"})
-            if required_policy.get("mode") == "r1":
+            required_policy = saved.get("proctoring", {"mode": "legacy_unproctored"})
+            if PROCTOR.is_proctored(required_policy):
                 updated_policy = PROCTOR.validate_start(b, required_policy, now)
                 updated_policy["consented_at"] = required_policy["consented_at"]
                 saved["proctoring"] = updated_policy
@@ -4215,11 +4296,8 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
               "served_at": time.time(), "question_viewed_at": time.time(), "question_time_seconds": {}, "seed": seed}
         st["current"] = selected[0]["id"]
     else:
-        if PROCTOR.policy().get("mode") == "r1":
-            raise HTTPException(409, "r1_requires_an_assessment_blueprint")
-        st = E.new_state(seed)
-        q = E.pick_question(st, seen_before(u["id"]))
-        st["current"], st["served_at"] = q["id"], time.time()
+        # Every exam is proctored and built from an approved question blueprint.
+        raise HTTPException(409, "assessment_blueprint_required")
     aid = uuid.uuid4().hex[:12]
     session_id = secrets.token_urlsafe(32)
     now = time.time()
@@ -4520,7 +4598,7 @@ def _accept_sequence(att, seq, aid, request, event_type, client_ts=None, metadat
     st = json.loads(att["state"])
     safe_meta = {k: (v[:100] if isinstance(v, str) else v) for k, v in list((metadata or {}).items())[:8]
                   if k in EVENT_META_KEYS and isinstance(v, (str, int, float, bool))}
-    if st.get("proctoring", {}).get("mode") == "r1":
+    if PROCTOR.is_proctored(st.get("proctoring")):
         safe_meta["review_note"] = PROCTOR.observation(event_type)["summary"]
     run("INSERT INTO events(attempt_id,type,ts,question_id,question_index,seq,client_ts,metadata) VALUES (?,?,?,?,?,?,?,?)",
         (aid, event_type, now, st.get("current"), st.get("index"), seq,
@@ -4566,8 +4644,8 @@ async def upload_exam_evidence(aid: str, request: Request,
         raise HTTPException(409, "attempt_not_active")
     _check_exam_session(att, session_id)
     policy = json.loads(att["state"]).get("proctoring", {})
-    if policy.get("mode") != "r1" or policy.get("consent_version") != PROCTOR.CONSENT_VERSION or not policy.get("consented_at"):
-        raise HTTPException(403, "r1_evidence_consent_required")
+    if not PROCTOR.is_proctored(policy) or not PROCTOR.consent_ok(policy.get("consent_version")) or not policy.get("consented_at"):
+        raise HTTPException(403, "evidence_consent_required")
     if event_type not in PROCTOR.EVIDENCE_EVENTS or source not in ("camera", "screen"):
         raise HTTPException(422, "unsupported_evidence_event")
     if not 0 <= confidence <= 1:

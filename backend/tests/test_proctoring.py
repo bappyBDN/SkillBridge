@@ -1,4 +1,4 @@
-"""R1 consent/permission gating, scoped evidence storage and R0 isolation."""
+"""Always-on proctoring: consent/permission gating and scoped evidence storage."""
 import io
 import json
 import os
@@ -7,7 +7,7 @@ import tempfile
 import time
 import uuid
 
-os.environ.setdefault("DB_PATH", os.path.join(tempfile.mkdtemp(prefix="sb_r1_"), "test.db"))
+os.environ.setdefault("DB_PATH", os.path.join(tempfile.mkdtemp(prefix="sb_proctor_"), "test.db"))
 os.environ.setdefault("PBKDF2_ITERATIONS", "1000")
 os.environ["SEED_DEMO"] = "false"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -20,8 +20,7 @@ from test_exam_start_flow import candidate, blueprint, client  # noqa: F401 - sh
 
 
 @pytest.fixture
-def r1(candidate, monkeypatch):
-    monkeypatch.setenv("ASSESSMENT_PROCTORING_MODE", "r1")
+def proctored(candidate):
     uid, headers = candidate
     bp = blueprint(headers)
     body = {"blueprint_id": bp["blueprint_id"], "proctoring_consent": P.CONSENT_VERSION,
@@ -29,8 +28,8 @@ def r1(candidate, monkeypatch):
     return uid, headers, body
 
 
-def start(r1):
-    _, headers, body = r1
+def start(proctored):
+    _, headers, body = proctored
     response = client.post("/api/attempts", json=body, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
@@ -61,18 +60,28 @@ def upload(headers, attempt, seq=5, source="camera", payload=None, kind="ai_audi
                        files={"image": ("snapshot.jpg", payload if payload is not None else jpeg(), "image/jpeg")})
 
 
-def test_r0_is_camera_free_by_default_and_rejects_camera_evidence(candidate, monkeypatch):
-    monkeypatch.delenv("ASSESSMENT_PROCTORING_MODE", raising=False)
-    _, headers = candidate
-    assert client.get("/api/state", headers=headers).json()["proctoring_policy"] == {"mode": "r0", "required": ["screen", "fullscreen"]}
+def test_every_exam_is_proctored_without_any_mode_switch(candidate, monkeypatch):
+    # The old environment switch no longer turns the camera off.
+    monkeypatch.setenv("ASSESSMENT_PROCTORING_MODE", "r0")
+    uid, headers = candidate
+    policy = client.get("/api/state", headers=headers).json()["proctoring_policy"]
+    assert policy["mode"] == "proctored"
+    assert policy["required"] == ["screen", "fullscreen", "camera", "microphone"]
     response = client.post("/api/attempts", json={"blueprint_id": blueprint(headers)["blueprint_id"]}, headers=headers)
-    assert response.status_code == 200
-    assert response.json()["proctoring"]["mode"] == "r0"
-    assert upload(headers, response.json()).status_code == 403
+    assert response.status_code == 409
+    assert response.json()["detail"] == "proctoring_consent_required"
+    assert main.one("SELECT COUNT(*) AS n FROM attempts WHERE user_id=?", (uid,))["n"] == 0
 
 
-def test_all_four_permissions_and_versioned_consent_are_required_before_creation(r1):
-    uid, headers, body = r1
+def test_attempts_saved_with_the_old_label_stay_proctored():
+    legacy_mode, legacy_consent = "r1", "r1-proctoring-v1"  # labels stored on older attempts
+    assert P.is_proctored({"mode": legacy_mode}) and P.is_proctored({"mode": "proctored"})
+    assert not P.is_proctored({"mode": "legacy_unproctored"}) and not P.is_proctored(None)
+    assert P.consent_ok(legacy_consent) and P.consent_ok(P.CONSENT_VERSION)
+
+
+def test_all_four_permissions_and_versioned_consent_are_required_before_creation(proctored):
+    uid, headers, body = proctored
     for field in ("proctoring_consent", "identity_status"):
         bad = {**body, field: None}
         assert client.post("/api/attempts", json=bad, headers=headers).status_code == 409
@@ -80,14 +89,14 @@ def test_all_four_permissions_and_versioned_consent_are_required_before_creation
         bad = {**body, "proctoring_ready": {**body["proctoring_ready"], key: False}}
         assert client.post("/api/attempts", json=bad, headers=headers).status_code == 409
     assert main.one("SELECT COUNT(*) AS n FROM attempts WHERE user_id=?", (uid,))["n"] == 0
-    attempt = start(r1)
-    assert attempt["proctoring"]["mode"] == "r1" and attempt["proctoring"]["consented_at"]
+    attempt = start(proctored)
+    assert attempt["proctoring"]["mode"] == "proctored" and attempt["proctoring"]["consented_at"]
     assert attempt["duration_seconds"] == 2400
 
 
-def test_permission_interruptions_pause_answers_until_restoration_without_failing(r1):
-    _, headers, _ = r1
-    attempt = start(r1)
+def test_permission_interruptions_pause_answers_until_restoration_without_failing(proctored):
+    _, headers, _ = proctored
+    attempt = start(proctored)
     aid = attempt["attempt_id"]
     answer_headers = {**headers, "X-Exam-Session": attempt["session_id"]}
     body = {"question_id": attempt["question"]["id"], "answer": "MOCK answer"}
@@ -104,15 +113,15 @@ def test_permission_interruptions_pause_answers_until_restoration_without_failin
     signal(headers, attempt, "camera_started", 8)
     assert answer().status_code == 200
     signal(headers, attempt, "screen_share_started", 9, {"surface": "window"})
-    assert answer().json()["detail"] == "r1_entire_screen_required"
+    assert answer().json()["detail"] == "entire_screen_required"
     assert main.one("SELECT status FROM attempts WHERE id=?", (aid,))["status"] == "active"
     # Quitting must work even when a required permission is missing.
     assert client.post(f"/api/attempts/{aid}/quit", json={"session_id": attempt["session_id"]}, headers=headers).status_code == 200
 
 
-def test_resuming_r1_requires_fresh_permission_attestation_and_new_session_events(r1):
-    uid, headers, body = r1
-    attempt = start(r1)
+def test_resuming_requires_fresh_permission_attestation_and_new_session_events(proctored):
+    uid, headers, body = proctored
+    attempt = start(proctored)
     ready(headers, attempt)
     response = client.post("/api/attempts", headers=headers, json={"resume_attempt_id": attempt["attempt_id"]})
     assert response.status_code == 409
@@ -129,9 +138,9 @@ def test_resuming_r1_requires_fresh_permission_attestation_and_new_session_event
     assert main.one("SELECT COUNT(*) AS n FROM attempts WHERE user_id=?", (uid,))["n"] == 1
 
 
-def test_sound_flag_links_camera_and_screen_snapshots_with_factual_notes_and_retention(r1):
-    _, headers, _ = r1
-    attempt = start(r1)
+def test_sound_flag_links_camera_and_screen_snapshots_with_factual_notes_and_retention(proctored):
+    _, headers, _ = proctored
+    attempt = start(proctored)
     ready(headers, attempt)
     signal(headers, attempt, "ai_audio_level", 5, {"level": .12, "threshold": .028, "duration_ms": 1200})
     assert upload(headers, attempt, seq=99).status_code == 409
@@ -154,9 +163,9 @@ def test_sound_flag_links_camera_and_screen_snapshots_with_factual_notes_and_ret
     assert export.status_code == 200 and len(export.json()["exam_evidence"]) == 2
 
 
-def test_invalid_jpeg_evidence_limit_and_expiry_are_enforced(r1):
-    _, headers, _ = r1
-    attempt = start(r1)
+def test_invalid_jpeg_evidence_limit_and_expiry_are_enforced(proctored):
+    _, headers, _ = proctored
+    attempt = start(proctored)
     ready(headers, attempt)
     signal(headers, attempt, "ai_audio_level", 5)
     assert upload(headers, attempt, payload=b"\xff\xd8\xffnot-a-jpeg").status_code == 415
@@ -173,9 +182,9 @@ def test_invalid_jpeg_evidence_limit_and_expiry_are_enforced(r1):
     assert client.get(f"/api/attempts/{attempt['attempt_id']}/evidence/{evidence_id}", headers=headers).status_code == 404
 
 
-def test_other_candidates_cannot_access_evidence_and_account_deletion_removes_it(r1):
-    uid, headers, _ = r1
-    attempt = start(r1)
+def test_other_candidates_cannot_access_evidence_and_account_deletion_removes_it(proctored):
+    uid, headers, _ = proctored
+    attempt = start(proctored)
     ready(headers, attempt)
     signal(headers, attempt, "ai_audio_level", 5)
     saved = upload(headers, attempt).json()

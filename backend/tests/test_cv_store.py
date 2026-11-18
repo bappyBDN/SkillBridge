@@ -949,9 +949,11 @@ def test_retake_locked_until_current_result_has_human_review():
         ("retake-lock-attempt", uid, "pre", 1, "done", "{}", 0, 1,
          json.dumps({"overall": 50, "topics": {"python": {"score": 50, "level": "Intermediate", "n": 5}}})),
     )
+    # Without an approved blueprint no exam can start at all; the human-review
+    # gate itself is exercised with a real blueprint in test_exam_start_flow.
     blocked = client.post("/api/attempts", headers=headers)
     assert blocked.status_code == 409, blocked.text
-    assert blocked.json()["detail"] == "result_awaiting_review"
+    assert blocked.json()["detail"] == "assessment_blueprint_required"
 def test_honesty_score_default_review_and_decision():
     uid, headers = _user("honesty-candidate@example.com")
     admin_reg = client.post(
@@ -1028,3 +1030,47 @@ def test_honesty_score_default_review_and_decision():
     )
     assert rejected.status_code == 200
     assert rejected.json()["honesty"]["status"] == "rejected"
+
+
+def test_confirmed_profile_can_upload_updated_cv_repeatedly_without_overwrite(monkeypatch):
+    import ai_providers
+
+    uid, headers = _user("cv-update@example.com")
+    cv_text = "Rafi Ahmed\nSkills\nPython, SQL, React\nBuilt dashboards for internship projects."
+    monkeypatch.setattr(
+        ai_providers, "extract_cv_profile",
+        lambda *a, **k: (_ for _ in ()).throw(ai_providers.AIExtractionError("MOCK offline")),
+    )
+    upload = lambda name: client.post(
+        "/api/cv/profile-update",
+        files={"file": (name, cv_text.encode("utf-8"), "text/plain")},
+        headers=headers,
+    )
+    # No confirmed profile yet: the first CV goes through profile creation.
+    assert upload("early.txt").status_code == 409
+
+    saved = client.put("/api/candidate/profile/draft",
+                       json={"summary": "Original summary.", "skills": [{"name": "Go", "category": "Language"}]},
+                       headers=headers)
+    assert saved.status_code == 200, saved.text
+    assert client.post("/api/candidate/profile/confirm", json={}, headers=headers).status_code == 200
+    assert client.post("/api/cv/profile-extract",
+                       files={"file": ("x.txt", cv_text.encode("utf-8"), "text/plain")},
+                       headers=headers).status_code == 409
+
+    first, second = upload("cv-v1.txt"), upload("cv-v2.txt")
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["status"] == "suggestion"
+    assert body["profile"]["skills"]
+    assert body["document"]["filename"] == "cv-v2.txt"
+
+    # The confirmed profile is untouched until the candidate saves.
+    profile = client.get("/api/candidate/profile", headers=headers).json()["profile"]
+    assert profile["summary"] == "Original summary."
+
+    docs = client.get("/api/cv/documents", headers=headers).json()
+    names = [d["filename"] for d in docs["documents"]]
+    assert names[:2] == ["cv-v2.txt", "cv-v1.txt"]
+    assert all("storage_key" not in d and "text" not in d for d in docs["documents"])

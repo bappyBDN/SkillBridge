@@ -5,7 +5,7 @@ export const trackLive = (stream, kind = "video") => Boolean(
     ?.some((track) => track.readyState === "live" && !track.muted),
 );
 
-export default function useR1Devices(enabled) {
+export default function useExamDevices(enabled) {
   const allowed = useRef(enabled);
   allowed.current = enabled;
   useEffect(() => () => { allowed.current = false; }, []);
@@ -37,7 +37,7 @@ export default function useR1Devices(enabled) {
         };
         check();
       });
-      if (!allowed.current) throw new Error("R1 camera setup was cancelled.");
+      if (!allowed.current) throw new Error("Camera setup was cancelled.");
       setCamera(stream);
       setCameraReady(true);
     } catch (e) {
@@ -64,7 +64,7 @@ export default function useR1Devices(enabled) {
       if (!trackLive(stream, "audio") || context.state !== "running") throw new Error("Microphone monitoring is not active. Allow access and try again.");
       const probe = context.createMediaStreamSource(stream);
       probe.disconnect();
-      if (!allowed.current) throw new Error("R1 microphone setup was cancelled.");
+      if (!allowed.current) throw new Error("Microphone setup was cancelled.");
       setMicrophone(stream);
       setAudioContext(context);
       setMicrophoneReady(true);

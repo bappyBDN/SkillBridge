@@ -15,9 +15,14 @@ import pytest
 from fastapi.testclient import TestClient
 import main
 import enterprise
+import proctoring
 from test_exam_policy import build_bank, profile
 
 client = TestClient(main.app)
+# Every exam is proctored: consent, all four devices and an identity outcome.
+PROCTORED = {"proctoring_consent": proctoring.CONSENT_VERSION,
+             "proctoring_ready": {key: True for key in proctoring.REQUIRED},
+             "identity_status": "needs_review"}
 
 
 @pytest.fixture
@@ -48,7 +53,7 @@ def blueprint(headers, endpoint="initial-blueprint"):
 
 
 def start(headers, bp):
-    response = client.post("/api/attempts", json={"blueprint_id": bp["blueprint_id"]}, headers=headers)
+    response = client.post("/api/attempts", json={"blueprint_id": bp["blueprint_id"], **PROCTORED}, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -88,7 +93,7 @@ def test_resume_preserves_questions_answers_and_original_deadline(candidate):
     state["current"] = state["selected_questions"][2]["id"]
     started = time.time() - 100
     main.run("UPDATE attempts SET state=?,started=? WHERE id=?", (json.dumps(state), started, aid))
-    resumed = client.post("/api/attempts", json={"resume_attempt_id": aid, "blueprint_id": "must-not-be-looked-up"}, headers=headers)
+    resumed = client.post("/api/attempts", json={"resume_attempt_id": aid, "blueprint_id": "must-not-be-looked-up", **PROCTORED}, headers=headers)
     assert resumed.status_code == 200, resumed.text
     resumed = resumed.json()
     assert resumed["attempt_id"] == aid and resumed["blueprint_id"] == bp["blueprint_id"]
@@ -104,11 +109,11 @@ def test_expired_resume_finishes_without_starting_a_replacement(candidate):
     attempt = start(headers, blueprint(headers))
     aid = attempt["attempt_id"]
     main.run("UPDATE attempts SET started=? WHERE id=?", (time.time() - 3000, aid))
-    response = client.post("/api/attempts", json={"resume_attempt_id": aid}, headers=headers)
+    response = client.post("/api/attempts", json={"resume_attempt_id": aid, **PROCTORED}, headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "done" and response.json()["attempt_id"] == aid
     assert main.one("SELECT COUNT(*) AS n FROM attempts WHERE user_id=?", (uid,))["n"] == 1
-    assert client.post("/api/attempts", json={"resume_attempt_id": aid}, headers=headers).json()["status"] == "done"
+    assert client.post("/api/attempts", json={"resume_attempt_id": aid, **PROCTORED}, headers=headers).json()["status"] == "done"
 
 
 def test_resume_cannot_access_another_candidates_attempt(candidate):
@@ -124,7 +129,7 @@ def test_new_initial_exam_does_not_inherit_the_demo_unlimited_timer(candidate, m
     attempt = start(headers, blueprint(headers))
     assert attempt["unlimited_time"] is False and attempt["remaining"] > 2300
     main.run("UPDATE attempts SET started=? WHERE id=?", (time.time() - 3000, attempt["attempt_id"]))
-    resumed = client.post("/api/attempts", json={"resume_attempt_id": attempt["attempt_id"]}, headers=headers)
+    resumed = client.post("/api/attempts", json={"resume_attempt_id": attempt["attempt_id"], **PROCTORED}, headers=headers)
     assert resumed.status_code == 200 and resumed.json()["status"] == "done"
 
 
@@ -149,7 +154,7 @@ def test_profile_retake_keeps_its_own_duration_and_existing_review_credit_gates(
     bp = uuid.uuid4().hex
     main.run("INSERT INTO assessment_blueprints(id,user_id,status,payload,created) VALUES (?,?,?,?,?)",
              (bp, uid, "ready", json.dumps({"questions": questions, "total_questions": 3, "estimated_duration_seconds": 3420, "mode": "profile_retake"}), time.time()))
-    request = lambda: client.post("/api/attempts", json={"blueprint_id": bp}, headers=headers)
+    request = lambda: client.post("/api/attempts", json={"blueprint_id": bp, **PROCTORED}, headers=headers)
     assert request().json()["detail"] == "result_awaiting_review"
     main.run("INSERT INTO admin_attempt_reviews(attempt_id,decision,reason,reviewer_id,reviewed_at) VALUES (?,?,?,?,?)",
              (previous, "approved", "MOCK approved academic review", uid, time.time()))

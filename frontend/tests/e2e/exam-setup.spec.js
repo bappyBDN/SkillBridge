@@ -1,17 +1,18 @@
 import { expect, test } from "@playwright/test";
 
 // Browser permission APIs are mocked here: production still requires the
-// candidate's own clicks and explicit approval in the browser sharing picker.
-async function examWorkspace(page, { attempts = [], denied = false, shortage = false, mobile = false, r1 = false, cameraDenied = false, micDenied = false } = {}) {
+// candidate's own clicks and explicit approval in the browser pickers.
+// Every exam is proctored, so every test uses camera + microphone fixtures.
+async function examWorkspace(page, { attempts = [], denied = false, shortage = false, mobile = false, cameraDenied = false, micDenied = false, slowModels = false } = {}) {
   const calls = [];
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.addInitScript(({ denied, mobile, r1, cameraDenied, micDenied }) => {
+  await page.addInitScript(({ denied, mobile, cameraDenied, micDenied }) => {
     localStorage.setItem("sb_token", "exam-setup-test");
     localStorage.setItem("sb_lang", "en");
     if (mobile) Object.defineProperty(navigator, "userAgent", { value: "Android Mobile" });
     let fullscreen = null;
-    window.examPermissionCalls = { share: 0, camera: 0, fullscreen: 0, shareActivation: false, fullscreenActivation: false };
+    window.examPermissionCalls = { share: 0, camera: 0, microphone: 0, fullscreen: 0, shareActivation: false, fullscreenActivation: false };
     Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreen });
     // Init scripts run before <html> exists, so install on the prototype.
     Element.prototype.requestFullscreen = async () => {
@@ -31,33 +32,29 @@ async function examWorkspace(page, { attempts = [], denied = false, shortage = f
       track.muted = false;
       track.stop = () => { track.readyState = "ended"; };
       const stream = { getTracks: () => [track], getVideoTracks: () => kind === "video" ? [track] : [], getAudioTracks: () => kind === "audio" ? [track] : [] };
-      if (kind === "video") window.stopR1Camera = () => { track.stop(); track.dispatchEvent(new Event("ended")); };
+      if (kind === "video") window.stopExamCamera = () => { track.stop(); track.dispatchEvent(new Event("ended")); };
       return stream;
     };
-    if (r1) {
-      // Synthetic media/model fixtures verify workflow, not real AI accuracy.
-      window.examPermissionCalls.microphone = 0;
-      const streams = new WeakMap();
-      Object.defineProperty(HTMLMediaElement.prototype, "srcObject", { configurable: true, get() { return streams.get(this); }, set(value) { streams.set(this, value); } });
-      Object.defineProperty(HTMLMediaElement.prototype, "readyState", { configurable: true, get: () => 4 });
-      Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { configurable: true, get: () => performance.now() / 1000 });
-      Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, get: () => 640 });
-      Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { configurable: true, get: () => 480 });
-      HTMLMediaElement.prototype.play = async () => {};
-      HTMLMediaElement.prototype.pause = () => {};
-      CanvasRenderingContext2D.prototype.drawImage = () => {};
-      window.AudioContext = class extends EventTarget {
-        constructor() { super(); this.state = "running"; }
-        async resume() { this.state = "running"; this.dispatchEvent(new Event("statechange")); }
-        async close() { this.state = "closed"; this.dispatchEvent(new Event("statechange")); }
-        createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
-        createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData(data) { data.fill(window.mockSoundLevel || 0); } }; }
-      };
-    }
+    // Synthetic media/model fixtures verify workflow, not real AI accuracy.
+    const streams = new WeakMap();
+    Object.defineProperty(HTMLMediaElement.prototype, "srcObject", { configurable: true, get() { return streams.get(this); }, set(value) { streams.set(this, value); } });
+    Object.defineProperty(HTMLMediaElement.prototype, "readyState", { configurable: true, get: () => 4 });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", { configurable: true, get: () => performance.now() / 1000 });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, get: () => 640 });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { configurable: true, get: () => 480 });
+    HTMLMediaElement.prototype.play = async () => {};
+    HTMLMediaElement.prototype.pause = () => {};
+    CanvasRenderingContext2D.prototype.drawImage = () => {};
+    window.AudioContext = class extends EventTarget {
+      constructor() { super(); this.state = "running"; }
+      async resume() { this.state = "running"; this.dispatchEvent(new Event("statechange")); }
+      async close() { this.state = "closed"; this.dispatchEvent(new Event("statechange")); }
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData(data) { data.fill(window.mockSoundLevel || 0); } }; }
+    };
     navigator.mediaDevices.getUserMedia = async (constraints) => {
       if (constraints.video) window.examPermissionCalls.camera++;
       else window.examPermissionCalls.microphone++;
-      if (!r1) throw new Error("Camera/microphone must not be requested in R0");
       if ((constraints.video && cameraDenied) || (constraints.audio && micDenied)) throw new DOMException("MOCK permission denied", "NotAllowedError");
       return streamOf(constraints.video ? "video" : "audio");
     };
@@ -73,19 +70,22 @@ async function examWorkspace(page, { attempts = [], denied = false, shortage = f
       window.stopExamShare = () => { track.stop(); track.dispatchEvent(new Event("ended")); };
       return stream;
     };
-  }, { denied, mobile, r1, cameraDenied, micDenied });
-  const proctoring = { mode: "r1", consent_version: "r1-proctoring-v1", required: ["screen", "fullscreen", "camera", "microphone"], retention_days: 30, max_snapshots: 40 };
-  if (r1) await page.route("**/*mediapipe*tasks-vision*", (route) => route.fulfill({ contentType: "application/javascript", body: `
+  }, { denied, mobile, cameraDenied, micDenied });
+  const proctoring = { mode: "proctored", consent_version: "proctoring-v1", required: ["screen", "fullscreen", "camera", "microphone"], retention_days: 30, max_snapshots: 40 };
+  let releaseModels = () => {};
+  const modelsGate = slowModels ? new Promise((resolve) => { releaseModels = resolve; }) : Promise.resolve();
+  await page.route("**/*mediapipe*tasks-vision*", async (route) => {
+    await modelsGate;
+    return route.fulfill({ contentType: "application/javascript", body: `
     export class FilesetResolver { static async forVisionTasks() { return {}; } }
     export class FaceLandmarker { static async createFromOptions() { return { detectForVideo() { return { faceLandmarks: Array.from({length: window.mockFaces ?? 1}, () => []) }; }, close() {} }; } }
     export class ObjectDetector { static async createFromOptions() { return { detectForVideo() { return { detections: window.mockPhone ? [{ categories: [{ categoryName: "cell phone", score: 0.88 }] }] : [] }; }, close() {} }; } }
-  ` }));
-  const state = { user: { name: "Exam Candidate", email: "exam@example.test" }, from_profile: true, consented: true, has_cv: true, confirmed: ["python"], passports: [], attempts,
-    ...(r1 ? { proctoring_policy: proctoring } : {}) };
+  ` });
+  });
+  const state = { user: { name: "Exam Candidate", email: "exam@example.test" }, from_profile: true, consented: true, has_cv: true, confirmed: ["python"], passports: [], attempts, proctoring_policy: proctoring };
   const question = (index) => ({ id: "q-" + index, prompt: "MOCK Fundamental test question " + index, question_type: "MCQ", assessment_topic: "DSA", assessment_section: "fundamental", options: ["MOCK A", "MOCK B"], difficulty_level: "Easy", marks: 1 });
   const allQuestions = Array.from({ length: 40 }, (_, i) => question(i));
-  const initial = { attempt_id: "active-exam", kind: "pre", status: "active", mode: "initial_cv_fundamentals", graphrag: true, blueprint_id: "initial-bp", session_id: "synthetic-session-long-enough", last_event_seq: 0, remaining: 2400, duration_seconds: 2400, total: 40, answered: 0, question_index: 0, question: allQuestions[0], all_questions: allQuestions, answers: {}, navigator: allQuestions.map((q, i) => ({ id: q.id, number: i + 1, type: "MCQ", topic: "DSA" })) };
-  if (r1) initial.proctoring = proctoring;
+  const initial = { attempt_id: "active-exam", kind: "pre", status: "active", mode: "initial_cv_fundamentals", graphrag: true, blueprint_id: "initial-bp", session_id: "synthetic-session-long-enough", last_event_seq: 0, remaining: 2400, duration_seconds: 2400, total: 40, answered: 0, question_index: 0, question: allQuestions[0], all_questions: allQuestions, answers: {}, navigator: allQuestions.map((q, i) => ({ id: q.id, number: i + 1, type: "MCQ", topic: "DSA" })), proctoring };
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, "");
@@ -111,36 +111,73 @@ async function examWorkspace(page, { attempts = [], denied = false, shortage = f
   await page.getByRole("textbox", { name: "Search pages" }).fill("journey");
   await page.keyboard.press("Enter");
   if (attempts.some((attempt) => attempt.status === "done")) await page.locator(".steps").getByRole("button", { name: /Profile retake/ }).click();
-  return { calls, errors };
+  return { calls, errors, releaseModels };
 }
 
-async function permissions(page) {
+async function shareAndFullscreen(page) {
   await page.getByRole("button", { name: "Enable screen sharing", exact: true }).click();
   await expect(page.getByRole("button", { name: "Screen sharing active", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Enter full-screen", exact: true }).click();
   await expect(page.getByRole("button", { name: "Full-screen mode active", exact: true })).toBeVisible();
 }
 
-test("Initial exam starts after exactly two click-triggered browser permissions, without a camera", async ({ page }) => {
+// Consent, camera, microphone, identity outcome, then screen + full-screen.
+async function permissions(page) {
+  await page.getByLabel(/I consent to this exam monitoring/).check();
+  await page.getByRole("button", { name: "Enable camera", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Camera active", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Enable microphone", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Microphone active", exact: true })).toBeVisible();
+  await page.getByLabel(/If the comparison is unavailable/).check();
+  await shareAndFullscreen(page);
+}
+
+test("every exam requires consent, camera, microphone, identity, screen and full-screen", async ({ page }) => {
   const { calls, errors } = await examWorkspace(page);
   const start = page.getByRole("button", { name: "Start Initial exam · 40 minutes", exact: true });
+  await expect(page.getByRole("button", { name: "Enable camera", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Enable microphone", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Enable screen sharing", exact: true })).toBeDisabled();
   await expect(start).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Enable camera", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Enable screen sharing", exact: true }).click();
-  await expect(start).toBeDisabled();
-  await page.getByRole("button", { name: "Enter full-screen", exact: true }).click();
+  await permissions(page);
   await expect(start).toBeEnabled();
   await start.click();
   await expect(page.getByRole("heading", { name: "MOCK Fundamental test question 0" })).toBeVisible();
-  expect(calls.find((call) => call.path === "/attempts").body).toEqual({ blueprint_id: "initial-bp" });
+  const request = calls.find((call) => call.path === "/attempts");
+  expect(request.body.blueprint_id).toBe("initial-bp");
+  expect(request.body.proctoring_ready).toEqual({ screen: true, fullscreen: true, camera: true, microphone: true });
+  expect(request.body.proctoring_consent).toBe("proctoring-v1");
+  expect(request.body.identity_status).toBe("needs_review");
   expect(calls.filter((call) => call.path === "/assessment/blueprint")).toHaveLength(0);
-  const events = calls.filter((call) => call.path.endsWith("/event"));
-  expect(events[0].body.type).toBe("screen_share_started");
-  expect(await page.evaluate(() => window.examPermissionCalls)).toEqual({ share: 1, camera: 0, fullscreen: 1, shareActivation: true, fullscreenActivation: true });
+  const events = calls.filter((call) => call.path.endsWith("/event")).map((call) => call.body.type);
+  expect(events).toEqual(expect.arrayContaining(["screen_share_started", "fullscreen_enter", "camera_started", "microphone_started"]));
+  const used = await page.evaluate(() => window.examPermissionCalls);
+  expect(used.camera).toBe(1);
+  expect(used.microphone).toBe(1);
+  expect(used.shareActivation && used.fullscreenActivation).toBe(true);
+  // The exam room shows the live camera and every monitoring flag.
+  await expect(page.getByText("Local AI monitoring active", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Questions" })).toHaveCount(0);
+  const flags = page.locator(".exam3-flag-list");
+  for (const label of ["Camera", "Microphone", "Face verification", "Face", "Phone", "Voice", "Screen share", "Full screen", "Tab focus", "Copy / paste"]) {
+    await expect(flags.getByText(label, { exact: true })).toBeVisible();
+  }
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Quit assessment", exact: true }).click();
   await expect(page.locator("body")).not.toHaveClass(/exam-live/);
   expect(errors).toEqual([]);
+});
+
+test("Start stays locked until the on-device AI models have loaded", async ({ page }) => {
+  const { releaseModels } = await examWorkspace(page, { slowModels: true });
+  await expect(page.getByText("Loading face & phone detection…")).toBeVisible();
+  await permissions(page);
+  const start = page.getByRole("button", { name: "Start Initial exam · 40 minutes" });
+  await expect(start).toBeDisabled();
+  await expect(page.getByText(/Still required: AI models loaded/)).toBeVisible();
+  releaseModels();
+  await expect(page.getByText("Face & phone detection ready")).toBeVisible();
+  await expect(start).toBeEnabled();
 });
 
 test("stopping share or exiting fullscreen disables Start until restored", async ({ page }) => {
@@ -160,6 +197,7 @@ test("stopping share or exiting fullscreen disables Start until restored", async
 
 test("denied sharing gives an actionable message and never starts an attempt", async ({ page }) => {
   const { calls } = await examWorkspace(page, { denied: true });
+  await page.getByLabel(/I consent to this exam monitoring/).check();
   await page.getByRole("button", { name: "Enable screen sharing", exact: true }).click();
   await expect(page.getByText(/Screen sharing was cancelled or denied/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start Initial exam · 40 minutes" })).toBeDisabled();
@@ -175,17 +213,19 @@ test("Profile exam is the retake even after a completed previous retake", async 
   await permissions(page);
   await page.getByRole("button", { name: "Start Profile retake exam", exact: true }).click();
   await expect(page.getByRole("heading", { name: "MOCK Fundamental test question 0" })).toBeVisible();
-  expect(calls.find((call) => call.path === "/attempts").body).toEqual({ blueprint_id: "profile-bp" });
+  expect(calls.find((call) => call.path === "/attempts").body.blueprint_id).toBe("profile-bp");
   expect(calls.filter((call) => call.path === "/assessment/initial-blueprint")).toHaveLength(0);
   expect(errors).toEqual([]);
 });
 
 test("resume skips blueprint generation and preserves the saved attempt", async ({ page }) => {
-  const { calls } = await examWorkspace(page, { attempts: [{ id: "active-exam", kind: "pre", status: "active" }] });
+  const { calls } = await examWorkspace(page, { attempts: [{ id: "active-exam", kind: "pre", status: "active", proctoring: { mode: "proctored", consent_version: "proctoring-v1" } }] });
   await permissions(page);
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(page.getByRole("heading", { name: "MOCK Fundamental test question 0" })).toBeVisible();
-  expect(calls.find((call) => call.path === "/attempts").body).toEqual({ resume_attempt_id: "active-exam" });
+  const body = calls.find((call) => call.path === "/attempts").body;
+  expect(body.resume_attempt_id).toBe("active-exam");
+  expect(body.proctoring_ready).toEqual({ screen: true, fullscreen: true, camera: true, microphone: true });
   expect(calls.filter((call) => call.path.startsWith("/assessment/") && call.method === "POST")).toHaveLength(0);
 });
 
@@ -214,39 +254,22 @@ test("mobile user agents cannot begin a desktop-only assessment", async ({ page 
   await expect(page.getByText("✕ Desktop device required", { exact: true })).toBeVisible();
 });
 
-async function r1Permissions(page) {
-  await page.getByLabel(/I consent to this R1 monitoring/).check();
-  await page.getByRole("button", { name: "Enable camera", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Camera active", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Enable microphone", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Microphone active", exact: true })).toBeVisible();
-  await page.getByLabel(/If the comparison is unavailable/).check();
+test("a stopped camera pauses answering but Quit always works", async ({ page }) => {
+  const { errors } = await examWorkspace(page);
   await permissions(page);
-}
-
-test("R1 requires explicit consent, all four devices and an identity-review outcome", async ({ page }) => {
-  const { calls, errors } = await examWorkspace(page, { r1: true });
-  await expect(page.getByRole("button", { name: "Enable camera", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Enable microphone", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Start Initial exam · 40 minutes" })).toBeDisabled();
-  await r1Permissions(page);
   await page.getByRole("button", { name: "Start Initial exam · 40 minutes" }).click();
-  await expect(page.getByRole("heading", { name: "MOCK Fundamental test question 0" })).toBeVisible();
-  const request = calls.find((call) => call.path === "/attempts");
-  expect(request.body.proctoring_ready).toEqual({ screen: true, fullscreen: true, camera: true, microphone: true });
-  expect(request.body.proctoring_consent).toBe("r1-proctoring-v1");
-  expect(request.body.identity_status).toBe("needs_review");
   await expect(page.getByText("Local AI monitoring active", { exact: true })).toBeVisible();
-  await page.evaluate(() => window.stopR1Camera());
+  await page.evaluate(() => window.stopExamCamera());
   await expect(page.getByText(/Assessment controls are paused/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Submit assessment", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Quit assessment", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Restore camera", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test("R1 sound and camera observations produce linked camera/screen evidence uploads", async ({ page }) => {
-  const { calls, errors } = await examWorkspace(page, { r1: true });
-  await r1Permissions(page);
+test("sound, face and phone observations produce flags and linked camera/screen evidence", async ({ page }) => {
+  const { calls, errors } = await examWorkspace(page);
+  await permissions(page);
   await page.getByRole("button", { name: "Start Initial exam · 40 minutes" }).click();
   await expect(page.getByText("Local AI monitoring active", { exact: true })).toBeVisible();
   await page.evaluate(() => { window.mockSoundLevel = .12; window.mockFaces = 0; window.mockPhone = true; });
@@ -255,12 +278,15 @@ test("R1 sound and camera observations produce linked camera/screen evidence upl
     await expect.poll(() => calls.filter((call) => call.path.endsWith("/evidence") && call.form.includes(`\r\n\r\n${type}\r\n`)).length).toBe(2);
   }
   expect(calls.some((call) => call.path.endsWith("/evidence") && call.form.includes("\r\n\r\nscreen\r\n"))).toBe(true);
+  const flags = page.locator(".exam3-flag-list");
+  await expect(flags.getByText("No face", { exact: true })).toBeVisible();
+  await expect(flags.getByText("Possible phone", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test("denying a mandatory R1 microphone blocks start without opening an attempt", async ({ page }) => {
-  const { calls } = await examWorkspace(page, { r1: true, micDenied: true });
-  await page.getByLabel(/I consent to this R1 monitoring/).check();
+test("denying the mandatory camera or microphone blocks start without opening an attempt", async ({ page }) => {
+  const { calls } = await examWorkspace(page, { micDenied: true });
+  await page.getByLabel(/I consent to this exam monitoring/).check();
   await page.getByRole("button", { name: "Enable microphone", exact: true }).click();
   await expect(page.getByText(/Microphone access was denied/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Start Initial exam · 40 minutes" })).toBeDisabled();

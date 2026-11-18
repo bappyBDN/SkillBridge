@@ -1,11 +1,20 @@
-"""Explicit post-R0 proctoring policy. R0 never activates camera/microphone capture.
+"""Exam proctoring policy. Every assessment is proctored.
+
+Camera, microphone, entire-screen sharing and full-screen are always required,
+together with explicit monitoring consent and a face check (or an acknowledged
+manual identity review). There is no camera-free variant and no mode switch.
 
 No grades, misconduct verdicts, emotion or demographic inference live here.
-Only bounded, factual observations and human-review notes are retained.
+Only bounded, factual observations and human-review notes are retained, and
+flags never fail a candidate automatically.
 """
 import os
 
-CONSENT_VERSION = "r1-proctoring-v1"
+MODE = "proctored"
+# Attempts stored before the single policy existed carry the old label.
+_LEGACY_PROCTORED = {"r1"}
+CONSENT_VERSION = "proctoring-v1"
+_LEGACY_CONSENT = {"r1-proctoring-v1"}
 REQUIRED = ("screen", "fullscreen", "camera", "microphone")
 NOTES = {
     "ai_no_face": "The on-device face model reported no face for a sustained interval. Occlusion, lighting or model error may explain this; human review is required.",
@@ -28,16 +37,22 @@ NOTES = {
 EVIDENCE_EVENTS = set(NOTES)
 
 
+def is_proctored(saved_policy) -> bool:
+    """True for every attempt started under the proctoring policy (old or new label)."""
+    mode = (saved_policy or {}).get("mode")
+    return mode == MODE or mode in _LEGACY_PROCTORED
+
+
+def consent_ok(version) -> bool:
+    return version == CONSENT_VERSION or version in _LEGACY_CONSENT
+
+
 def policy():
-    # A deployment must deliberately select the separately consented R1 mode.
-    mode = os.getenv("ASSESSMENT_PROCTORING_MODE", "r0").strip().lower()
-    if mode != "r1":
-        return {"mode": "r0", "required": ["screen", "fullscreen"]}
     try:
         days = max(1, min(90, int(os.getenv("EVIDENCE_RETENTION_DAYS", "30"))))
     except ValueError:
         days = 30
-    return {"mode": "r1", "consent_version": CONSENT_VERSION,
+    return {"mode": MODE, "consent_version": CONSENT_VERSION,
             "required": list(REQUIRED), "retention_days": days,
             "max_snapshots": 40, "max_snapshot_bytes": 180 * 1024,
             "audio_recorded": False, "continuous_video_recorded": False,
@@ -46,14 +61,15 @@ def policy():
 
 def validate_start(body, required_policy, now):
     from fastapi import HTTPException
-    if required_policy.get("mode") != "r1":
-        return {"mode": "r0"}
-    if not body or body.proctoring_consent != required_policy["consent_version"]:
-        raise HTTPException(409, "r1_proctoring_consent_required")
+    if not is_proctored(required_policy):
+        # Only attempts created before proctoring existed reach this branch.
+        return {"mode": "legacy_unproctored"}
+    if not body or not consent_ok(body.proctoring_consent):
+        raise HTTPException(409, "proctoring_consent_required")
     if any(body.proctoring_ready.get(key) is not True for key in REQUIRED):
-        raise HTTPException(409, "r1_all_four_permissions_required")
+        raise HTTPException(409, "camera_microphone_screen_fullscreen_required")
     if body.identity_status not in ("verified", "needs_review"):
-        raise HTTPException(409, "r1_identity_check_or_manual_review_acknowledgement_required")
+        raise HTTPException(409, "identity_check_or_manual_review_acknowledgement_required")
     return {**required_policy, "consented_at": now, "identity_status": body.identity_status,
             "session_started_at": now}
 

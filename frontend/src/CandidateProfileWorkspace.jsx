@@ -1,6 +1,57 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import Avatar from "./Avatar.jsx";
+import CvUpdatePanel from "./CvUpdatePanel.jsx";
+
+const SCALAR_FIELDS = ["headline", "phone", "location", "summary", "linkedin", "github", "portfolio"];
+const LIST_KEYS = {
+  education: (item) => [item.institution, item.degree],
+  experience: (item) => [item.company, item.title],
+  projects: (item) => [item.name],
+  skills: (item) => [item.name],
+  certifications: (item) => [item.name, item.issuer],
+  achievements: (item) => [item.title],
+  languages: (item) => [item.name],
+  volunteer: (item) => [item.organization, item.role],
+};
+const itemKey = (key, item) =>
+  LIST_KEYS[key](item || {}).map((part) => String(part || "").trim().toLowerCase()).join("|");
+
+// Fold a newer CV's extraction into the form: fill empty or changed text
+// fields, and add list entries that are not already present. Nothing is
+// removed, so manual edits survive; the candidate still has to press Save.
+function mergeCvSuggestion(current, incoming) {
+  const next = { ...current };
+  let added = 0;
+  for (const field of SCALAR_FIELDS) {
+    const value = String(incoming[field] || "").trim();
+    if (value && value !== String(current[field] || "").trim()) {
+      next[field] = value;
+      added += 1;
+    }
+  }
+  for (const key of Object.keys(LIST_KEYS)) {
+    const items = (incoming[key] || []).map((item) =>
+      key === "projects"
+        ? { name: item.name || "", url: item.url || item.project_url || "" }
+        : key === "skills"
+          ? { ...DEFAULTS.skills, ...item, status: "claimed" }
+          : { ...DEFAULTS[key], ...item },
+    );
+    const seen = new Set((current[key] || []).map((item) => itemKey(key, item)));
+    const fresh = items.filter((item) => {
+      const id = itemKey(key, item);
+      if (!id.replace(/\|/g, "") || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    if (fresh.length) {
+      next[key] = [...(current[key] || []), ...fresh];
+      added += fresh.length;
+    }
+  }
+  return { profile: next, added };
+}
 
 const EMPTY_PROFILE = {
   name: "",
@@ -133,6 +184,17 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
   }));
   const addItem = (key) => update(key, [...(profile[key] || []), { ...DEFAULTS[key] }]);
   const removeItem = (key, index) => update(key, profile[key].filter((_, current) => current !== index));
+  // Several CV uploads can resolve back to back; merge against the latest form.
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
+  const applyCvSuggestion = (incoming) => {
+    const merged = mergeCvSuggestion(profileRef.current, incoming || {});
+    const count = merged.added;
+    profileRef.current = merged.profile;
+    setProfile(merged.profile);
+    setError("");
+    setMessage(count ? "Your new CV details were added below. Review them, then press Save profile." : "Your new CV matched what is already on your profile.");
+  };
 
   const selectAvatar = (event) => {
     const file = event.target.files?.[0];
@@ -518,6 +580,7 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
         <p className="muted">Skills are self-reported until verified.</p>
       </aside>
       <form className="profile-editor" onSubmit={(event) => event.preventDefault()}>
+        {!draftMode && <CvUpdatePanel onSuggestion={applyCvSuggestion} />}
         {error && <p className="err" role="alert">{error}</p>}
         {message && <p className="success-note" role="status">{message}</p>}
         {draftMode && method.startsWith("cv") && (

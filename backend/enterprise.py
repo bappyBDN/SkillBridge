@@ -1804,7 +1804,7 @@ def admin_job_moderation_decision(job_id: str, body: CompanyReviewDecision, user
 
 # ---------------------------------------------------------------------------
 # Admin console expansion — PRD v2.0
-# The console exposes only data that exists in this R0/R1 implementation.
+# The console exposes only data that exists in this implementation.
 def ensure_admin_console_schema():
     for statement in [
         """CREATE TABLE IF NOT EXISTS admin_user_status (
@@ -2080,7 +2080,7 @@ def admin_integrity_attempt_detail(attempt_id: str, response: Response, user=Dep
         state = json.loads(item["state"]) if item.get("state") else {}
     except Exception:
         state = {}
-    item["proctoring"] = state.get("proctoring", {"mode": "r0"})
+    item["proctoring"] = state.get("proctoring", {"mode": "legacy_unproctored"})
     raw_answers = state.get("answers", [])
     if isinstance(raw_answers, dict):
         questions = {q.get("id"): q for q in state.get("selected_questions", [])}

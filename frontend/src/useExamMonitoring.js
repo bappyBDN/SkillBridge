@@ -3,7 +3,7 @@ import { api } from "./api.js";
 
 const EVIDENCE_TYPES = new Set(["ai_no_face", "ai_multiple_faces", "ai_phone_detected", "ai_audio_level", "tab_hidden", "blur", "fullscreen_exit", "copy", "cut", "paste", "camera_stopped", "microphone_stopped", "screen_share_stopped", "screen_share_unavailable"]);
 
-export default function useR1Monitoring({ enabled, initial, integrity, screenStream, cameraStream, micStream, audioContext }) {
+export default function useExamMonitoring({ enabled, initial, integrity, screenStream, cameraStream, micStream, audioContext }) {
   const [evidenceStatus, setEvidenceStatus] = useState("Event-triggered screenshots: ready");
   const cameraVideo = useRef(null), screenVideo = useRef(null);
   const queue = useRef(Promise.resolve());

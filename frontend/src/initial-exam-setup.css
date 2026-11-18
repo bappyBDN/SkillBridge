@@ -460,3 +460,5 @@ button.ies-pill { cursor: default; }
 .exam-lock-card h3 { margin: 12px 0 6px; font-size: 19px; }
 .exam-lock-card p { margin: 0 0 18px; font-size: 13.5px; line-height: 1.55; color: #4a627a; }
 .exam-lock-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.ies-chip-retry { border: 1px solid #bfd3ff; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ies-chip-retry:hover { background: #eff5ff; }

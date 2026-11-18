@@ -891,8 +891,19 @@ def _safe_request_id(headers: Any) -> str:
     return ""
 
 
+_GROQ_MODEL_OK: dict[tuple[str, str], float] = {}
+_GROQ_MODEL_CACHE_SECONDS = 3600.0
+
+
 def _validate_groq_model(api_key: str, model: str, timeout: float) -> None:
-    """Verify the configured model is visible to this Groq API key."""
+    """Verify the configured model is visible to this Groq API key.
+
+    Successful checks are cached for an hour so repeated CV uploads skip the
+    extra network round trip; failures are never cached.
+    """
+    cache_key = (api_key, model)
+    if time.monotonic() - _GROQ_MODEL_OK.get(cache_key, -1e18) < _GROQ_MODEL_CACHE_SECONDS:
+        return
     try:
         response = httpx.get(
             "https://api.groq.com/openai/v1/models",
@@ -930,6 +941,17 @@ def _validate_groq_model(api_key: str, model: str, timeout: float) -> None:
             404,
             code=f"model_not_available:{model}",
         )
+    _GROQ_MODEL_OK[cache_key] = time.monotonic()
+
+
+def _compact_cv_text(text: str) -> str:
+    """Drop layout whitespace (PDF column padding, blank runs) to cut prompt tokens.
+
+    Evidence matching normalizes whitespace, so this never changes validation.
+    """
+    text = re.sub(r"[ \t\u00a0]+", " ", text or "")
+    text = re.sub(r" *\n *", "\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _call_provider(
@@ -937,8 +959,13 @@ def _call_provider(
     api_key: str,
     raw_cv_text: str,
     identity: Optional[dict] = None,
+    deadline: Optional[float] = None,
 ) -> dict:
-    """Single provider attempt with one 503 retry."""
+    """Single provider attempt with one 503 retry.
+
+    deadline is a time.monotonic() value; when given, network waits never run
+    past it, so a slow provider cannot stall the whole CV upload.
+    """
     config = PROVIDERS[provider]
     model = get_provider_model(provider)
     try:
@@ -948,10 +975,18 @@ def _call_provider(
         raise AIExtractionError("AI_TIMEOUT_SECONDS and MAX_CV_TEXT_CHARS must be valid numbers") from exc
     if timeout <= 0 or max_chars <= 0:
         raise AIExtractionError("AI_TIMEOUT_SECONDS and MAX_CV_TEXT_CHARS must be positive")
-    cv_text = raw_cv_text[:max_chars]
+    cv_text = _compact_cv_text(raw_cv_text)[:max_chars]
+
+    def wait_budget() -> float:
+        if deadline is None:
+            return timeout
+        remaining = deadline - time.monotonic()
+        if remaining < 2:
+            raise ProviderAPIError(provider, 0, code="timeout")
+        return min(timeout, remaining)
 
     if provider == "groq":
-        _validate_groq_model(api_key, model, timeout)
+        _validate_groq_model(api_key, model, wait_budget())
 
     user_content = (
         "Extract candidate information from the following JSON-encoded CV text. "
@@ -999,7 +1034,7 @@ def _call_provider(
 
     for attempt in range(max_attempts):
         try:
-            response = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+            response = httpx.post(url, headers=headers, json=payload, timeout=wait_budget())
         except httpx.TimeoutException as exc:
             last_exc = exc
             if attempt + 1 < max_attempts:
@@ -1087,6 +1122,11 @@ def extract_cv_profile(
 
     errors: list[str] = []
     any_keys = False
+    try:
+        budget = float(os.getenv("CV_AI_BUDGET_SECONDS", "45"))
+    except ValueError:
+        budget = 45.0
+    deadline = time.monotonic() + budget if budget > 0 else None
 
     for provider in provider_order:
         keys = get_provider_keys(provider)
@@ -1097,11 +1137,15 @@ def extract_cv_profile(
 
         for key_number, api_key in enumerate(keys, start=1):
             try:
+                if deadline is not None and deadline - time.monotonic() < 2:
+                    errors.append(f"{provider}: time budget exhausted")
+                    break
                 result = _call_provider(
                     provider=provider,
                     api_key=api_key,
                     raw_cv_text=raw_cv_text,
                     identity=identity,
+                    deadline=deadline,
                 )
                 logger.info(
                     "CV extraction successful: provider=%s model=%s key_slot=%s",

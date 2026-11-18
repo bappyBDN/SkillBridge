@@ -104,7 +104,7 @@ export function loadFaceApi() {
   return faceApiPromise;
 }
 
-/** Start every model the R1 verify page needs. Safe to call repeatedly. */
+/** Start every model the exam verify page needs. Safe to call repeatedly. */
 export function preloadProctorModels({ identity = true } = {}) {
   preloadVisionModels().catch(() => {});
   if (identity) loadFaceApi().catch(() => {});
