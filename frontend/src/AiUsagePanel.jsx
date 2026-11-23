@@ -53,7 +53,7 @@ export default function AiUsagePanel() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {budget && (
             <span className="ad-count">
-              {budget.exhausted ? "Budget paused" : "Within budget"}
+              {budget.exhausted ? "BUDGET PAUSED" : "WITHIN BUDGET"}
             </span>
           )}
           <button

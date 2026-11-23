@@ -6,20 +6,9 @@ small budget (for example $2) is not silently overrun.
 
 - Simple tasks keep the configured order (``AI_PROVIDER`` then fallbacks).
 - Complex tasks try ``AI_COMPLEX_PROVIDER`` first (DeepSeek by default).
-- Every provider call (CV extraction, learning explanations, agent drafts) goes
-  through ``ai_providers.metered_post``: it RESERVES the worst-case cost here
-  before the request (atomically, so concurrent calls cannot overrun the
-  budget) and SETTLES the row with the provider's reported token usage (or an
-  estimate) right after the response, before any JSON parsing.
-- Budget window: the current calendar month (UTC) by default. Setting
-  ``AI_BUDGET_WINDOW_DAYS`` switches to a rolling window of that many days.
-- Fail closed: if the ledger cannot be read, the budget counts as exhausted
-  and paid calls are skipped (callers fall back to offline behaviour).
+- Every recorded call adds an estimated cost to ``ai_usage_ledger``.
 """
-import calendar
-import datetime
 import json
-import logging
 import os
 import secrets
 import time
@@ -36,10 +25,6 @@ DEFAULT_PRICES = {
 }
 
 _schema_ready = False
-log = logging.getLogger("skillbridge.ai_routing")
-# Constant key for the PostgreSQL transaction-scoped advisory lock that
-# serialises budget reservations across processes.
-_PG_BUDGET_LOCK_KEY = 7331002
 
 
 def _main():
@@ -67,15 +52,6 @@ def ensure_schema() -> None:
     _main().run(
         "CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_ledger(created_at)"
     )
-    m = _main()
-    if m.DATABASE_URL:
-        columns = {row["column_name"] for row in m.allr(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema=current_schema() AND table_name='ai_usage_ledger'")}
-    else:
-        columns = {row["name"] for row in m.allr("PRAGMA table_info(ai_usage_ledger)")}
-    if "status" not in columns:
-        m.run("ALTER TABLE ai_usage_ledger ADD COLUMN status TEXT NOT NULL DEFAULT 'settled'")
     _schema_ready = True
 
 
@@ -123,29 +99,11 @@ def budget_limit() -> float:
         return 2.0
 
 
-def budget_window_days():
-    """Rolling-window override in days, or None for the calendar month."""
-    raw = os.getenv("AI_BUDGET_WINDOW_DAYS", "").strip()
-    if not raw:
-        return None
+def budget_window_days() -> int:
     try:
-        return max(1, int(raw))
+        return max(1, int(os.getenv("AI_BUDGET_WINDOW_DAYS", "60")))
     except (TypeError, ValueError):
-        return None
-
-
-def budget_window_start(now: float = None) -> float:
-    """Unix time where the current budget window starts."""
-    now = time.time() if now is None else now
-    days = budget_window_days()
-    if days:
-        return now - days * 86400
-    current = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)
-    return calendar.timegm((current.year, current.month, 1, 0, 0, 0))
-
-
-def _window_label() -> str:
-    return "rolling_days" if budget_window_days() else "calendar_month"
+        return 60
 
 
 def record_usage(provider: str, model: str, tokens_in: int, tokens_out: int, purpose: str = "") -> dict:
@@ -176,84 +134,10 @@ def record_usage(provider: str, model: str, tokens_in: int, tokens_out: int, pur
     return entry
 
 
-def reserve(provider: str, model: str, tokens_in: int, max_tokens_out: int, purpose: str = ""):
-    """Atomically check the budget and reserve the worst-case cost of one call.
-
-    Returns a reservation id, or None when the call would exceed the budget or
-    the ledger is unavailable (fail closed). The check and the insert run in
-    one write transaction (BEGIN IMMEDIATE on SQLite, an advisory lock on
-    PostgreSQL), so concurrent callers cannot all pass the same check.
-    """
-    projected = estimate_cost(provider, tokens_in, max_tokens_out)
-    limit = budget_limit()
-    reservation_id = "aiu-" + secrets.token_hex(8)
-    try:
-        ensure_schema()
-        m = _main()
-        conn = m.db()
-        try:
-            conn.execute("BEGIN" if m.DATABASE_URL else "BEGIN IMMEDIATE")
-            if m.DATABASE_URL:
-                conn.execute("SELECT pg_advisory_xact_lock(?)", (_PG_BUDGET_LOCK_KEY,))
-            row = conn.execute(
-                "SELECT COALESCE(SUM(est_cost_usd),0) AS spent FROM ai_usage_ledger WHERE created_at>=?",
-                (budget_window_start(),),
-            ).fetchone()
-            spent = float(row["spent"] or 0)
-            if spent + projected > limit:
-                conn.execute("ROLLBACK")
-                return None
-            conn.execute(
-                """INSERT INTO ai_usage_ledger(
-                    id,provider,model,tokens_in,tokens_out,est_cost_usd,purpose,created_at,status)
-                VALUES (?,?,?,?,?,?,?,?,'reserved')""",
-                (reservation_id, provider, model, int(tokens_in), int(max_tokens_out),
-                 projected, str(purpose)[:80], time.time()),
-            )
-            conn.execute("COMMIT")
-            return reservation_id
-        except Exception:
-            try:
-                conn.execute("ROLLBACK")
-            except Exception:
-                pass
-            raise
-        finally:
-            conn.close()
-    except Exception as exc:
-        log.error("AI budget reservation failed; treating the budget as exhausted (%s)", type(exc).__name__)
-        return None
-
-
-def settle(reservation_id: str, provider: str, tokens_in: int, tokens_out: int) -> float:
-    """Replace a reservation with the actual usage. If this write fails the
-    reservation keeps its worst-case cost (fail closed). Returns the cost."""
-    cost = estimate_cost(provider, tokens_in, tokens_out)
-    try:
-        _main().run(
-            "UPDATE ai_usage_ledger SET tokens_in=?, tokens_out=?, est_cost_usd=?, status='settled' WHERE id=?",
-            (int(max(0, tokens_in)), int(max(0, tokens_out)), cost, reservation_id),
-        )
-    except Exception as exc:
-        log.error("AI usage could not be settled for %s (%s)", reservation_id, type(exc).__name__)
-    return cost
-
-
-def release(reservation_id: str) -> None:
-    """Drop a reservation for a call the provider rejected (nothing billed)."""
-    try:
-        _main().run(
-            "UPDATE ai_usage_ledger SET tokens_in=0, tokens_out=0, est_cost_usd=0, status='released' WHERE id=?",
-            (reservation_id,),
-        )
-    except Exception as exc:
-        log.error("AI reservation could not be released for %s (%s)", reservation_id, type(exc).__name__)
-
-
 def budget_status() -> dict:
     try:
         ensure_schema()
-        since = budget_window_start()
+        since = time.time() - budget_window_days() * 86400
         rows = _main().allr(
             "SELECT provider, SUM(est_cost_usd) AS cost, SUM(tokens_in) AS tin, "
             "SUM(tokens_out) AS tout FROM ai_usage_ledger WHERE created_at>=? GROUP BY provider",
@@ -278,23 +162,17 @@ def budget_status() -> dict:
             "spent_usd": round(spent, 6),
             "remaining_usd": round(max(0.0, limit - spent), 6),
             "window_days": budget_window_days(),
-            "window": _window_label(),
-            "window_start": since,
             "exhausted": spent >= limit,
             "providers": sorted(providers, key=lambda item: item["est_cost_usd"], reverse=True),
             "estimate": True,
         }
-    except Exception as exc:
-        # Fail CLOSED: an unreadable ledger must not allow unbounded paid calls.
-        log.error("AI budget status unavailable; treating budget as exhausted (%s)", type(exc).__name__)
+    except Exception:
         return {
             "limit_usd": budget_limit(),
-            "spent_usd": None,
-            "remaining_usd": 0.0,
+            "spent_usd": 0.0,
+            "remaining_usd": budget_limit(),
             "window_days": budget_window_days(),
-            "window": _window_label(),
-            "exhausted": True,
-            "error": "budget_unavailable",
+            "exhausted": False,
             "providers": [],
             "estimate": True,
         }
@@ -302,6 +180,4 @@ def budget_status() -> dict:
 
 def can_spend(estimated_cost: float) -> bool:
     status = budget_status()
-    if status.get("error") or status["spent_usd"] is None:
-        return False
     return (status["spent_usd"] + max(0.0, float(estimated_cost))) <= status["limit_usd"]

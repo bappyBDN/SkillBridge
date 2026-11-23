@@ -496,12 +496,7 @@ def approve_draft(draft_id: str, reviewer: dict):
         return ("not_found", None, [])
     if draft["status"] != "pending_approval":
         return ("conflict", None, [])
-    # Re-validate the current content. Only the needs_authoring marker carries
-    # over from stored codes, and only while the scaffold text is unedited.
-    current = {**draft, "validation": []}
-    if NEEDS_AUTHORING_MARKER.lower() in str(draft.get("question_text", "")).lower():
-        current["validation"] = ["needs_authoring"]
-    errors = validate(current)
+    errors = validate(draft)
     if errors:
         return ("invalid", None, errors)
 
@@ -543,62 +538,6 @@ def approve_draft(draft_id: str, reviewer: dict):
     )
     m.audit(reviewer.get("id"), "agent_question_approved", qid + ":" + draft_id)
     return ("ok", qid, [])
-
-
-EDITABLE_FIELDS = (
-    "question_type", "difficulty_level", "question_text", "options", "correct_answer",
-    "explanation", "reference_answer", "grading_rubric", "marks", "time_allocation",
-    "category_id", "subcategory",
-)
-NEEDS_AUTHORING_MARKER = "[NEEDS AUTHORING]"
-
-
-def update_draft(draft_id: str, changes: dict, reviewer: dict):
-    """Complete or correct a pending draft (e.g. a ``needs_authoring`` scaffold).
-
-    Returns (status, draft) where status is ok | not_found | conflict. The
-    stored validation is recomputed from the edited content, so a draft that
-    is now complete becomes approvable; approval itself still re-validates.
-    """
-    ensure_schema()
-    m = _main()
-    draft = get_draft(draft_id)
-    if not draft:
-        return ("not_found", None)
-    if draft["status"] != "pending_approval":
-        return ("conflict", None)
-    merged = dict(draft)
-    for key in EDITABLE_FIELDS:
-        if key in changes and changes[key] is not None:
-            merged[key] = changes[key]
-    item = {
-        **merged,
-        "_source": draft.get("source"),
-        "_provider": draft.get("provider"),
-        "_model": draft.get("model"),
-        "_generated": draft.get("generated"),
-        "_validation": [],
-    }
-    row = _normalise_item(item, draft["skill_id"], draft.get("subcategory") or draft["skill_id"],
-                          draft.get("difficulty_level") or "Medium")
-    if "category_id" not in changes:
-        row["category_id"] = draft["category_id"]
-    if NEEDS_AUTHORING_MARKER.lower() in row["question_text"].lower():
-        row["validation"] = ["needs_authoring"]
-    row["validation"] = validate(row)
-    m.run(
-        """UPDATE agent_question_drafts SET category_id=?,subcategory=?,question_type=?,difficulty_level=?,
-            question_text=?,options=?,correct_answer=?,explanation=?,reference_answer=?,grading_rubric=?,
-            marks=?,time_allocation=?,validation=? WHERE id=? AND status='pending_approval'""",
-        (
-            row["category_id"], row["subcategory"], row["question_type"], row["difficulty_level"],
-            row["question_text"], json.dumps(row["options"]), row["correct_answer"], row["explanation"],
-            row["reference_answer"], row["grading_rubric"], row["marks"], row["time_allocation"],
-            json.dumps(row["validation"]), draft_id,
-        ),
-    )
-    m.audit(reviewer.get("id"), "agent_question_draft_edited", draft_id)
-    return ("ok", get_draft(draft_id))
 
 
 def reject_draft(draft_id: str, reviewer: dict):

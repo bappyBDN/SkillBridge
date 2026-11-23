@@ -63,11 +63,6 @@ class AIExtractionError(RuntimeError):
     """Raised when every configured provider/key fails or config is invalid."""
 
 
-class AIBudgetExceeded(AIExtractionError):
-    """The AI spend budget does not allow this provider call (or the ledger is
-    unavailable). Callers fall back to their offline path."""
-
-
 class ProviderAPIError(RuntimeError):
     """HTTP failure from one provider call. Never includes API keys or raw bodies."""
 
@@ -169,11 +164,8 @@ IMPORTANT RULES:
 10. Do not assume career preferences unless explicitly stated.
 11. Do not extract or infer gender, date of birth, religion, permanent
     address, references, or reference contact details.
-12. Projects: extract the title ("name"), URL ("url"), the candidate's own
-    short description ("description"), their role ("role"), technologies
-    explicitly named for that project ("technologies"), and dates exactly as
-    written ("start_date", "end_date"). Leave a field empty when the CV does
-    not state it; never invent technologies or dates.
+12. Projects contain only a title ("name") and URL ("url"). Do not extract
+    project descriptions, roles, technologies, or dates.
 13. Return ONLY valid JSON. Do not use Markdown code fences.
 14. For every non-empty field you populate, include an evidence entry
     with a short source_snippet that appears in the CV text. Use canonical
@@ -227,12 +219,7 @@ Return this JSON structure:
   "projects": [
     {
       "name": "",
-      "url": "",
-      "description": "",
-      "role": "",
-      "technologies": [],
-      "start_date": "",
-      "end_date": ""
+      "url": ""
     }
   ],
 
@@ -341,85 +328,6 @@ def any_provider_configured() -> bool:
         return False
 
 
-# ---------------------------------------------------------
-# Metered provider calls (single choke point for AI spend)
-# ---------------------------------------------------------
-
-def _estimate_tokens(value: Any) -> int:
-    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-    return max(1, len(text or "") // 4)
-
-
-def _response_text(provider: str, body: Any) -> str:
-    try:
-        if provider == "gemini":
-            return body["candidates"][0]["content"]["parts"][0]["text"] or ""
-        return body["choices"][0]["message"]["content"] or ""
-    except Exception:
-        return ""
-
-
-def _reported_usage(provider: str, body: Any):
-    """Provider-reported (tokens_in, tokens_out), or (None, None)."""
-    try:
-        if provider == "gemini":
-            meta = body.get("usageMetadata") or {}
-            tin = meta.get("promptTokenCount")
-            tout = (meta.get("candidatesTokenCount") or 0) + (meta.get("thoughtsTokenCount") or 0)
-            return (int(tin), int(tout)) if tin is not None else (None, None)
-        usage = body.get("usage") or {}
-        tin = usage.get("prompt_tokens", usage.get("input_tokens"))
-        tout = usage.get("completion_tokens", usage.get("output_tokens"))
-        if tin is None or tout is None:
-            return (None, None)
-        return int(tin), int(tout)
-    except Exception:
-        return (None, None)
-
-
-def metered_post(provider: str, model: str, url: str, *, headers: dict, payload: dict,
-                 timeout: float, purpose: str, max_tokens_out: int):
-    """POST to an AI provider under the spend budget. Every provider call goes
-    through here (CV extraction incl. retries, learning explanations, agents).
-
-    1. Reserve the worst-case cost (fails closed -> AIBudgetExceeded).
-    2. Make the request.
-    3. Settle with the provider's reported token usage (estimate when absent)
-       BEFORE the caller parses the JSON content, so failed parses are billed.
-
-    Returns ``(response, usage)`` where usage = {tokens_in, tokens_out, est_cost_usd}.
-    """
-    import ai_routing
-
-    tokens_in = _estimate_tokens(payload)
-    reservation = ai_routing.reserve(provider, model, tokens_in, max_tokens_out, purpose)
-    if not reservation:
-        raise AIBudgetExceeded("AI budget exhausted for this window.")
-    try:
-        response = httpx.post(url, headers=headers, json=payload, timeout=timeout)
-    except httpx.TimeoutException:
-        # The provider may already have processed the prompt: bill the input.
-        ai_routing.settle(reservation, provider, tokens_in, 0)
-        raise
-    except Exception:
-        ai_routing.release(reservation)
-        raise
-    status = getattr(response, "status_code", 200)
-    if isinstance(status, int) and status >= 400:
-        ai_routing.release(reservation)
-        return response, {"tokens_in": 0, "tokens_out": 0, "est_cost_usd": 0.0}
-    try:
-        body = response.json()
-    except Exception:
-        body = None
-    reported_in, reported_out = _reported_usage(provider, body) if isinstance(body, dict) else (None, None)
-    if reported_in is None:
-        text = _response_text(provider, body) if isinstance(body, dict) else str(getattr(response, "text", "") or "")
-        reported_in, reported_out = tokens_in, _estimate_tokens(text)
-    cost = ai_routing.settle(reservation, provider, reported_in, reported_out)
-    return response, {"tokens_in": reported_in, "tokens_out": reported_out, "est_cost_usd": cost}
-
-
 def explain_learning_resources(context: dict) -> dict:
     """Optional RAG narrative over already-approved courses. Never grades answers.
 
@@ -452,9 +360,7 @@ def explain_learning_resources(context: dict) -> dict:
                     headers = {"Authorization": "Bearer " + api_key}
                     payload = {"model": model, "temperature": 0, "max_tokens": 1500, "response_format": {"type": "json_object"},
                                "messages": [{"role": "system", "content": system}, {"role": "user", "content": safe_text}]}
-                response, _usage = metered_post(provider, model, url, headers=headers, payload=payload,
-                                                timeout=min(10, remaining), purpose="learning_explanation",
-                                                max_tokens_out=1500)
+                response = httpx.post(url, headers=headers, json=payload, timeout=min(10, remaining))
                 response.raise_for_status()
                 body = response.json()
                 text = body["candidates"][0]["content"]["parts"][0]["text"] if provider == "gemini" else body["choices"][0]["message"]["content"]
@@ -528,8 +434,7 @@ PROFILE_OBJECT_DEFAULTS = {
         "technologies": [],
         "duration_months": 0,
     },
-    "projects": {"name": "", "url": "", "description": "", "role": "",
-                 "technologies": [], "start_date": "", "end_date": ""},
+    "projects": {"name": "", "url": ""},
     "skills": {"name": "", "category": "", "status": "claimed"},
     "certifications": {
         "name": "",
@@ -567,8 +472,7 @@ PROFILE_ITEM_LIMITS = {
         "duration_months": 600,
     }),
     "projects": (20, {
-        "name": 160, "url": 300, "description": 2000, "role": 160,
-        "start_date": 40, "end_date": 40,
+        "name": 160, "url": 300,
     }),
     "skills": (80, {"name": 100, "category": 60, "status": 20}),
     "certifications": (30, {
@@ -1130,9 +1034,7 @@ def _call_provider(
 
     for attempt in range(max_attempts):
         try:
-            response, _usage = metered_post(provider, model, url, headers=headers, payload=payload,
-                                            timeout=wait_budget(), purpose="cv_extraction",
-                                            max_tokens_out=6000)
+            response = httpx.post(url, headers=headers, json=payload, timeout=wait_budget())
         except httpx.TimeoutException as exc:
             last_exc = exc
             if attempt + 1 < max_attempts:
@@ -1252,11 +1154,6 @@ def extract_cv_profile(
                     key_number,
                 )
                 return result
-            except AIBudgetExceeded:
-                # Budget exhausted (or ledger unavailable): stop spending now;
-                # the upload endpoint falls back to the offline parser.
-                logger.warning("CV extraction skipped: AI budget exhausted")
-                raise
             except ProviderAPIError as exc:
                 logger.warning(
                     "CV extraction failed: provider=%s key_slot=%s error=%s",
@@ -1285,21 +1182,3 @@ def extract_cv_profile(
     raise AIExtractionError(
         "All configured AI providers failed. " + "; ".join(errors)
     )
-
-
-def normalize_project(item: dict) -> dict:
-    """One canonical project entry, used by extraction, draft, confirm and the
-    profile endpoints so no path silently drops project details."""
-    import re as _re
-    techs = item.get("technologies") or []
-    if isinstance(techs, str):
-        techs = [part.strip() for part in _re.split(r"[,;/|]", techs)]
-    return {
-        "name": str(item.get("name") or "")[:160],
-        "url": str(item.get("url") or item.get("project_url") or "")[:300],
-        "description": str(item.get("description") or "")[:2000],
-        "role": str(item.get("role") or "")[:160],
-        "technologies": [str(t).strip()[:160] for t in techs if str(t).strip()][:30],
-        "start_date": str(item.get("start_date") or "")[:40],
-        "end_date": str(item.get("end_date") or "")[:40],
-    }

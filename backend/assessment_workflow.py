@@ -11,9 +11,6 @@ import uuid
 import engine as E
 
 _UNSET = object()
-# Publication stages that end the review pipeline for the candidate.
-TERMINAL_STAGES = frozenset({"published", "invalidated", "honesty_rejected"})
-APPEALABLE_STAGES = frozenset({"invalidated", "honesty_rejected"})
 
 
 def _m():
@@ -66,22 +63,15 @@ def review_state(attempt_id, *, attempt=None, academic=_UNSET, honesty=_UNSET, e
     honesty_status = honesty["status"] if honesty else "pending"
     has_scores = isinstance(result.get("overall"), (int, float)) and any(isinstance(topic, dict) and topic.get("score") is not None for topic in result.get("topics", {}).values())
     ready = bool(attempt["status"] == "done" and academic_status == "approved" and honesty_status == "approved" and pending == 0 and has_scores)
-    # A rejected honesty review is a terminal, human-made outcome (never an
-    # automatic one: integrity flags alone cannot produce it). Like an
-    # invalidated result it ends the review pipeline and can be appealed.
     stage = ("in_progress" if attempt["status"] != "done" else
              "invalidated" if academic_status == "invalidated" else
-             "honesty_rejected" if honesty_status == "rejected" else
              "evaluation_pending" if pending or not has_scores else
              "academic_review" if academic_status != "approved" else
              "honesty_review" if honesty_status != "approved" else "published")
-    terminal = stage in TERMINAL_STAGES
     return {"stage": stage, "ready": ready, "academic_status": academic_status,
             "honesty_status": honesty_status, "pending_evaluations": pending,
-            "terminal": terminal, "appealable": stage in APPEALABLE_STAGES,
             "honesty": {"score": honesty["score"] if honesty else E.honesty_score(result.get("trust_points", 0), result.get("trust_hard_flags", [])),
                         "status": honesty_status, "reviewed_at": honesty["reviewed_at"] if honesty else None,
-                        "reason": (honesty["reason"] if honesty and honesty_status == "rejected" else None),
                         "advisory": True},
             "academic_reviewed_at": academic["reviewed_at"] if academic else None}
 

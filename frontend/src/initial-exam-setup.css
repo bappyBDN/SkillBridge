@@ -1,11 +1,11 @@
 /* Initial/Retake exam setup — presentation only. Permission logic stays in Exam. */
 .ies {
-  --ies-blue: #48b197;
-  --ies-blue-dark: #3c937d;
-  --ies-ink: #1a362f;
-  --ies-mut: #628179;
-  --ies-line: #e9efee;
-  --ies-bg: #f7faf9;
+  --ies-blue: #1167e8;
+  --ies-blue-dark: #0b53c4;
+  --ies-ink: #0d2743;
+  --ies-mut: #5b7288;
+  --ies-line: #e3ebf5;
+  --ies-bg: #f3f8fe;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 322px;
   gap: 22px;
@@ -31,7 +31,7 @@
   width: 42px; height: 42px;
   display: grid; place-items: center;
   border-radius: 12px;
-  background: #f1f5f4;
+  background: #e8f1fe;
   color: var(--ies-blue);
   font-size: 20px;
 }
@@ -42,7 +42,7 @@
   display: block;
   text-transform: uppercase;
   letter-spacing: .13em;
-  font-size:12px;
+  font-size: 10px;
   font-weight: 800;
   color: var(--ies-blue);
   margin-bottom: 2px;
@@ -56,14 +56,14 @@
   font-size: 12px;
   font-weight: 700;
   border: 1px solid transparent;
-  background: #f5f8f7;
-  color: #306155;
+  background: #eef5ff;
+  color: #26476b;
 }
 .ies-chip i {
   width: 18px; height: 18px; border-radius: 50%;
   display: grid; place-items: center;
   background: var(--ies-blue); color: #fff;
-  font-size:12px; font-style: normal; line-height: 1;
+  font-size: 10px; font-style: normal; line-height: 1;
 }
 .ies-chip.ok { background: #e9f9ef; border-color: #c9ecd6; color: #146c3c; }
 .ies-chip.ok i { background: #16a34a; }
@@ -83,19 +83,19 @@
   flex: none;
   width: 24px; height: 24px; border-radius: 50%;
   display: grid; place-items: center;
-  background: #936f19; color: #fff;
+  background: #f0b429; color: #fff;
   font-weight: 900; font-size: 13px;
 }
 .ies-alert b { display: block; font-size: 13px; margin-bottom: 3px; }
 .ies-alert p { margin: 0; font-size: 12px; line-height: 1.6; }
 
-.ies-consent { border-color: #e1e9e7; background: #fafcfb; }
-.ies-consent > p { margin: 0 0 10px; font-size: 12px; line-height: 1.65; color: #4b6c64; }
+.ies-consent { border-color: #cfe1fb; background: #f7fbff; }
+.ies-consent > p { margin: 0 0 10px; font-size: 12px; line-height: 1.65; color: #445c73; }
 .ies-consent .ies-check { margin-top: 6px; }
 
 .ies-check {
   display: flex; align-items: flex-start; gap: 9px;
-  font-size: 12.5px; line-height: 1.55; color: #2d554b;
+  font-size: 12.5px; line-height: 1.55; color: #24425e;
   cursor: pointer;
 }
 .ies-check input { flex: none; margin-top: 2px; width: 16px; height: 16px; accent-color: var(--ies-blue); }
@@ -107,20 +107,20 @@
   align-items: center;
   gap: 12px;
   padding: 13px 2px;
-  border-top: 1px solid #f1f4f3;
+  border-top: 1px solid #edf2f8;
 }
 .ies-perm:first-child { border-top: 0; }
 .ies-perm-icon {
   width: 38px; height: 38px; border-radius: 10px;
   display: grid; place-items: center;
-  background: #f6f8f8; font-size: 18px;
+  background: #f1f6fd; font-size: 18px;
 }
 .ies-perm.done .ies-perm-icon { background: #e9f9ef; }
 .ies-perm-text b { display: block; font-size: 13.5px; color: var(--ies-ink); }
-.ies-perm-text span { display: block; margin-top: 2px; font-size:12px; color: var(--ies-mut); line-height: 1.45; }
+.ies-perm-text span { display: block; margin-top: 2px; font-size: 11.5px; color: var(--ies-mut); line-height: 1.45; }
 .ies-perm-btn {
-  border: 1px solid #dae5e2;
-  background: #f6f8f8;
+  border: 1px solid #c8dcf7;
+  background: #eff6ff;
   color: var(--ies-blue-dark);
   border-radius: 9px;
   padding: 8px 13px;
@@ -129,7 +129,7 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.ies-perm-btn:hover:not(:disabled) { background: #eef3f2; }
+.ies-perm-btn:hover:not(:disabled) { background: #e2edff; }
 .ies-perm-btn:disabled { opacity: .55; cursor: not-allowed; }
 .ies-pill {
   display: inline-flex; align-items: center; gap: 6px;
@@ -163,43 +163,43 @@ button.ies-pill { cursor: default; }
 .ies-verified {
   display: flex; gap: 10px; align-items: flex-start;
   padding: 13px 14px; border-radius: 12px;
-  background: #f7faf9; border: 1px dashed #e0e8e6;
-  font-size: 12px; color: #51736a; line-height: 1.5;
+  background: #f4f8fd; border: 1px dashed #d6e3f2;
+  font-size: 12px; color: #4a627a; line-height: 1.5;
 }
 .ies-verified > span {
   flex: none; width: 26px; height: 26px; border-radius: 50%;
-  display: grid; place-items: center; background: #e8eeed; color: #649186;
+  display: grid; place-items: center; background: #dfeaf7; color: #5b7a9a;
   font-weight: 900; font-size: 13px;
 }
 .ies-verified b { display: block; font-size: 13px; color: var(--ies-ink); margin-bottom: 2px; }
 .ies-verified.ok { background: #eafaf0; border-style: solid; border-color: #c6ecd4; color: #1d6b43; }
-.ies-verified.ok > span { background: #12843c; color: #fff; }
+.ies-verified.ok > span { background: #16a34a; color: #fff; }
 .ies-verified.warn { background: #fff8e8; border-style: solid; border-color: #f4e0b4; color: #75510c; }
-.ies-verified.warn > span { background: #936f19; color: #fff; }
+.ies-verified.warn > span { background: #f0b429; color: #fff; }
 
 .ies-brief {
   border-radius: 16px;
   padding: 18px 20px;
-  background: linear-gradient(135deg, #142a24 0%, #1e3e36 62%, #19342d 100%);
-  color: #f3f6f5;
+  background: linear-gradient(135deg, #0b1b33 0%, #102a4c 62%, #0d2440 100%);
+  color: #eaf2ff;
   box-shadow: 0 12px 30px rgba(9, 30, 60, .22);
 }
 .ies-brief-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .ies-brief-icon {
   flex: none; width: 36px; height: 36px; border-radius: 50%;
   display: grid; place-items: center;
-  background: rgba(70, 140, 255, .22); color: #bae3d9; font-size: 17px;
+  background: rgba(70, 140, 255, .22); color: #9ec4ff; font-size: 17px;
 }
 .ies-brief-title { flex: 1 1 260px; min-width: 0; }
 .ies-brief-title b { display: block; font-size: 16px; letter-spacing: -.01em; color: #fff; }
-.ies-brief-title span { display: block; margin-top: 3px; font-size:12px; color: #b1d5cc; line-height: 1.5; }
+.ies-brief-title span { display: block; margin-top: 3px; font-size: 11.5px; color: #a9c1dd; line-height: 1.5; }
 .ies-brief-badge {
   margin-left: auto;
   border-radius: 999px;
   padding: 6px 12px;
   background: rgba(255, 255, 255, .08);
   border: 1px solid rgba(160, 196, 240, .25);
-  font-size:12px; font-weight: 700; color: #dee7e5;
+  font-size: 11px; font-weight: 700; color: #cfe0f6;
   white-space: nowrap;
 }
 .ies-brief-body {
@@ -211,52 +211,52 @@ button.ies-pill { cursor: default; }
   border-top: 1px solid rgba(150, 185, 230, .18);
 }
 @media (max-width: 720px) { .ies-brief-body { grid-template-columns: 1fr; gap: 14px; } }
-.ies-brief-body label > span { display: block; font-size:12px; text-transform: uppercase; letter-spacing: .1em; color: #a6cfc5; font-weight: 700; margin-bottom: 6px; }
+.ies-brief-body label > span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: #9db8d8; font-weight: 700; margin-bottom: 6px; }
 .ies-brief-body select {
   width: 100%;
   padding: 9px 11px;
   border-radius: 8px;
   border: 1px solid rgba(160, 196, 240, .3);
   background: rgba(255, 255, 255, .06);
-  color: #f3f6f5;
+  color: #eaf2ff;
   font-size: 12.5px;
   font-weight: 600;
 }
-.ies-brief-body select option { background: #1a352e; color: #f3f6f5; }
+.ies-brief-body select option { background: #10253f; color: #eaf2ff; }
 .ies-brief-body select:disabled { opacity: .6; }
 .ies-skill-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
-.ies-skill-head b { font-size:12px; text-transform: uppercase; letter-spacing: .08em; color: #a6cfc5; font-weight: 700; }
+.ies-skill-head b { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #9db8d8; font-weight: 700; }
 .ies-skill-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ies-skill-chip, .ies-skill-more {
   border-radius: 999px;
   padding: 6px 11px;
-  font-size:12px;
+  font-size: 11.5px;
   font-weight: 650;
   cursor: pointer;
   border: 1px solid rgba(160, 196, 240, .28);
   background: transparent;
-  color: #dee7e5;
+  color: #cfe0f6;
 }
 .ies-skill-chip:hover:not(:disabled), .ies-skill-more:hover { background: rgba(255,255,255,.08); }
-.ies-skill-chip.on { background: #427d6e; border-color: #8bcfbe; color: #fff; }
+.ies-skill-chip.on { background: #2f7cf6; border-color: #5b9cff; color: #fff; }
 .ies-skill-chip:disabled, .ies-skill-more:disabled { opacity: .5; cursor: not-allowed; }
-.ies-skill-more { border-style: dashed; color: #bae3d9; }
+.ies-skill-more { border-style: dashed; color: #9ec4ff; }
 
 .ies-ready {
   display: flex; align-items: center; gap: 9px;
   margin: 0;
   padding: 11px 14px;
   border-radius: 10px;
-  background: #f5f8f7;
-  border: 1px solid #e5edeb;
-  color: #35685b;
+  background: #eef5ff;
+  border: 1px solid #d8e6fa;
+  color: #2a4c73;
   font-size: 12px;
   line-height: 1.5;
 }
 .ies-ready > span {
   flex: none; width: 20px; height: 20px; border-radius: 50%;
   display: grid; place-items: center; background: var(--ies-blue); color: #fff;
-  font-size:12px; font-weight: 900;
+  font-size: 11px; font-weight: 900;
 }
 .ies-ready.warn { background: #fff8e8; border-color: #f4e0b4; color: #6f4b09; }
 .ies-ready.warn > span { background: #f0b429; }
@@ -271,7 +271,7 @@ button.ies-pill { cursor: default; }
   border: 0;
   border-radius: 12px;
   padding: 0 26px;
-  background: linear-gradient(135deg, #52b89f, #3f9b84);
+  background: linear-gradient(135deg, #1a72f0, #0b58cf);
   color: #fff;
   font-size: 15px;
   font-weight: 800;
@@ -284,23 +284,23 @@ button.ies-pill { cursor: default; }
 .ies-primary .ies-play {
   width: 24px; height: 24px; border-radius: 50%;
   display: grid; place-items: center;
-  background: rgba(255,255,255,.2); font-size:12px;
+  background: rgba(255,255,255,.2); font-size: 11px;
 }
 .ies-ghost {
   flex: 0 1 262px;
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 52px;
   border-radius: 12px;
-  border: 1.5px solid #d5e0dd;
+  border: 1.5px solid #c6d9ef;
   background: #fff;
-  color: #2f7362;
+  color: #1c4d86;
   font-size: 14px;
   font-weight: 750;
   cursor: pointer;
 }
-.ies-ghost:hover:not(:disabled) { background: #f8faf9; }
+.ies-ghost:hover:not(:disabled) { background: #f4f8fe; }
 .ies-ghost:disabled { opacity: .55; cursor: not-allowed; }
-.ies-fineprint { margin: 0; font-size:12px; color: var(--ies-mut); line-height: 1.5; }
+.ies-fineprint { margin: 0; font-size: 11px; color: var(--ies-mut); line-height: 1.5; }
 
 .ies-side .ies-card { padding: 18px; }
 .ies-tips-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
@@ -311,44 +311,44 @@ button.ies-pill { cursor: default; }
 }
 .ies-tips-head b { font-size: 16px; letter-spacing: -.01em; color: var(--ies-ink); }
 .ies-tips { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.ies-tips li { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; line-height: 1.55; color: #476c63; }
+.ies-tips li { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; line-height: 1.55; color: #3f5a74; }
 .ies-tips li i {
   flex: none; width: 17px; height: 17px; margin-top: 1px; border-radius: 50%;
   display: grid; place-items: center; background: var(--ies-blue); color: #fff;
-  font-style: normal; font-size:12px; font-weight: 900;
+  font-style: normal; font-size: 10px; font-weight: 900;
 }
 .ies-help {
   margin-top: 14px; width: 100%;
-  border: 1px solid #e5edeb; background: #f7f9f9; color: #2f7362;
+  border: 1px solid #d8e6fa; background: #f1f7ff; color: #1c4d86;
   border-radius: 9px; padding: 9px; font-size: 12px; font-weight: 700; cursor: pointer;
 }
 .ies-progress-head { display: flex; align-items: center; gap: 10px; }
 .ies-progress-head span {
   width: 38px; height: 38px; border-radius: 11px;
-  display: grid; place-items: center; background: #f1f5f4; color: var(--ies-blue); font-size: 19px;
+  display: grid; place-items: center; background: #e8f1fe; color: var(--ies-blue); font-size: 19px;
 }
 .ies-progress-head b { display: block; font-size: 15px; color: var(--ies-ink); }
-.ies-progress-head small { font-size:12px; color: var(--ies-mut); }
+.ies-progress-head small { font-size: 11px; color: var(--ies-mut); }
 .ies-dots { display: flex; align-items: center; gap: 0; margin: 16px 2px 14px; }
 .ies-dots i {
-  flex: 1; height: 3px; background: #e8eeed; border-radius: 3px;
+  flex: 1; height: 3px; background: #e2eaf4; border-radius: 3px;
 }
 .ies-dots i.done { background: var(--ies-blue); }
 .ies-dots i.current { background: var(--ies-blue); }
 .ies-dots b {
   width: 11px; height: 11px; border-radius: 50%; flex: none;
-  background: #e2eae8; border: 2px solid #fff; box-shadow: 0 0 0 1px #e2eae8;
+  background: #dbe5f1; border: 2px solid #fff; box-shadow: 0 0 0 1px #dbe5f1;
 }
 .ies-dots b.done, .ies-dots b.current { background: var(--ies-blue); box-shadow: 0 0 0 1px var(--ies-blue); }
 .ies-progress-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.ies-progress-list li { display: flex; align-items: center; gap: 8px; font-size:12px; color: #51736a; }
+.ies-progress-list li { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #4a627a; }
 .ies-progress-list li i {
   width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
-  background: #f1f5f4; color: var(--ies-blue); font-style: normal; font-size:12px; font-weight: 900;
+  background: #e8f1fe; color: var(--ies-blue); font-style: normal; font-size: 9px; font-weight: 900;
 }
 .ies-progress-list li.current { color: var(--ies-ink); font-weight: 700; }
-.ies-progress-list li.pending { color: #8fa8a2; }
-.ies-progress-list li.pending i { background: #f3f6f5; color: #a9bfba; }
+.ies-progress-list li.pending { color: #8a9bad; }
+.ies-progress-list li.pending i { background: #f0f4f9; color: #a4b4c4; }
 
 .ies-allset {
   border-radius: 16px; padding: 18px;
@@ -359,7 +359,7 @@ button.ies-pill { cursor: default; }
 .ies-allset .ies-allset-head { display: flex; align-items: center; gap: 10px; }
 .ies-allset .ies-allset-head span {
   width: 34px; height: 34px; border-radius: 50%;
-  display: grid; place-items: center; background: #12843c; color: #fff; font-size: 17px; font-weight: 900;
+  display: grid; place-items: center; background: #16a34a; color: #fff; font-size: 17px; font-weight: 900;
   flex: none;
 }
 .ies-allset b { font-size: 18px; letter-spacing: -.02em; display: block; }
@@ -381,9 +381,9 @@ button.ies-pill { cursor: default; }
 /* Let the setup screen sit on a soft page band instead of the generic white panel. */
 .journey-content:has(> .ies) {
   background:
-    radial-gradient(1200px 220px at 15% 0%, #f1f5f4 0%, rgba(231, 241, 255, 0) 70%),
-    linear-gradient(180deg, #f5f8f7 0%, #fafcfb 46%, #fdfdfd 100%);
-  border-color: #ebf0ef;
+    radial-gradient(1200px 220px at 15% 0%, #e7f1ff 0%, rgba(231, 241, 255, 0) 70%),
+    linear-gradient(180deg, #eef6ff 0%, #f7fbff 46%, #fbfdff 100%);
+  border-color: #e1ecfa;
   border-radius: 18px;
   padding: 22px;
   box-shadow: 0 14px 40px rgba(24, 72, 130, .06);
@@ -396,7 +396,7 @@ button.ies-pill { cursor: default; }
 .ies-identity-single { grid-template-columns: 1fr; }
 .ies-perm.next, .ies-card.ies-consent.next {
   box-shadow: inset 3px 0 0 var(--ies-blue);
-  background: #fafbfb;
+  background: #f6faff;
   border-radius: 10px;
 }
 .ies-perm.next { padding-left: 12px; }
@@ -406,13 +406,13 @@ button.ies-pill { cursor: default; }
 
 .ies-mic-meter {
   display: block; width: min(220px, 100%); height: 6px; margin-top: 7px;
-  border-radius: 99px; background: #e9efee; overflow: hidden;
+  border-radius: 99px; background: #e3ebf5; overflow: hidden;
 }
 .ies-mic-meter i { display: block; height: 100%; width: 0; background: #16a34a; border-radius: inherit; transition: width 80ms linear; }
 
 .ies-chip i.ies-spin {
   width: 11px; height: 11px; border-radius: 50%;
-  background: none; border: 2px solid #dae5e2; border-top-color: var(--ies-blue);
+  background: none; border: 2px solid #c8dcf7; border-top-color: var(--ies-blue);
   animation: ies-spin .8s linear infinite;
 }
 @keyframes ies-spin { to { transform: rotate(360deg); } }
@@ -428,16 +428,16 @@ button.ies-pill { cursor: default; }
   padding: 7px 8px; border: 0; border-radius: 8px; background: none;
   font: inherit; font-size: 12.5px; color: var(--ies-mut); text-align: left; cursor: pointer;
 }
-.ies-checklist button:hover { background: #f6f8f8; }
+.ies-checklist button:hover { background: #f1f6fd; }
 .ies-checklist i {
   flex: none; width: 20px; height: 20px; border-radius: 50%;
-  display: grid; place-items: center; font-style: normal; font-size:12px; font-weight: 800;
-  border: 1.5px solid #cde2dd; color: #fff;
+  display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 800;
+  border: 1.5px solid #c9d6e6; color: #fff;
 }
 .ies-checklist i:empty::before { content: counter(ies-step); color: var(--ies-mut); }
 .ies-checklist li.done button { color: #146c3c; }
 .ies-checklist li.done i { background: #16a34a; border-color: #16a34a; }
-.ies-checklist li.current button { color: var(--ies-ink); font-weight: 750; background: #f6f8f8; }
+.ies-checklist li.current button { color: var(--ies-ink); font-weight: 750; background: #f1f6fd; }
 .ies-checklist li.current i { border-color: var(--ies-blue); }
 .ies-checklist li.current i:empty::before { color: var(--ies-blue); }
 
@@ -450,7 +450,7 @@ button.ies-pill { cursor: default; }
 }
 .exam-lock-card {
   width: min(460px, 100%); padding: 26px 24px; border-radius: 16px;
-  background: #fff; color: #1a362f; text-align: center;
+  background: #fff; color: #0d2743; text-align: center;
   box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
 }
 .exam-lock-icon {
@@ -458,7 +458,7 @@ button.ies-pill { cursor: default; }
   background: #fdeeee; color: #a42323; font-weight: 900; font-size: 22px;
 }
 .exam-lock-card h3 { margin: 12px 0 6px; font-size: 19px; }
-.exam-lock-card p { margin: 0 0 18px; font-size: 13.5px; line-height: 1.55; color: #51736a; }
+.exam-lock-card p { margin: 0 0 18px; font-size: 13.5px; line-height: 1.55; color: #4a627a; }
 .exam-lock-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
-.ies-chip-retry { border: 1px solid #dae4e2; background: #fff; color: var(--ds-brand-700); border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
-.ies-chip-retry:hover { background: #f6f8f8; }
+.ies-chip-retry { border: 1px solid #bfd3ff; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ies-chip-retry:hover { background: #eff5ff; }

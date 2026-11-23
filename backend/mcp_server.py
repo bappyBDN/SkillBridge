@@ -46,10 +46,10 @@ def lookup_skill(term: str) -> dict:
 def my_weak_topics(email: str = "", ctx: Context = None) -> dict:
     """Return the caller's weak/unverified topics from their latest result.
 
-    Over HTTP a bearer token is required; only the local stdio transport may pass ``email``.
+    Over HTTP the bearer token identifies the caller; over stdio pass ``email``.
     """
     try:
-        user = T.authorize_call("my_weak_topics", email, ctx)
+        user = T.resolve_user(email, ctx)
     except ValueError as exc:
         return {"error": str(exc)}
     return T.my_weak_topics(user["id"])
@@ -59,10 +59,10 @@ def my_weak_topics(email: str = "", ctx: Context = None) -> dict:
 def practice_questions(topic: str, count: int = 5, email: str = "", ctx: Context = None) -> dict:
     """Return up to ``count`` approved practice questions for a topic.
 
-    Answer keys are never returned; questions come from the practice pool, never live exam items.
+    Answer keys are never returned; questions come from the human-approved bank.
     """
     try:
-        user = T.authorize_call("practice_questions", email, ctx)
+        user = T.resolve_user(email, ctx)
     except ValueError as exc:
         return {"error": str(exc)}
     return T.practice_questions(user["id"], topic, count)
@@ -72,7 +72,7 @@ def practice_questions(topic: str, count: int = 5, email: str = "", ctx: Context
 def learning_path(email: str = "", ctx: Context = None) -> dict:
     """Return the caller's curated learning path from their latest approved result."""
     try:
-        user = T.authorize_call("learning_path", email, ctx)
+        user = T.resolve_user(email, ctx)
     except ValueError as exc:
         return {"error": str(exc)}
     return T.learning_path(user["id"])
@@ -110,12 +110,7 @@ def server_resource() -> str:
 
 
 def run_stdio() -> None:
-    """Run the server over stdio for a local MCP host.
-
-    Only this transport may identify a user by ``email`` (trusted local host);
-    the HTTP transport always requires a bearer token.
-    """
-    T.enable_stdio_transport()
+    """Run the server over stdio for a local MCP host."""
     mcp.run(transport="stdio")
 
 

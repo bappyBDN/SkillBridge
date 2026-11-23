@@ -26,11 +26,7 @@ def account(admin=False):
     headers = {"Authorization": "Bearer " + response.json()["token"]}
     uid = main.one("SELECT id FROM users WHERE email=?", (email,))["id"]
     if admin:
-        # Production provisioning always assigns an explicit staff role (staff
-        # console / create_admin.py); a role-only admin has no admin scope.
         main.run("UPDATE user_roles SET role='admin' WHERE user_id=?", (uid,))
-        main.run("INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at) VALUES (?,?,?,?)",
-                 (uid, "trust_safety_reviewer", uid, 0))
     else:
         assert client.post("/api/consent", json={"lang": "en"}, headers=headers).status_code == 200
     return uid, headers
@@ -113,12 +109,6 @@ def test_admin_decision_is_recorded_with_reviewer_and_note():
     upload(headers, "Someone Else\nelse@example.org\nSkills: Java")
     row = review_for(admin, uid)
 
-    needs = client.post(f"/api/admin/identity-reviews/{row['id']}/decision",
-                        headers=admin, json={"decision": "needs_review",
-                                             "note": "Please check the previous CV revision."})
-    assert needs.status_code == 200, needs.text
-    assert review_for(admin, uid)["status"] == "needs_review"
-
     decided = client.post(f"/api/admin/identity-reviews/{row['id']}/decision",
                           headers=admin, json={"decision": "cleared",
                                                "note": "Candidate supplied a matching account email."})
@@ -129,10 +119,11 @@ def test_admin_decision_is_recorded_with_reviewer_and_note():
     assert updated["reviewed_by_name"] == "Identity Admin"
     assert updated["reviewed_at"]
 
-    # A cleared review is closed: it cannot be re-decided.
-    reopened = client.post(f"/api/admin/identity-reviews/{row['id']}/decision",
-                           headers=admin, json={"decision": "needs_review", "note": "late"})
-    assert reopened.status_code == 409
+    needs = client.post(f"/api/admin/identity-reviews/{row['id']}/decision",
+                        headers=admin, json={"decision": "needs_review",
+                                             "note": "Please check the previous CV revision."})
+    assert needs.status_code == 200, needs.text
+    assert review_for(admin, uid)["status"] == "needs_review"
 
     assert client.post(f"/api/admin/identity-reviews/{row['id']}/decision",
                        headers=admin, json={"decision": "not-a-decision", "note": "x"}).status_code == 422

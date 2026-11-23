@@ -16,11 +16,9 @@ import ai_routing
 import engine as E
 from ai_providers import (
     PROVIDERS,
-    AIBudgetExceeded,
     _provider_order,
     get_provider_keys,
     get_provider_model,
-    metered_post,
     parse_json_response,
 )
 
@@ -71,6 +69,10 @@ def complete_json(
             if remaining < 1:
                 break
             model = get_provider_model(provider)
+            projected = ai_routing.estimate_cost(provider, tokens_in, max_tokens)
+            if not ai_routing.can_spend(projected):
+                budget_skipped = True
+                continue
             try:
                 if provider == "gemini":
                     url = (
@@ -101,12 +103,7 @@ def complete_json(
                             {"role": "user", "content": safe_user},
                         ],
                     }
-                # Reserve -> call -> settle (usage recorded before parsing).
-                response, usage = metered_post(
-                    provider, model, url, headers=headers, payload=body,
-                    timeout=min(20, remaining), purpose="agent_" + str(complexity)[:20],
-                    max_tokens_out=max_tokens,
-                )
+                response = httpx.post(url, headers=headers, json=body, timeout=min(20, remaining))
                 response.raise_for_status()
                 raw = response.json()
                 text = (
@@ -115,15 +112,21 @@ def complete_json(
                     else raw["choices"][0]["message"]["content"]
                 )
                 data = parse_json_response(text)
+                tokens_out = _tokens(text)
+                recorded = ai_routing.record_usage(
+                    provider, model, tokens_in, tokens_out,
+                    purpose="agent_" + str(complexity)[:20],
+                )
                 return {
                     "provider": provider,
                     "model": model,
                     "data": data,
-                    "usage": usage,
+                    "usage": {
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                        "est_cost_usd": recorded["est_cost_usd"],
+                    },
                 }
-            except AIBudgetExceeded:
-                budget_skipped = True
-                continue
             except Exception:
                 # Never log or return provider error bodies or the payload.
                 continue

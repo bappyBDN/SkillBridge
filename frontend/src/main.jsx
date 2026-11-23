@@ -1,6 +1,5 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import "./tokens.css";
 import App from "./App.jsx";
 import "./styles.css";
 import "./workspace.css";
@@ -9,7 +8,6 @@ import "./proctoring.css";
 import "./initial-exam-setup.css";
 import "./exam-room.css";
 import "./cv-update.css";
-import "./design-system.css";
 
 // Small compatibility shims for older Safari/Edge/Chromium builds.
 if (typeof String.prototype.replaceAll !== "function") {

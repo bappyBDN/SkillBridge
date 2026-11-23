@@ -3,7 +3,7 @@
 # uvicorn process (serve.py mounts the built frontend at "/").
 #
 #   docker build -t skillbridge .
-#   docker run -e PORT=8080 -e SECRET_KEY="$(openssl rand -hex 32)" -p 8080:8080 skillbridge
+#   docker run -e PORT=8080 -e SECRET_KEY=... -p 8080:8080 skillbridge
 
 # ---- 1. Build the frontend -------------------------------------------------
 FROM node:20-alpine AS web
@@ -28,15 +28,7 @@ COPY backend/ .
 # Built frontend becomes the static site served by FastAPI.
 COPY --from=web /web/dist /app/web
 
-# Run as an unprivileged user (same approach as backend/Dockerfile). /data holds
-# the SQLite fallback and local file storage when those are used.
-RUN useradd -m app && mkdir -p /data && chown app /data
-USER app
+RUN mkdir -p /data
 EXPOSE 8000
-# Liveness only (cheap, no DB round trip). Readiness is GET /api/ready.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD python -c "import os,urllib.request;urllib.request.urlopen('http://localhost:%s/api/health' % os.getenv('PORT','8000'), timeout=4)"
 
-# No secrets are baked into the image: SECRET_KEY, DATABASE_URL and provider keys
-# are supplied at runtime (docker run -e ... or platform environment variables).
 CMD ["sh", "/app/start.sh"]

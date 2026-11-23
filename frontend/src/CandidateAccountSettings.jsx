@@ -73,13 +73,13 @@ export default function CandidateAccountSettings({ st, onEditProfile }) {
         <div className="cr-toast" role="status">
           <span>✓</span>
           {toast}
-          <button type="button" aria-label="Dismiss" onClick={() => setToast("")}>×</button>
+          <button type="button" onClick={() => setToast("")}>×</button>
         </div>
       )}
       {error && (
         <div className="cr-error-banner" role="alert">
           {error}
-          <button type="button" aria-label="Dismiss" onClick={() => setError("")}>×</button>
+          <button type="button" onClick={() => setError("")}>×</button>
         </div>
       )}
 

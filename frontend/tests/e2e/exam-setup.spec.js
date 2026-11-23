@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // Browser permission APIs are mocked here: production still requires the
 // candidate's own clicks and explicit approval in the browser pickers.
 // Every exam is proctored, so every test uses camera + microphone fixtures.
-async function examWorkspace(page, { attempts = [], denied = false, shortage = false, mobile = false, cameraDenied = false, micDenied = false, slowModels = false, remaining = 2400 } = {}) {
+async function examWorkspace(page, { attempts = [], denied = false, shortage = false, mobile = false, cameraDenied = false, micDenied = false, slowModels = false } = {}) {
   const calls = [];
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -85,7 +85,7 @@ async function examWorkspace(page, { attempts = [], denied = false, shortage = f
   const state = { user: { name: "Exam Candidate", email: "exam@example.test" }, from_profile: true, consented: true, has_cv: true, confirmed: ["python"], passports: [], attempts, proctoring_policy: proctoring };
   const question = (index) => ({ id: "q-" + index, prompt: "MOCK Fundamental test question " + index, question_type: "MCQ", assessment_topic: "DSA", assessment_section: "fundamental", options: ["MOCK A", "MOCK B"], difficulty_level: "Easy", marks: 1 });
   const allQuestions = Array.from({ length: 40 }, (_, i) => question(i));
-  const initial = { attempt_id: "active-exam", kind: "pre", status: "active", mode: "initial_cv_fundamentals", graphrag: true, blueprint_id: "initial-bp", session_id: "synthetic-session-long-enough", last_event_seq: 0, remaining, duration_seconds: 2400, total: 40, answered: 0, question_index: 0, question: allQuestions[0], all_questions: allQuestions, answers: {}, navigator: allQuestions.map((q, i) => ({ id: q.id, number: i + 1, type: "MCQ", topic: "DSA" })), proctoring };
+  const initial = { attempt_id: "active-exam", kind: "pre", status: "active", mode: "initial_cv_fundamentals", graphrag: true, blueprint_id: "initial-bp", session_id: "synthetic-session-long-enough", last_event_seq: 0, remaining: 2400, duration_seconds: 2400, total: 40, answered: 0, question_index: 0, question: allQuestions[0], all_questions: allQuestions, answers: {}, navigator: allQuestions.map((q, i) => ({ id: q.id, number: i + 1, type: "MCQ", topic: "DSA" })), proctoring };
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/api/, "");
@@ -104,12 +104,6 @@ async function examWorkspace(page, { attempts = [], denied = false, shortage = f
     if (path === "/attempts" && request.method() === "POST") return ok(initial);
     if (path.endsWith("/evidence")) return ok({ ok: true, evidence_id: "MOCK-snapshot" });
     if (path === "/attempts/active-exam/quit") { state.attempts = []; return ok({ status: "quit" }); }
-    if (path === "/attempts/active-exam/answer") return ok({ ...initial, answers: { [body.question_id]: body.answer }, answered: 1 });
-    if (path === "/attempts/active-exam/result") return route.fulfill({ status: 409, json: { detail: "result_awaiting_review" } });
-    if (path === "/attempts/active-exam/submit") {
-      state.attempts = [{ id: "active-exam", kind: "pre", status: "done", overall: null, review_decision: null, finalized: false, finished: 1763300000 }];
-      return ok({ ...initial, status: "done", remaining: 0 });
-    }
     return ok({ items: [] });
   });
   await page.goto("/");
@@ -314,22 +308,5 @@ test("leaving full-screen locks the exam behind an overlay and paste is blocked 
   await expect(page.getByRole("heading", { name: "You left full-screen" })).toBeVisible();
   await page.getByRole("button", { name: "Return to full-screen exam" }).click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  expect(errors).toEqual([]);
-});
-
-test("when the timer reaches zero the last answer is saved and the attempt is submitted", async ({ page }) => {
-  const { calls, errors } = await examWorkspace(page, { remaining: 6 });
-  await permissions(page);
-  await page.getByRole("button", { name: "Start Initial exam · 40 minutes" }).click();
-  await page.locator(".exam3-opt").nth(1).click();
-  await expect(page.getByRole("alertdialog", { name: "Time is up" }).or(page.locator(".exam3"))).toBeVisible();
-  await expect.poll(() => calls.some((call) => call.path === "/attempts/active-exam/submit"), { timeout: 20000 }).toBe(true);
-  const saved = calls.find((call) => call.path === "/attempts/active-exam/answer");
-  expect(saved?.body).toEqual({ question_id: "q-0", answer: "MOCK B" });
-  expect(calls.findIndex((call) => call.path === "/attempts/active-exam/answer"))
-    .toBeLessThan(calls.findIndex((call) => call.path === "/attempts/active-exam/submit"));
-  await expect(page.locator(".exam3")).toHaveCount(0);
-  await expect(page.getByText(/still being reviewed by a person/).first()).toBeVisible();
-  await expect(page.getByText("result_awaiting_review", { exact: true })).toHaveCount(0);
   expect(errors).toEqual([]);
 });

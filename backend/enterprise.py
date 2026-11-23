@@ -1,6 +1,5 @@
 """Initial hiring workflow APIs for TalentForge PRD."""
 import json, time, uuid, os, re, secrets, csv, io, logging, base64
-from contextlib import contextmanager
 from typing import Annotated, Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -10,7 +9,6 @@ from main import (current_user, one, allr, run, audit, QBYID, db, DATABASE_URL,
                   recompute_attempt_scores, evaluation_view, require_verified_email,
                   IS_PRODUCTION, MFA_REQUIRED_ROLES, revoke_all_sessions)
 import engine as E
-from ai_providers import normalize_project
 from content import RESOURCES, JOB, TAXONOMY
 from urllib.parse import urlparse
 
@@ -51,68 +49,6 @@ def company_for(user):
     if not member:
         raise HTTPException(409, "Your account is not connected to an organisation yet")
     return dict(member)
-
-def _transaction():
-    """One explicit write transaction: delegates to main.transaction()
-    (BEGIN on PostgreSQL's autocommit pool, BEGIN IMMEDIATE on SQLite; any
-    exception, including HTTPException, rolls everything back)."""
-    import main as core
-    return core.transaction()
-
-
-def _notify(user_ids, kind, title, body="", link="", dedupe_key=None):
-    """Best-effort in-app notification; never breaks the business decision."""
-    try:
-        import notification_center
-        if isinstance(user_ids, (list, tuple, set)):
-            return notification_center.notify_many(user_ids, kind, title, body, link, dedupe_key)
-        return notification_center.notify(user_ids, kind, title, body, link, dedupe_key)
-    except Exception:  # pragma: no cover - notify itself never raises
-        log.warning("notification %s could not be queued", kind)
-        return 0
-
-
-def _company_member_ids(company_id, roles=("owner", "recruiter", "hiring_manager")):
-    """Owner and active members holding one of ``roles`` in a company."""
-    ids = set()
-    company = one("SELECT owner_user_id FROM companies WHERE id=?", (company_id,))
-    if company and "owner" in roles and company["owner_user_id"]:
-        ids.add(company["owner_user_id"])
-    member_roles = [r for r in roles if r != "owner"]
-    if member_roles:
-        placeholders = ",".join("?" for _ in member_roles)
-        for row in allr(f"SELECT user_id FROM company_members WHERE company_id=? AND status='active' "
-                        f"AND user_id IS NOT NULL AND company_role IN ({placeholders})",
-                        (company_id, *member_roles)):
-            ids.add(row["user_id"])
-    return ids
-
-
-def _company_owner_id(company_id):
-    row = one("SELECT owner_user_id FROM companies WHERE id=?", (company_id,))
-    return row["owner_user_id"] if row else None
-
-
-def _page(limit, offset, default, maximum):
-    """Clamp list pagination parameters (backward compatible defaults)."""
-    try:
-        limit = int(limit if limit is not None else default)
-    except (TypeError, ValueError):
-        limit = default
-    try:
-        offset = int(offset or 0)
-    except (TypeError, ValueError):
-        offset = 0
-    return max(1, min(limit, maximum)), max(0, offset)
-
-
-def _json_field(column, key):
-    """Dialect-neutral SQL expression reading a top-level JSON text field."""
-    if DATABASE_URL:
-        return (f"(CASE WHEN {column} IS NULL OR {column}='' THEN NULL "
-                f"ELSE ({column}::json->>'{key}') END)")
-    return f"(CASE WHEN {column} IS NULL OR {column}='' THEN NULL ELSE CASE WHEN json_valid({column}) THEN json_extract({column},'$.{key}') END END)"
-
 
 class CompanyProfile(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -252,11 +188,11 @@ def _profile_payload(body):
 
 def _decode_profile_json(raw):
     profile = json.loads(raw or "{}")
-    from ai_providers import empty_profile, normalize_profile, normalize_project
+    from ai_providers import empty_profile, normalize_profile
 
     canonical = {**empty_profile(), **profile}
     canonical["projects"] = [
-        normalize_project(item)
+        {"name": item.get("name", ""), "url": item.get("url") or item.get("project_url", "")}
         for item in canonical.get("projects", [])
         if isinstance(item, dict)
     ]
@@ -579,14 +515,14 @@ def confirm_candidate_profile(user=Depends(current_user)):
     # Save the confirmed profile and update draft status in one transaction.
     from main import db, DATABASE_URL
 
-    # main.transaction(): BEGIN on Postgres (autocommit pool) so FOR UPDATE is
-    # held until COMMIT; BEGIN IMMEDIATE on SQLite.
-    with _transaction() as conn:
+    with db() as conn:
         if DATABASE_URL:
             conn.execute(
                 "SELECT id FROM users WHERE id=? FOR UPDATE",
                 (user["id"],),
             ).fetchone()
+        else:
+            conn.execute("BEGIN IMMEDIATE")
 
         current = conn.execute(
             "SELECT user_id FROM candidate_profiles WHERE user_id=?",
@@ -629,7 +565,10 @@ def confirm_candidate_profile(user=Depends(current_user)):
                 profile["portfolio"].strip(),
                 json.dumps(profile["education"]),
                 json.dumps(profile["experience"]),
-                json.dumps([normalize_project(item) for item in profile["projects"]]),
+                json.dumps([
+                    {"name": item["name"], "url": item["url"]}
+                    for item in profile["projects"]
+                ]),
                 json.dumps(profile["skills"]),
                 json.dumps(profile["certifications"]),
                 json.dumps(profile["achievements"]),
@@ -695,7 +634,11 @@ def get_candidate_profile(user=Depends(current_user)):
         ):
             p[key] = json.loads(p[key] or ("{}" if key == "preferences" else "[]"))
         p["references"] = p.pop("profile_references", [])
-        p["projects"] = [normalize_project(item) for item in p["projects"] if isinstance(item, dict)]
+        p["projects"] = [
+            {"name": item.get("name", ""), "url": item.get("url") or item.get("project_url", "")}
+            for item in p["projects"]
+            if isinstance(item, dict)
+        ]
         p["name"] = p.get("name") or user["name"]
         p["email"] = p.get("email") or user["email"]
         if p["preferences"] == {
@@ -738,7 +681,7 @@ def update_candidate_profile(body: CandidateProfileUpdate, user=Depends(current_
         (user["id"],profile["name"].strip() or user["name"],profile["email"].strip() or user["email"],body.headline.strip(),body.phone.strip(),body.location.strip(),body.summary.strip(),
          body.linkedin.strip(),body.github.strip(),body.portfolio.strip(),
          json.dumps([x.model_dump() for x in body.education]),json.dumps([x.model_dump() for x in body.experience]),
-         json.dumps([normalize_project(x.model_dump()) for x in body.projects]),
+         json.dumps([{"name": x.name, "url": x.url} for x in body.projects]),
          json.dumps([x.model_dump() for x in body.skills]),
          json.dumps([x.model_dump() for x in body.certifications]),
          json.dumps([x.model_dump() for x in body.achievements]),
@@ -790,11 +733,9 @@ def _process_candidate_avatar(data: bytes) -> bytes:
 
 
 @router.post("/api/candidate/avatar")
-def upload_candidate_avatar(file: UploadFile = File(...), user=Depends(current_user)):
-    # Sync handler: FastAPI runs it in the threadpool, so the bounded read,
-    # Pillow processing and storage I/O never block the event loop.
+async def upload_candidate_avatar(file: UploadFile = File(...), user=Depends(current_user)):
     require_role(user, "candidate")
-    data = file.file.read(2 * 1024 * 1024 + 1)
+    data = await file.read(2 * 1024 * 1024 + 1)
     if len(data) > 2 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 2 MB)")
     processed = _process_candidate_avatar(data)
@@ -832,16 +773,9 @@ def get_candidate_avatar(user=Depends(current_user)):
     )
     if not avatar:
         raise HTTPException(404, "No profile photo is set")
-    from storage import StorageError, StorageNotFound, get_storage
+    from storage import StorageError, get_storage
     try:
         image = get_storage().get(avatar["storage_key"])
-    except StorageNotFound:
-        # The file is gone for good (e.g. it lived on a wiped container disk).
-        # Drop the dangling record so the workspace falls back to initials and
-        # the candidate is asked to upload again, instead of failing forever.
-        log.warning("Profile photo file missing for user %s; clearing stale record", user["id"])
-        run("DELETE FROM candidate_avatars WHERE user_id=? AND storage_key=?", (user["id"], avatar["storage_key"]))
-        raise HTTPException(404, "No profile photo is set")
     except StorageError as exc:
         raise HTTPException(503, "Could not load the profile photo, please try again") from exc
     return Response(content=image, media_type=avatar["content_type"], headers={"Cache-Control": "private, no-store"})
@@ -894,15 +828,10 @@ def create_job(body:JobCreate,user=Depends(current_user)):
         raise HTTPException(403, "Company verification is required before publishing jobs")
     jid=uuid.uuid4().hex
     skills=list(dict.fromkeys(s.strip() for s in body.skills if s.strip()))
-    # The legacy endpoint follows the same moderation policy as the new flow:
-    # "publish" submits the job for platform review unless direct publishing
-    # is explicitly enabled for this deployment.
-    direct = os.getenv("ALLOW_DIRECT_JOB_PUBLISH", "false").lower() == "true"
-    status = ("published" if direct else "pending_review") if body.publish else "draft"
     run("INSERT INTO jobs(id,company_id,title,description,location,employment_type,skills,status,is_mock,created) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (jid,company["id"],body.title.strip(),body.description.strip(),body.location.strip(),body.employment_type.strip(),json.dumps(skills),status,0,time.time()))
+        (jid,company["id"],body.title.strip(),body.description.strip(),body.location.strip(),body.employment_type.strip(),json.dumps(skills),"published" if body.publish else "draft",0,time.time()))
     audit(user["id"],"job_created",jid)
-    return {"id":jid,"status":status}
+    return {"id":jid,"status":"published" if body.publish else "draft"}
 
 @router.get("/api/company/jobs")
 def company_jobs(user=Depends(current_user)):
@@ -927,12 +856,6 @@ def apply_to_job(job_id:str,user=Depends(current_user)):
     aid=uuid.uuid4().hex
     run("INSERT INTO applications(id,job_id,candidate_id,status,results_shared,created) VALUES (?,?,?,?,?,?)",(aid,job_id,user["id"],"submitted",0,time.time()))
     audit(user["id"],"job_applied",job_id)
-    job=one("SELECT title,company_id FROM jobs WHERE id=?",(job_id,))
-    if job:
-        _notify(_company_member_ids(job["company_id"]), "application_received",
-                "New application for " + (job["title"] or "a job"),
-                "A candidate applied. Review the application in your pipeline.",
-                "company-applications", dedupe_key="application_received:" + aid)
     return {"application_id":aid,"status":"submitted"}
 
 @router.get("/api/applications/mine")
@@ -949,38 +872,6 @@ def share_results(application_id:str,body:ShareResults,user=Depends(current_user
     audit(user["id"],"application_results_sharing_changed",application_id)
     return {"application_id":application_id,"results_shared":body.share}
 
-
-APPLICATION_TERMINAL_STAGES = {"withdrawn", "hired", "rejected", "closed", "offer_declined"}
-
-
-class WithdrawApplication(BaseModel):
-    reason: str = Field(default="", max_length=1000)
-
-
-@router.post("/api/applications/{application_id}/withdraw")
-def withdraw_application(application_id: str, body: Optional[WithdrawApplication] = None, user=Depends(current_user)):
-    """The candidate withdraws their own application from any non-terminal stage."""
-    require_role(user, "candidate")
-    reason = (body.reason if body else "").strip()
-    with _transaction() as conn:
-        row = conn.execute("""SELECT a.id,a.status,j.company_id,j.title FROM applications a
-                              JOIN jobs j ON j.id=a.job_id WHERE a.id=? AND a.candidate_id=?""",
-                           (application_id, user["id"])).fetchone()
-        if not row:
-            raise HTTPException(404, "Application not found")
-        if row["status"] in APPLICATION_TERMINAL_STAGES:
-            raise HTTPException(409, "This application can no longer be withdrawn")
-        conn.execute("UPDATE applications SET status='withdrawn' WHERE id=?", (application_id,))
-        conn.execute("INSERT INTO application_history(id,application_id,company_id,actor_id,from_stage,to_stage,reason,created) VALUES (?,?,?,?,?,?,?,?)",
-                     (uuid.uuid4().hex, application_id, row["company_id"], user["id"], row["status"], "withdrawn",
-                      reason or "Withdrawn by the candidate", time.time()))
-    audit(user["id"], "application_withdrawn", application_id + ":" + row["status"])
-    _notify(_company_member_ids(row["company_id"]), "application_withdrawn",
-            "A candidate withdrew from " + (row["title"] or "a job"),
-            "The application was withdrawn by the candidate.", "company-applications",
-            dedupe_key="application_withdrawn:" + application_id)
-    return {"application_id": application_id, "from": row["status"], "status": "withdrawn"}
-
 @router.get("/api/company/applications")
 def company_applications(user=Depends(current_user)):
     require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter", "hiring_manager")
@@ -991,34 +882,11 @@ def company_applications(user=Depends(current_user)):
     for row in rows:
         item=dict(row); item["results_shared"]=bool(item["results_shared"]); item["latest_assessment"]=None
         if item["results_shared"]:
-            item["latest_assessment"]=company_assessment_summary(item["candidate_id"])
+            att=one("SELECT result,finished FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC LIMIT 1",(item["candidate_id"],))
+            if att and att["result"]:
+                result=json.loads(att["result"]); item["latest_assessment"]={"overall":result.get("overall"),"level":result.get("level"),"trust":result.get("trust"),"finished":att["finished"]}
         items.append(item)
     return {"items":items}
-
-
-def company_assessment_summary(candidate_id):
-    """Recruiter-safe summary of a candidate's latest completed assessment.
-
-    Scores appear only after human publication (assessment_workflow) and the
-    integrity/trust label is never sent to a company (AGENTS.md). Shared by
-    the applications list and the hiring copilot shortlist.
-    """
-    att=one("SELECT id,result,finished FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC LIMIT 1",(candidate_id,))
-    if not att or not att["result"]:
-        return None
-    import assessment_workflow as workflow
-    try:
-        result=workflow.candidate_summary(att["id"], json.loads(att["result"]))
-    except (TypeError, ValueError):
-        return None
-    published=bool(result.get("finalized"))
-    topics={}
-    if published:
-        topics={key:{"score":value.get("score"),"level":value.get("level")}
-                for key,value in (result.get("topics") or {}).items() if isinstance(value,dict)}
-    return {"attempt_id":att["id"],"overall":result.get("overall") if published else None,
-            "level":result.get("level") if published else None,"topics":topics,
-            "finished":att["finished"],"result_status":"published" if published else "awaiting_reviews"}
 
 @router.post("/api/company/assessments")
 def request_company_assessment(body:CompanyAssessmentCreate,user=Depends(current_user)):
@@ -1033,17 +901,15 @@ def request_company_assessment(body:CompanyAssessmentCreate,user=Depends(current
 
 @router.get("/api/admin/overview")
 def admin_overview(user=Depends(current_user)):
-    admin_only(user,"overview")
+    require_role(user,"admin")
     counts={"users":one("SELECT COUNT(*) AS n FROM users")["n"],"candidates":one("SELECT COUNT(*) AS n FROM user_roles WHERE role='candidate'")["n"],"companies":one("SELECT COUNT(*) AS n FROM companies")["n"],"jobs":one("SELECT COUNT(*) AS n FROM jobs")["n"],"applications":one("SELECT COUNT(*) AS n FROM applications")["n"],"attempts":one("SELECT COUNT(*) AS n FROM attempts")["n"],"assessment_requests":one("SELECT COUNT(*) AS n FROM company_assessments WHERE status='requested'")["n"]}
     return {"counts":counts,"demo_data":True,"note":"Counts may include explicitly labelled synthetic demo records."}
 
 @router.get("/api/admin/users")
-def admin_users(user=Depends(current_user), limit: int = 500, offset: int = 0):
-    admin_only(user,"users_read")
-    limit, offset = _page(limit, offset, 500, 500)
-    rows=allr("SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created FROM users u LEFT JOIN user_roles r ON r.user_id=u.id ORDER BY u.created DESC, u.id DESC LIMIT ? OFFSET ?",(limit,offset))
-    total=one("SELECT COUNT(*) AS n FROM users")["n"]
-    return {"items":[dict(r) for r in rows],"total":total,"limit":limit,"offset":offset}
+def admin_users(user=Depends(current_user)):
+    require_role(user,"admin")
+    rows=allr("SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created FROM users u LEFT JOIN user_roles r ON r.user_id=u.id ORDER BY u.created DESC LIMIT 500")
+    return {"items":[dict(r) for r in rows]}
 
 @router.get("/api/admin/identity-reviews")
 def admin_identity_reviews(user=Depends(current_user)):
@@ -1073,10 +939,6 @@ class IdentityReviewDecision(BaseModel):
     note: str = ""
 
 
-# A cleared review is final; "superseded" is closed by a later matching CV.
-IDENTITY_REVIEW_CLOSED = {"cleared", "superseded"}
-
-
 @router.post("/api/admin/identity-reviews/{review_id}/decision")
 def admin_identity_decision(review_id: str, body: IdentityReviewDecision, user=Depends(current_user)):
     admin_only(user, "identity_review")
@@ -1085,34 +947,15 @@ def admin_identity_decision(review_id: str, body: IdentityReviewDecision, user=D
     review = one("SELECT * FROM identity_reviews WHERE id=?", (review_id,))
     if not review:
         raise HTTPException(404, "Identity review not found")
-    if review["status"] in IDENTITY_REVIEW_CLOSED:
-        raise HTTPException(409, "This identity review is already closed")
-    # Conditional update: a concurrent decision cannot re-open a closed review.
-    closed = sorted(IDENTITY_REVIEW_CLOSED)
-    placeholders = ",".join("?" for _ in closed)
-    with _transaction() as conn:
-        updated = conn.execute(
-            "UPDATE identity_reviews SET status=?, reviewed_by=?, reviewed_at=?, note=? "
-            "WHERE id=? AND status NOT IN (" + placeholders + ")",
-            (body.decision, user["id"], time.time(), body.note[:1000], review_id, *closed))
-        if getattr(updated, "rowcount", 1) == 0:
-            raise HTTPException(409, "This identity review is already closed")
+    run("UPDATE identity_reviews SET status=?, reviewed_by=?, reviewed_at=?, note=? WHERE id=?",
+        (body.decision, user["id"], time.time(), body.note[:1000], review_id))
     audit(user["id"], "identity_review_" + body.decision, review_id)
-    # Neutral wording only; the evidence and the reviewer's note stay internal.
-    if body.decision == "cleared":
-        _notify(review["user_id"], "identity_review_cleared", "Your CV check is complete",
-                "No further action is needed for your CV.", "profile",
-                dedupe_key="identity_review:" + review_id + ":cleared")
-    elif body.decision == "needs_review":
-        _notify(review["user_id"], "identity_review_action", "Please review your CV details",
-                "Check that the CV on your profile is yours and up to date.", "profile",
-                dedupe_key="identity_review:" + review_id + ":needs_review")
     return {"id": review_id, "status": body.decision}
 
 
 @router.get("/api/admin/company-assessments")
 def admin_company_assessments(user=Depends(current_user)):
-    admin_only(user,"phase_two")
+    require_role(user,"admin")
     rows=allr("SELECT a.id,a.title,a.requirements,a.questions,a.status,a.created,c.name AS company_name FROM company_assessments a JOIN companies c ON c.id=a.company_id ORDER BY a.created DESC")
     return {"items":[{**dict(r),"questions":json.loads(r["questions"])} for r in rows]}
 
@@ -1154,27 +997,6 @@ def ensure_company_workspace_schema():
     ]
     for statement in statements:
         run(statement)
-    # Hot-path indexes for tenant-scoped hiring queries (idempotent).
-    for index_sql in (
-        "CREATE INDEX IF NOT EXISTS idx_applications_candidate ON applications(candidate_id, created)",
-        "CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id, status)",
-        "CREATE INDEX IF NOT EXISTS idx_jobs_company_status ON jobs(company_id, status)",
-        "CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created)",
-        "CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner_user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_company_members_company ON company_members(company_id, status)",
-        "CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id, status)",
-        "CREATE INDEX IF NOT EXISTS idx_company_members_token ON company_members(invite_token)",
-        "CREATE INDEX IF NOT EXISTS idx_application_history_app ON application_history(application_id, created)",
-        "CREATE INDEX IF NOT EXISTS idx_application_notes_app ON application_notes(application_id, created)",
-        "CREATE INDEX IF NOT EXISTS idx_job_revisions_job ON job_revisions(job_id, revision)",
-        "CREATE INDEX IF NOT EXISTS idx_phase_two_company ON phase_two_invites(company_id, created)",
-        "CREATE INDEX IF NOT EXISTS idx_phase_two_application ON phase_two_invites(application_id, status)",
-        "CREATE INDEX IF NOT EXISTS idx_identity_reviews_user ON identity_reviews(user_id, status)",
-    ):
-        try:
-            run(index_sql)
-        except Exception:
-            log.warning("Index could not be created: %s", index_sql.split(" ON ")[0])
 
 ensure_company_workspace_schema()
 
@@ -1472,9 +1294,7 @@ def company_analytics(user=Depends(current_user)):
 @router.get("/api/admin/candidates/{user_id}")
 def admin_candidate_detail(user_id: int, user=Depends(current_user)):
     """Everything an administrator needs to review one candidate in one place."""
-    admin_only(user, "users_read")
-    # Integrity labels are shown only to staff who may review integrity.
-    show_integrity = has_admin_scope(user, "integrity_review")
+    require_role(user, "admin")
     target = one("SELECT id,name,email,created,email_verified,mfa_enabled FROM users WHERE id=?", (user_id,))
     if not target:
         raise HTTPException(404, "Candidate not found")
@@ -1517,7 +1337,7 @@ def admin_candidate_detail(user_id: int, user=Depends(current_user)):
             "attempt_id": row["id"], "kind": row["kind"], "status": row["status"],
             "started": row["started"], "finished": row["finished"],
             "overall": result.get("overall"), "level": result.get("level"),
-            "trust": result.get("trust") if show_integrity else None, "topics": result.get("topics", {}),
+            "trust": result.get("trust"), "topics": result.get("topics", {}),
             "review": dict(review) if review else None,
         })
 
@@ -1562,7 +1382,7 @@ def admin_candidate_detail(user_id: int, user=Depends(current_user)):
 @router.get("/api/admin/candidates/{user_id}/cv")
 def admin_candidate_cv(user_id: int, document_id: Optional[str] = None, user=Depends(current_user)):
     """Stream the stored PDF of a candidate's CV to an administrator."""
-    admin_only(user, "users_read")
+    require_role(user, "admin")
     import cv_store
     doc = (cv_store.latest_pdf_for_document(user_id, document_id) if document_id
            else cv_store.latest_pdf(user_id))
@@ -1744,63 +1564,30 @@ def update_application_stage(application_id: str, body: ApplicationStageUpdate, 
         raise HTTPException(404, "Application not found")
     current = row["status"]
     target = body.stage
-    if target not in APPLICATION_TRANSITIONS.get(current, set()):
+    transitions = {
+        "submitted": {"preliminary_assessment", "in_review", "withdrawn"},
+        "applied": {"preliminary_assessment", "in_review", "withdrawn"},
+        "preliminary_assessment": {"in_review", "phase_two_invited", "human_interview", "withdrawn"},
+        "in_review": {"preliminary_assessment", "phase_two_invited", "human_interview", "withdrawn"},
+        "phase_two_invited": {"human_interview", "further_review", "withdrawn"},
+        "further_review": {"human_interview", "withdrawn"},
+        "human_interview": {"offer", "rejected", "on_hold"},
+        "on_hold": {"human_interview", "rejected"},
+        "offer": {"hired", "offer_declined", "offer_withdrawn"},
+        "offer_withdrawn": {"human_interview", "closed"},
+        "hired": {"closed"}, "rejected": {"closed"},
+        "withdrawn": {"closed"}
+    }
+    if target not in transitions.get(current, set()):
         raise HTTPException(409, "This pipeline transition is not allowed")
     if target in ("rejected", "hired", "offer_declined", "closed") and len(body.reason.strip()) < 3:
         raise HTTPException(422, "A structured human decision reason is required for this stage")
     now = time.time()
-    with _transaction() as conn:
-        # Compare-and-set: a concurrent change (or a candidate withdrawal)
-        # cannot be silently overwritten.
-        changed = conn.execute("UPDATE applications SET status=? WHERE id=? AND status=?",
-                               (target, application_id, current))
-        if getattr(changed, "rowcount", 1) == 0:
-            raise HTTPException(409, "The application changed while you were editing it; reload and try again")
-        conn.execute("INSERT INTO application_history(id,application_id,company_id,actor_id,from_stage,to_stage,reason,created) VALUES (?,?,?,?,?,?,?,?)",
-                     (uuid.uuid4().hex, application_id, company["id"], user["id"], current, target, body.reason.strip(), now))
+    run("UPDATE applications SET status=? WHERE id=?", (target, application_id))
+    run("INSERT INTO application_history(id,application_id,company_id,actor_id,from_stage,to_stage,reason,created) VALUES (?,?,?,?,?,?,?,?)",
+        (uuid.uuid4().hex, application_id, company["id"], user["id"], current, target, body.reason.strip(), now))
     audit(user["id"], "application_stage_changed", application_id + ":" + current + "->" + target)
-    info = one("""SELECT a.candidate_id,j.title FROM applications a JOIN jobs j ON j.id=a.job_id WHERE a.id=?""",
-               (application_id,))
-    if info and target in APPLICATION_STAGE_MESSAGES:
-        title, message = APPLICATION_STAGE_MESSAGES[target]
-        _notify(info["candidate_id"], "application_stage", title + ": " + (info["title"] or "your application"),
-                message, "applications", dedupe_key=f"application_stage:{application_id}:{current}->{target}:{int(now)}")
     return {"application_id": application_id, "from": current, "stage": target}
-
-
-# Rejection is allowed from every review stage (always with a human reason);
-# offer_declined can be closed. Candidates withdraw via their own endpoint.
-_EARLY_REJECT = {"rejected", "withdrawn"}
-APPLICATION_TRANSITIONS = {
-    "submitted": {"preliminary_assessment", "in_review"} | _EARLY_REJECT,
-    "applied": {"preliminary_assessment", "in_review"} | _EARLY_REJECT,
-    "preliminary_assessment": {"in_review", "phase_two_invited", "human_interview"} | _EARLY_REJECT,
-    "in_review": {"preliminary_assessment", "phase_two_invited", "human_interview"} | _EARLY_REJECT,
-    "phase_two_invited": {"human_interview", "further_review"} | _EARLY_REJECT,
-    "further_review": {"human_interview"} | _EARLY_REJECT,
-    "human_interview": {"offer", "rejected", "on_hold"},
-    "on_hold": {"human_interview", "rejected"},
-    "offer": {"hired", "offer_declined", "offer_withdrawn"},
-    "offer_withdrawn": {"human_interview", "closed"},
-    "offer_declined": {"closed"},
-    "hired": {"closed"}, "rejected": {"closed"},
-    "withdrawn": {"closed"},
-}
-
-# Candidate-facing wording per stage (no recruiter notes or decision reasons).
-APPLICATION_STAGE_MESSAGES = {
-    "preliminary_assessment": ("Assessment stage", "The company moved your application to the assessment stage."),
-    "in_review": ("Application in review", "The company is reviewing your application."),
-    "phase_two_invited": ("Next-stage assessment", "The company is preparing a next-stage assessment for you."),
-    "further_review": ("Further review", "Your application is in further review."),
-    "human_interview": ("Interview stage", "The company would like to move forward to an interview."),
-    "on_hold": ("Application on hold", "The company has put your application on hold for now."),
-    "offer": ("Offer stage", "The company has moved your application to the offer stage."),
-    "offer_withdrawn": ("Offer update", "The company has withdrawn the offer for this application."),
-    "hired": ("Congratulations", "The company has marked you as hired."),
-    "rejected": ("Application update", "The company has decided not to move forward with your application."),
-    "closed": ("Application closed", "This application has been closed."),
-}
 
 
 @router.post("/api/company/applications/{application_id}/notes")
@@ -1883,9 +1670,6 @@ def accept_company_invitation(token: str, user=Depends(current_user)):
     run("UPDATE company_members SET user_id=?,status='active',invite_token='' WHERE id=? AND status='invited' AND invite_token=?",
         (user["id"], row["id"], token))
     audit(user["id"], "company_invitation_accepted", row["company_id"])
-    _notify(_company_owner_id(row["company_id"]), "team_invite_accepted",
-            "A teammate joined your workspace", (user.get("name") or "A teammate") + " accepted the invitation.",
-            "company-team", dedupe_key="team_invite_accepted:" + row["id"] + ":" + str(user["id"]))
     return {"status": "active", "company_id": row["company_id"], "role": row["company_role"]}
 
 
@@ -1931,106 +1715,25 @@ def create_phase_two_invitation(application_id: str, body: PhaseTwoInviteInput, 
         raise HTTPException(404, "Application not found")
     if row["status"] not in ("submitted", "preliminary_assessment", "in_review", "phase_two_invited"):
         raise HTTPException(409, "This application is not eligible for a second phase")
-    _validate_phase_two(body)
-    now, iid = time.time(), uuid.uuid4().hex
-    config = body.model_dump()
-    with _transaction() as conn:
-        conn.execute("""INSERT INTO phase_two_invites(id,company_id,job_id,application_id,title,requirements,config_json,version,status,deadline,created,updated)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                     (iid, company["id"], row["job_id"], application_id, body.title.strip(), body.requirements.strip(),
-                      json.dumps(config), 1, "pending_platform_review", body.deadline, now, now))
-        conn.execute("UPDATE applications SET status='phase_two_invited' WHERE id=?", (application_id,))
-        if row["status"] != "phase_two_invited":
-            conn.execute("INSERT INTO application_history(id,application_id,company_id,actor_id,from_stage,to_stage,reason,created) VALUES (?,?,?,?,?,?,?,?)",
-                         (uuid.uuid4().hex, application_id, company["id"], user["id"], row["status"], "phase_two_invited",
-                          "Second-phase setup submitted for platform review", now))
-    audit(user["id"], "phase_two_invitation_requested", iid)
-    return {"id": iid, "status": "pending_platform_review", "version": 1,
-            "message": ("Configuration saved and sent for platform review. The candidate is notified "
-                        "and can accept or decline once the platform approves it.")}
-
-
-def _validate_phase_two(body):
     if body.integrity_mode not in ("light", "standard", "strict"):
         raise HTTPException(422, "Unsupported integrity mode")
     if sum(body.difficulty.values()) != 100 or any(v < 0 for v in body.difficulty.values()):
         raise HTTPException(422, "Difficulty distribution must total 100")
     if not body.syllabus:
         raise HTTPException(422, "Add at least one syllabus topic")
-
-
-@router.put("/api/company/phase-two/{invite_id}")
-def update_phase_two_invitation(invite_id: str, body: PhaseTwoInviteInput, user=Depends(current_user)):
-    """Edit a second-phase setup the platform sent back (needs_changes) or that is
-    still awaiting review, and resubmit it as a new version."""
-    company = company_for_access(user)
-    require_company_permission(user, company, "owner", "recruiter")
-    if not company["verified"]:
-        raise HTTPException(403, "Company verification is required before inviting candidates to assessments")
-    _validate_phase_two(body)
-    now = time.time()
-    with _transaction() as conn:
-        invite = conn.execute("SELECT id,status,version FROM phase_two_invites WHERE id=? AND company_id=?",
-                              (invite_id, company["id"])).fetchone()
-        if not invite:
-            raise HTTPException(404, "Second-phase setup not found")
-        if invite["status"] not in PHASE_TWO_EDITABLE:
-            raise HTTPException(409, "Only setups that need changes or await review can be edited")
-        version = int(invite["version"] or 1) + 1
-        conn.execute("""UPDATE phase_two_invites SET title=?,requirements=?,config_json=?,deadline=?,
-                        version=?,status='pending_platform_review',updated=? WHERE id=? AND company_id=?""",
-                     (body.title.strip(), body.requirements.strip(), json.dumps(body.model_dump()), body.deadline,
-                      version, now, invite_id, company["id"]))
-    audit(user["id"], "phase_two_invitation_resubmitted", f"{invite_id}:v{version}")
-    return {"id": invite_id, "status": "pending_platform_review", "version": version,
-            "message": "Changes saved and resubmitted for platform review."}
-
-
-PHASE_TWO_EDITABLE = {"needs_changes", "pending_platform_review"}
-PHASE_TWO_CANDIDATE_VISIBLE = ("approved", "accepted", "declined")
-
-
-class PhaseTwoResponse(BaseModel):
-    decision: Literal["accept", "decline"]
-
-
-@router.get("/api/candidate/phase-two-invites")
-def candidate_phase_two_invites(user=Depends(current_user)):
-    """Platform-approved second-phase invitations for the candidate's own applications."""
-    require_role(user, "candidate")
-    placeholders = ",".join("?" for _ in PHASE_TWO_CANDIDATE_VISIBLE)
-    rows = allr(f"""SELECT p.id,p.application_id,p.title,p.requirements,p.deadline,p.status,
-                           j.title AS job_title,c.name AS company_name
-                    FROM phase_two_invites p JOIN applications a ON a.id=p.application_id
-                    JOIN jobs j ON j.id=p.job_id JOIN companies c ON c.id=p.company_id
-                    WHERE a.candidate_id=? AND p.status IN ({placeholders})
-                    ORDER BY p.updated DESC""", (user["id"], *PHASE_TWO_CANDIDATE_VISIBLE))
-    return {"items": [dict(r) for r in rows]}
-
-
-@router.post("/api/candidate/phase-two-invites/{invite_id}/respond")
-def candidate_respond_phase_two(invite_id: str, body: PhaseTwoResponse, user=Depends(current_user)):
-    require_role(user, "candidate")
-    status = "accepted" if body.decision == "accept" else "declined"
-    with _transaction() as conn:
-        invite = conn.execute("""SELECT p.id,p.status,p.company_id,p.application_id,j.title AS job_title
-                                 FROM phase_two_invites p JOIN applications a ON a.id=p.application_id
-                                 JOIN jobs j ON j.id=p.job_id
-                                 WHERE p.id=? AND a.candidate_id=?""", (invite_id, user["id"])).fetchone()
-        if not invite or invite["status"] not in PHASE_TWO_CANDIDATE_VISIBLE:
-            raise HTTPException(404, "Invitation not found")
-        if invite["status"] != "approved":
-            raise HTTPException(409, "You have already responded to this invitation")
-        changed = conn.execute("UPDATE phase_two_invites SET status=?,updated=? WHERE id=? AND status='approved'",
-                               (status, time.time(), invite_id))
-        if getattr(changed, "rowcount", 1) == 0:
-            raise HTTPException(409, "You have already responded to this invitation")
-    audit(user["id"], "phase_two_invitation_" + status, invite_id)
-    _notify(_company_member_ids(invite["company_id"], ("owner", "recruiter")), "phase_two_response",
-            "Candidate " + status + " the next-stage assessment",
-            "Response received for " + (invite["job_title"] or "a job") + ".", "company-applications",
-            dedupe_key="phase_two_response:" + invite_id)
-    return {"ok": True, "status": status}
+    now, iid = time.time(), uuid.uuid4().hex
+    config = body.model_dump()
+    run("""INSERT INTO phase_two_invites(id,company_id,job_id,application_id,title,requirements,config_json,version,status,deadline,created,updated)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (iid, company["id"], row["job_id"], application_id, body.title.strip(), body.requirements.strip(),
+         json.dumps(config), 1, "pending_platform_review", body.deadline, now, now))
+    run("UPDATE applications SET status='phase_two_invited' WHERE id=?", (application_id,))
+    run("INSERT INTO application_history(id,application_id,company_id,actor_id,from_stage,to_stage,reason,created) VALUES (?,?,?,?,?,?,?,?)",
+        (uuid.uuid4().hex, application_id, company["id"], user["id"], row["status"], "phase_two_invited",
+         "Second-phase setup submitted for platform review", now))
+    audit(user["id"], "phase_two_invitation_requested", iid)
+    return {"id": iid, "status": "pending_platform_review",
+            "message": "Configuration is saved. Candidate delivery remains pending platform approval and notification integration."}
 
 
 @router.get("/api/company/jobs/{job_id}/revisions")
@@ -2051,7 +1754,7 @@ class CompanyReviewDecision(BaseModel):
 
 @router.get("/api/admin/company-verifications")
 def admin_company_verifications(user=Depends(current_user)):
-    admin_only(user, "company_verification")
+    require_role(user, "admin")
     rows = allr("""SELECT v.company_id,v.legal_name,v.country,v.business_id,v.evidence_note,v.status,
                    v.decision_reason,v.submitted_at,c.name AS company_name,c.website
                    FROM company_verification v JOIN companies c ON c.id=v.company_id
@@ -2072,18 +1775,12 @@ def admin_company_verification_decision(company_id: str, body: CompanyReviewDeci
            WHERE company_id=?""", (body.decision, body.reason.strip(), now, user["id"], company_id))
     run("UPDATE companies SET verified=? WHERE id=?", (1 if body.decision == "verified" else 0, company_id))
     audit(user["id"], "company_verification_decision", company_id + ":" + body.decision + ":" + body.reason.strip())
-    titles = {"verified": "Your company is verified",
-              "needs_information": "More information needed for verification",
-              "rejected": "Company verification was not approved"}
-    _notify(_company_owner_id(company_id), "company_verification", titles[body.decision],
-            body.reason.strip()[:500], "company-verification",
-            dedupe_key=f"company_verification:{company_id}:{body.decision}:{int(now)}")
     return {"company_id": company_id, "status": body.decision}
 
 
 @router.get("/api/admin/job-review-queue")
 def admin_job_review_queue(user=Depends(current_user)):
-    admin_only(user, "job_moderation")
+    require_role(user, "admin")
     rows = allr("""SELECT j.id,j.title,j.description,j.location,j.employment_type,j.created,c.name AS company_name,c.id AS company_id
                    FROM jobs j JOIN companies c ON c.id=j.company_id
                    WHERE j.status='pending_review' ORDER BY j.created ASC""")
@@ -2095,18 +1792,13 @@ def admin_job_moderation_decision(job_id: str, body: CompanyReviewDecision, user
     admin_scope(user, "job_moderation")
     if body.decision not in ("published", "needs_changes", "rejected", "paused"):
         raise HTTPException(422, "Unsupported moderation decision")
-    row = one("SELECT j.id,j.title,j.company_id,c.verified FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.id=?", (job_id,))
+    row = one("SELECT j.id,j.company_id,c.verified FROM jobs j JOIN companies c ON c.id=j.company_id WHERE j.id=?", (job_id,))
     if not row:
         raise HTTPException(404, "Job not found")
     if body.decision == "published" and not row["verified"]:
         raise HTTPException(409, "Company verification must be completed before a job can be published")
     run("UPDATE jobs SET status=? WHERE id=?", (body.decision, job_id))
     audit(user["id"], "job_moderation_decision", job_id + ":" + body.decision + ":" + body.reason.strip())
-    titles = {"published": "Job published", "needs_changes": "Job needs changes",
-              "rejected": "Job was not approved", "paused": "Job paused by the platform"}
-    _notify(_company_owner_id(row["company_id"]), "job_moderation",
-            titles[body.decision] + ": " + (row["title"] or "your job"), body.reason.strip()[:500],
-            "company-jobs", dedupe_key=f"job_moderation:{job_id}:{body.decision}:{int(time.time())}")
     return {"job_id": job_id, "status": body.decision}
 
 
@@ -2160,27 +1852,11 @@ def ensure_admin_console_schema():
         "CREATE INDEX IF NOT EXISTS idx_question_staging_category ON question_import_staging(category_id)"
     ]:
         run(statement)
-    # One-time legacy migration: a deployment that predates staff roles has no
-    # admin_staff_roles rows at all, so its existing admins keep their authority.
-    # Once any staff row exists this never runs again, so an account that only
-    # gains user_roles.role='admin' later (e.g. a direct SQL edit) gets NO admin
-    # scope until a Super Admin assigns one (least privilege). create_admin.py
-    # and the staff console always write an explicit staff row.
-    #
-    # Upgrade safety: before staff scopes were enforced, an admin WITHOUT a staff
-    # row was treated as super_admin. On the first boot of this version every
-    # such existing admin is written in explicitly as super_admin, so nobody who
-    # can administer the platform today is locked out by the upgrade. The marker
-    # makes this run exactly once; afterwards least privilege applies.
-    run("CREATE TABLE IF NOT EXISTS app_migrations(name TEXT PRIMARY KEY, applied_at DOUBLE PRECISION NOT NULL)")
-    migration = "admin_staff_roles_explicit_v1"
-    if not one("SELECT name FROM app_migrations WHERE name=?", (migration,)):
-        for row in allr("SELECT r.user_id FROM user_roles r WHERE r.role='admin' AND NOT EXISTS "
-                        "(SELECT 1 FROM admin_staff_roles s WHERE s.user_id=r.user_id)"):
+    # Existing internally provisioned admin accounts retain their current authority.
+    for row in allr("SELECT user_id FROM user_roles WHERE role='admin'"):
+        if not one("SELECT user_id FROM admin_staff_roles WHERE user_id=?", (row["user_id"],)):
             run("INSERT INTO admin_staff_roles(user_id,admin_role,updated_by,updated_at) VALUES (?,?,?,?)",
                 (row["user_id"], "super_admin", row["user_id"], time.time()))
-            log.warning("Upgrade: admin %s had no staff role and keeps super_admin explicitly", row["user_id"])
-        run("INSERT INTO app_migrations(name,applied_at) VALUES (?,?)", (migration, time.time()))
     # Department exam budgets are configurable data, not hard-coded UI branches.
     # Seeding is insert-only: an operator edit is never overwritten on restart.
     try:
@@ -2210,37 +1886,13 @@ ADMIN_SCOPE_ROLES = {
     "quality": {"super_admin", "compliance_officer", "trust_safety_reviewer"}, "audit": {"super_admin", "compliance_officer"},
     "staff": {"super_admin"},
 }
-def staff_role_of(user_id):
-    """The explicit admin staff role, or None when none was ever assigned."""
-    row = one("SELECT admin_role FROM admin_staff_roles WHERE user_id=?", (user_id,))
-    return row["admin_role"] if row else None
-
-
-def admin_scopes_for(staff_role):
-    return sorted(scope for scope, roles in ADMIN_SCOPE_ROLES.items() if staff_role in roles)
-
-
 def admin_scope(user, scope="overview"):
-    """Role + MFA gate (require_role) plus the scoped staff-role check.
-
-    An admin without an admin_staff_roles row has no scope at all (least
-    privilege); see ensure_admin_console_schema for the legacy migration.
-    """
     require_role(user, "admin")
-    staff_role = staff_role_of(user["id"])
-    if not staff_role:
-        raise HTTPException(403, "No admin staff role is assigned to this account")
+    row = one("SELECT admin_role FROM admin_staff_roles WHERE user_id=?", (user["id"],))
+    staff_role = row["admin_role"] if row else "super_admin"
     if staff_role not in ADMIN_SCOPE_ROLES.get(scope, {"super_admin"}):
         raise HTTPException(403, "Your admin staff role does not permit this action")
     return staff_role
-
-
-def has_admin_scope(user, scope):
-    try:
-        admin_scope(user, scope)
-        return True
-    except HTTPException:
-        return False
 
 
 def admin_only(user, scope="overview"):
@@ -2295,17 +1947,15 @@ def admin_overview_v2(user=Depends(current_user)):
         "suspended_users": one("SELECT COUNT(*) AS n FROM admin_user_status WHERE status='suspended'")["n"],
     }
     return {"counts": counts, "demo_data": True,
-            "note": "Counts may include explicitly labelled synthetic demo records. AI spend is metered in the AI operations view; live billing is not connected in this deployment."}
+            "note": "Counts may include explicitly labelled synthetic demo records. Billing and AI cost telemetry are not connected in this deployment."}
 
 
 @router.get("/api/admin/console/users")
-def admin_users_v2(user=Depends(current_user), q: str = "", role: str = "all", status: str = "all",
-                   limit: int = 500, offset: int = 0):
+def admin_users_v2(user=Depends(current_user), q: str = "", role: str = "all", status: str = "all"):
     admin_only(user, "users_read")
-    limit, offset = _page(limit, offset, 500, 500)
-    select = """SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created,
-               COALESCE(s.status,'active') AS account_status,COALESCE(s.reason,'') AS status_reason"""
-    query = """ FROM users u LEFT JOIN user_roles r ON r.user_id=u.id
+    query = """SELECT u.id,u.name,u.email,COALESCE(r.role,'candidate') AS role,u.created,
+               COALESCE(s.status,'active') AS account_status,COALESCE(s.reason,'') AS status_reason
+               FROM users u LEFT JOIN user_roles r ON r.user_id=u.id
                LEFT JOIN admin_user_status s ON s.user_id=u.id WHERE 1=1"""
     args = []
     if q.strip():
@@ -2316,9 +1966,8 @@ def admin_users_v2(user=Depends(current_user), q: str = "", role: str = "all", s
         query += " AND COALESCE(r.role,'candidate')=?"; args.append(role)
     if status in ("active", "suspended"):
         query += " AND COALESCE(s.status,'active')=?"; args.append(status)
-    total = one("SELECT COUNT(*) AS n" + query, tuple(args))["n"]
-    rows = allr(select + query + " ORDER BY u.created DESC, u.id DESC LIMIT ? OFFSET ?", tuple(args) + (limit, offset))
-    return {"items": [dict(r) for r in rows], "total": total, "limit": limit, "offset": offset}
+    query += " ORDER BY u.created DESC LIMIT 500"
+    return {"items": [dict(r) for r in allr(query, tuple(args))]}
 
 
 @router.post("/api/admin/users/{user_id}/status")
@@ -2373,18 +2022,15 @@ INTEGRITY_FLAG_TYPES = {
 
 
 @router.get("/api/admin/integrity/attempts")
-def admin_integrity_attempts(user=Depends(current_user), q: str = "", status: str = "all", kind: str = "all", trust: str = "all",
-                             limit: int = 300, offset: int = 0):
+def admin_integrity_attempts(user=Depends(current_user), q: str = "", status: str = "all", kind: str = "all", trust: str = "all", limit: int = 300):
     admin_only(user, "integrity_review")
-    import main as core
-    core.finalize_expired_attempts()  # expired attempts must not show as active
-    limit, offset = _page(limit, offset, 300, 500)
-    select = """SELECT a.id,a.user_id,a.kind,a.status,a.started,a.finished,a.result,a.appeal,
+    limit = max(1, min(limit, 500))
+    query = """SELECT a.id,a.user_id,a.kind,a.status,a.started,a.finished,a.result,a.appeal,
                u.name AS candidate_name,u.email,
                r.decision AS review_decision,r.reason AS review_reason,r.reviewed_at,
                h.score AS honesty_score,h.status AS honesty_status,
-               (SELECT COUNT(*) FROM events e WHERE e.attempt_id=a.id) AS event_count"""
-    query = """ FROM attempts a JOIN users u ON u.id=a.user_id
+               (SELECT COUNT(*) FROM events e WHERE e.attempt_id=a.id) AS event_count
+               FROM attempts a JOIN users u ON u.id=a.user_id
                LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
                LEFT JOIN attempt_honesty_reviews h ON h.attempt_id=a.id WHERE 1=1"""
     args = []
@@ -2396,14 +2042,10 @@ def admin_integrity_attempts(user=Depends(current_user), q: str = "", status: st
         needle = "%" + q.strip().lower() + "%"
         query += " AND (LOWER(u.name) LIKE ? OR LOWER(u.email) LIKE ? OR LOWER(a.id) LIKE ?)"
         args.extend([needle, needle, needle])
-    if trust != "all":
-        # Filter in SQL (before LIMIT) so a page is never silently short.
-        query += " AND COALESCE(" + _json_field("a.result", "trust") + ",'Not scored')=?"
-        args.append(trust)
-    total = one("SELECT COUNT(*) AS n" + query, tuple(args))["n"]
+    query += " ORDER BY COALESCE(a.finished,a.started) DESC LIMIT ?"
+    args.append(limit)
     items = []
-    for row in allr(select + query + " ORDER BY COALESCE(a.finished,a.started) DESC, a.id LIMIT ? OFFSET ?",
-                    tuple(args) + (limit, offset)):
+    for row in allr(query, tuple(args)):
         item = dict(row)
         try: item["result"] = json.loads(item["result"]) if item["result"] else None
         except Exception: item["result"] = None
@@ -2413,8 +2055,10 @@ def admin_integrity_attempts(user=Depends(current_user), q: str = "", status: st
             item["honesty_score"] = E.honesty_score(
                 result.get("trust_points", 0), result.get("trust_hard_flags") or [])
         item["honesty_status"] = item.get("honesty_status") or "pending"
+        if trust != "all" and item["trust"] != trust:
+            continue
         items.append(item)
-    return {"items": items, "limit": limit, "offset": offset, "total": total}
+    return {"items": items, "limit": limit}
 
 
 @router.get("/api/admin/integrity/attempts/{attempt_id}")
@@ -2515,20 +2159,17 @@ def admin_integrity_attempt_detail(attempt_id: str, response: Response, user=Dep
                     answer["answer"] = options[option_index]
             except (TypeError, ValueError):
                 pass
-    # Metadata only: image bytes are fetched one at a time through the
-    # authenticated evidence endpoint instead of being inlined as base64.
-    evidence_rows = allr("SELECT id,event_id,captured_at,mime_type,size_bytes,expires_at,vision_json,vision_model,vision_at FROM exam_evidence WHERE attempt_id=? AND expires_at>? ORDER BY captured_at", (attempt_id, time.time()))
+    evidence_rows = allr("SELECT id,event_id,captured_at,mime_type,image_data,size_bytes,expires_at,vision_json,vision_model,vision_at FROM exam_evidence WHERE attempt_id=? AND expires_at>? ORDER BY captured_at", (attempt_id, time.time()))
     item["evidence"] = []
     for e in evidence_rows:
-        e = dict(e)
         try:
             vision = json.loads(e["vision_json"]) if e.get("vision_json") else None
         except Exception:
             vision = None
         item["evidence"].append({
             "id": e["id"], "event_id": e["event_id"], "captured_at": e["captured_at"],
-            "mime_type": e["mime_type"], "size_bytes": e["size_bytes"], "expires_at": e["expires_at"],
-            "url": f"/api/admin/attempts/{attempt_id}/evidence/{e['id']}",
+            "mime_type": e["mime_type"], "size_bytes": e["size_bytes"],
+            "data_url": "data:" + e["mime_type"] + ";base64," + base64.b64encode(bytes(e["image_data"])).decode("ascii"),
             "vision": vision, "vision_model": e.get("vision_model"), "vision_at": e.get("vision_at"),
         })
     item["integrity"] = item["result"] or {}
@@ -2551,25 +2192,8 @@ def admin_integrity_attempt_detail(attempt_id: str, response: Response, user=Dep
         if event["type"] in INTEGRITY_FLAG_TYPES:
             flag_counts[event["type"]] = flag_counts.get(event["type"], 0) + 1
     item["flags"] = [{"type": key, "count": value} for key, value in sorted(flag_counts.items())]
-    import main as core
-    # The candidate's reply to a "needs more info" review ({note, created} or None).
-    item["review_response"] = core.attempt_review_response(attempt_id)
     audit(user["id"], "integrity_attempt_viewed", attempt_id)
     return item
-
-
-@router.get("/api/admin/attempts/{attempt_id}/evidence/{evidence_id}")
-def admin_attempt_evidence_image(attempt_id: str, evidence_id: str, user=Depends(current_user)):
-    """Stream one unexpired proctoring evidence image (same scope as the detail view)."""
-    admin_only(user, "integrity_review")
-    row = one("SELECT mime_type,image_data FROM exam_evidence WHERE id=? AND attempt_id=? AND expires_at>?",
-              (evidence_id, attempt_id, time.time()))
-    if not row:
-        raise HTTPException(404, "Evidence not found or expired")
-    mime = row["mime_type"] if row["mime_type"] in ("image/jpeg", "image/png", "image/webp") else "application/octet-stream"
-    audit(user["id"], "integrity_evidence_viewed", f"{attempt_id}:{evidence_id}")
-    return Response(content=bytes(row["image_data"]), media_type=mime,
-                    headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 class HonestyReviewInput(BaseModel):
@@ -2634,21 +2258,16 @@ def admin_honesty_review(attempt_id: str, body: HonestyReviewInput, user=Depends
 
 
 @router.get("/api/admin/assessment-reviews")
-def admin_assessment_reviews(user=Depends(current_user), limit: int = 300, offset: int = 0):
+def admin_assessment_reviews(user=Depends(current_user)):
     admin_only(user, "assessment_review")
-    import main as core
-    core.finalize_expired_attempts()  # expired attempts must not show as active
-    limit, offset = _page(limit, offset, 300, 500)
-    where = """ FROM attempts a JOIN users u ON u.id=a.user_id
-                   LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
-                   WHERE a.status='done' OR (a.appeal IS NOT NULL AND a.appeal!='')"""
-    total = one("SELECT COUNT(*) AS n" + where)["n"]
-    # The admin-only answer state is read in the same query (no per-row SELECT).
-    rows = allr("""SELECT a.id,a.user_id,a.kind,a.status,a.started,a.finished,a.result,a.appeal,a.state,
+    rows = allr("""SELECT a.id,a.user_id,a.kind,a.status,a.started,a.finished,a.result,a.appeal,
                    u.name AS candidate_name,u.email,
-                   r.decision AS review_decision,r.reason AS review_reason,r.reviewed_at""" + where + """
+                   r.decision AS review_decision,r.reason AS review_reason,r.reviewed_at
+                   FROM attempts a JOIN users u ON u.id=a.user_id
+                   LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
+                   WHERE a.status='done' OR (a.appeal IS NOT NULL AND a.appeal!='')
                    ORDER BY CASE WHEN a.appeal IS NOT NULL AND a.appeal!='' AND r.decision IS NULL THEN 0 ELSE 1 END,
-                   COALESCE(a.finished,a.started) DESC, a.id LIMIT ? OFFSET ?""", (limit, offset))
+                   COALESCE(a.finished,a.started) DESC LIMIT 300""")
     # One query for every evaluation draft avoids an N+1 lookup while building the queue.
     evaluations_by_attempt = {}
     honesty_by_attempt = {}
@@ -2661,18 +2280,16 @@ def admin_assessment_reviews(user=Depends(current_user), limit: int = 300, offse
                 evaluation_view(evaluation))
         honesty_by_attempt = {review["attempt_id"]: dict(review) for review in allr(
             f"SELECT * FROM attempt_honesty_reviews WHERE attempt_id IN ({placeholders})", tuple(ids))}
-    responses = core.latest_review_responses([r["id"] for r in rows]) if rows else {}
     items=[]
     for row in rows:
         item=dict(row)
-        item["review_response"]=responses.get(item["id"])
         try: item["result"]=json.loads(item["result"]) if item["result"] else None
         except Exception: item["result"]=None
         # The state is admin-only here. Preserve the original response for manual review;
         # legacy attempts created before response capture are explicitly marked unavailable.
-        raw_state = item.pop("state", None)
+        attempt_state = one("SELECT state FROM attempts WHERE id=?", (item["id"],))
         try:
-            state = json.loads(raw_state) if raw_state else {}
+            state = json.loads(attempt_state["state"]) if attempt_state and attempt_state["state"] else {}
         except Exception:
             state = {}
         evidence = []
@@ -2757,7 +2374,7 @@ def admin_assessment_reviews(user=Depends(current_user), limit: int = 300, offse
             item["evaluation_method"] = (
                 "Deterministic answer-key / SQL grader; no generative AI score was produced.")
         items.append(item)
-    return {"items":items,"total":total,"limit":limit,"offset":offset}
+    return {"items":items}
 
 
 @router.get("/api/admin/attempts/{attempt_id}/evaluations")
@@ -2963,7 +2580,8 @@ def admin_review_attempt(attempt_id: str, body: AdminReviewInput, user=Depends(c
     now = time.time()
     # Commit the marks, recomputed result and academic decision as one unit.
     # A concurrent honesty review cannot observe half-approved marks.
-    with _transaction() as conn:
+    with db() as conn:
+        conn.execute("BEGIN" if DATABASE_URL else "BEGIN IMMEDIATE")
         locked = conn.execute("SELECT result FROM attempts WHERE id=?" + (" FOR UPDATE" if DATABASE_URL else ""), (attempt_id,)).fetchone()
         result = json.loads(locked["result"])
         current_evaluations = {e["question_id"]: dict(e) for e in conn.execute("SELECT * FROM answer_evaluations WHERE attempt_id=?", (attempt_id,)).fetchall()}
@@ -3016,57 +2634,48 @@ def _appeals_eligible_admin_ids():
     """Admin accounts that may decide appeals (staff role defaults to super admin)."""
     rows = allr("""SELECT DISTINCT u.id FROM users u
                    JOIN user_roles r ON r.user_id=u.id AND r.role='admin'
-                   JOIN admin_staff_roles s ON s.user_id=u.id
+                   LEFT JOIN admin_staff_roles s ON s.user_id=u.id
                    LEFT JOIN admin_user_status st ON st.user_id=u.id
-                   WHERE s.admin_role IN ('super_admin','trust_safety_reviewer')
+                   WHERE (s.admin_role IS NULL OR s.admin_role IN ('super_admin','trust_safety_reviewer'))
                      AND (st.status IS NULL OR st.status!='suspended')""")
     return {row["id"] for row in rows}
 
 
 @router.get("/api/admin/appeals")
-def admin_appeals(user=Depends(current_user), limit: int = 300, offset: int = 0):
+def admin_appeals(user=Depends(current_user)):
     admin_only(user, "appeals")
-    limit, offset = _page(limit, offset, 300, 500)
-    total = one("SELECT COUNT(*) AS n FROM attempts a WHERE a.appeal IS NOT NULL AND a.appeal!=''")["n"]
     rows = allr("""SELECT a.id AS attempt_id,a.appeal,a.kind,a.finished,u.id AS user_id,
                           u.name AS candidate_name,u.email,
                           r.decision AS review_decision,r.reviewer_id AS original_reviewer_id,
                           ru.name AS original_reviewer_name,
                           d.decision,d.reason AS review_reason,d.decided_at,
-                          d.reviewer_id AS appeal_reviewer_id,au.name AS appeal_reviewer_name,
-                          h.status AS honesty_status,h.reviewer_id AS honesty_reviewer_id
+                          d.reviewer_id AS appeal_reviewer_id,au.name AS appeal_reviewer_name
                    FROM attempts a JOIN users u ON u.id=a.user_id
                    LEFT JOIN admin_attempt_reviews r ON r.attempt_id=a.id
-                   LEFT JOIN attempt_honesty_reviews h ON h.attempt_id=a.id
                    LEFT JOIN users ru ON ru.id=r.reviewer_id
                    LEFT JOIN admin_appeal_decisions d ON d.attempt_id=a.id
                    LEFT JOIN users au ON au.id=d.reviewer_id
                    WHERE a.appeal IS NOT NULL AND a.appeal!=''
                    ORDER BY CASE WHEN d.decision IS NULL OR d.decision='needs_more_info' THEN 0 ELSE 1 END,
-                            a.finished DESC, a.id LIMIT ? OFFSET ?""", (limit, offset))
+                            a.finished DESC LIMIT 300""")
     other_admin_available = bool(_appeals_eligible_admin_ids() - {user["id"]})
     items = []
     for row in rows:
         item = dict(row)
         item["open"] = item["decision"] in (None, "needs_more_info")
-        # Appealable outcomes: an invalidated result or a rejected honesty review.
-        item["appealed_outcome"] = ("invalidated" if item["review_decision"] == "invalidated" else
-                                    "honesty_rejected" if item["honesty_status"] == "rejected" else None)
-        original = {item["original_reviewer_id"] if item["review_decision"] == "invalidated" else None,
-                    item["honesty_reviewer_id"] if item["honesty_status"] == "rejected" else None} - {None}
-        separation_blocked = (user["id"] in original and other_admin_available)
-        item["can_decide"] = bool(item["open"] and item["appealed_outcome"] and not separation_blocked)
+        separation_blocked = (item["original_reviewer_id"] == user["id"] and other_admin_available)
+        item["can_decide"] = bool(item["open"] and item["review_decision"] == "invalidated" and not separation_blocked)
         item["blocked_reason"] = (
             "For separation of duties, an appeal against your own review must be decided by another administrator."
             if separation_blocked else
             "" if item["can_decide"] else
             "This appeal already has a final decision."
             if not item["open"] else
-            "This result is no longer invalidated or honesty-rejected, so the appeal is already resolved."
+            "This assessment is no longer invalidated, so the appeal is already resolved."
         )
         item["other_admin_available"] = other_admin_available
         items.append(item)
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    return {"items": items}
 
 
 @router.post("/api/admin/appeals/{attempt_id}/decision")
@@ -3078,17 +2687,13 @@ def admin_appeal_decision(attempt_id: str, body: AdminReviewInput, user=Depends(
     if not att:
         raise HTTPException(404, "Appeal not found")
     review = one("SELECT decision,reason,reviewer_id FROM admin_attempt_reviews WHERE attempt_id=?", (attempt_id,))
-    honesty_row = one("SELECT status,reviewer_id FROM attempt_honesty_reviews WHERE attempt_id=?", (attempt_id,))
-    academic_invalidated = bool(review and review["decision"] == "invalidated")
-    honesty_rejected = bool(honesty_row and honesty_row["status"] == "rejected")
-    if not academic_invalidated and not honesty_rejected:
-        raise HTTPException(409, "This appeal is already resolved because the result is no longer invalidated or honesty-rejected.")
-    original_reviewers = ({review["reviewer_id"]} if academic_invalidated else set()) |                          ({honesty_row["reviewer_id"]} if honesty_rejected else set())
+    if not review or review["decision"] != "invalidated":
+        raise HTTPException(409, "This appeal is already resolved because the assessment is no longer invalidated.")
 
     eligible_admins = _appeals_eligible_admin_ids()
     other_admin_available = bool(eligible_admins - {user["id"]})
     single_admin_override = False
-    if user["id"] in original_reviewers:
+    if review["reviewer_id"] == user["id"]:
         if other_admin_available:
             raise HTTPException(409, "For separation of duties, an appeal against your own review must be decided by another administrator.")
         # A single-admin deployment cannot satisfy separation of duties. Record the
@@ -3098,23 +2703,9 @@ def admin_appeal_decision(attempt_id: str, body: AdminReviewInput, user=Depends(
     reason = body.reason.strip()
     now = time.time()
     publication = None
-    if body.decision == "overturned" and not academic_invalidated:
-        # Honesty-rejected result: the academic review stands; the appeal
-        # overrides the human honesty rejection (advisory signal only).
-        with _transaction() as conn:
-            conn.execute("""UPDATE attempt_honesty_reviews SET status='approved',reason=?,reviewer_id=?,
-                            reviewed_at=?,updated_at=? WHERE attempt_id=?""",
-                         ("Appeal overturned: " + reason, user["id"], now, now, attempt_id))
-            conn.execute("""INSERT INTO admin_appeal_decisions(attempt_id,decision,reason,reviewer_id,decided_at)
-                            VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET decision=excluded.decision,
-                            reason=excluded.reason,reviewer_id=excluded.reviewer_id,decided_at=excluded.decided_at""",
-                         (attempt_id, body.decision, reason, user["id"], now))
-    elif body.decision == "overturned":
-        with _transaction() as conn:
-            if honesty_rejected:
-                conn.execute("""UPDATE attempt_honesty_reviews SET status='approved',reason=?,reviewer_id=?,
-                                reviewed_at=?,updated_at=? WHERE attempt_id=?""",
-                             ("Appeal overturned: " + reason, user["id"], now, now, attempt_id))
+    if body.decision == "overturned":
+        with db() as conn:
+            conn.execute("BEGIN" if DATABASE_URL else "BEGIN IMMEDIATE")
             locked = conn.execute("SELECT result FROM attempts WHERE id=?" + (" FOR UPDATE" if DATABASE_URL else ""), (attempt_id,)).fetchone()
             result = json.loads(locked["result"] or "{}")
             # Invalidation rejected every response mark. An overturn restores marks
@@ -3170,7 +2761,7 @@ def admin_appeal_decision(attempt_id: str, body: AdminReviewInput, user=Depends(
 @router.get("/api/admin/phase-two-requests")
 def admin_phase_two_requests(user=Depends(current_user)):
     admin_only(user, "phase_two")
-    rows=allr("""SELECT p.id,p.title,p.requirements,p.config_json,p.status,p.deadline,p.created,p.version,p.updated,
+    rows=allr("""SELECT p.id,p.title,p.requirements,p.config_json,p.status,p.deadline,p.created,
                  c.name AS company_name,j.title AS job_title,u.name AS candidate_name
                  FROM phase_two_invites p JOIN companies c ON c.id=p.company_id
                  JOIN jobs j ON j.id=p.job_id JOIN applications a ON a.id=p.application_id
@@ -3183,33 +2774,10 @@ def admin_phase_two_decision(request_id: str, body: AdminReviewInput, user=Depen
     admin_only(user, "phase_two")
     if body.decision not in ("approved","needs_changes","rejected"):
         raise HTTPException(422,"Unsupported phase-two review decision")
-    row=one("""SELECT p.id,p.status,p.version,p.company_id,a.candidate_id,j.title AS job_title,c.name AS company_name
-               FROM phase_two_invites p JOIN applications a ON a.id=p.application_id
-               JOIN jobs j ON j.id=p.job_id JOIN companies c ON c.id=p.company_id WHERE p.id=?""",(request_id,))
+    row=one("SELECT id FROM phase_two_invites WHERE id=?",(request_id,))
     if not row: raise HTTPException(404,"Assessment request not found")
-    if row["status"]!="pending_platform_review":
-        raise HTTPException(409,"Only setups awaiting platform review can be decided")
-    with _transaction() as conn:
-        changed=conn.execute("UPDATE phase_two_invites SET status=?,updated=? WHERE id=? AND status='pending_platform_review'",
-                             (body.decision,time.time(),request_id))
-        if getattr(changed,"rowcount",1)==0:
-            raise HTTPException(409,"Only setups awaiting platform review can be decided")
+    run("UPDATE phase_two_invites SET status=?,updated=? WHERE id=?",(body.decision,time.time(),request_id))
     audit(user["id"],"phase_two_request_reviewed",request_id+":"+body.decision+":"+body.reason.strip())
-    version=row["version"] or 1
-    company_users=_company_member_ids(row["company_id"],("owner","recruiter"))
-    job=row["job_title"] or "a job"
-    if body.decision=="approved":
-        _notify(row["candidate_id"],"phase_two_invite","New assessment invitation from "+(row["company_name"] or "a company"),
-                "You are invited to a next-stage assessment for "+job+". Accept or decline it in Applications.",
-                "applications",dedupe_key=f"phase_two_invite:{request_id}:v{version}")
-        _notify(company_users,"phase_two_approved","Next-stage assessment approved",
-                "The platform approved your setup for "+job+" and the candidate was invited.",
-                "company-applications",dedupe_key=f"phase_two_decision:{request_id}:v{version}")
-    else:
-        _notify(company_users,"phase_two_"+body.decision,
-                "Next-stage assessment "+("needs changes" if body.decision=="needs_changes" else "was not approved"),
-                body.reason.strip()[:500],"company-applications",
-                dedupe_key=f"phase_two_decision:{request_id}:v{version}")
     return {"id":request_id,"status":body.decision}
 
 
@@ -3272,43 +2840,6 @@ def _seed_question_categories():
 _seed_question_categories()
 
 
-# Curated, MOCK-labelled practice pool. These items exist ONLY for practice:
-# status='practice' is never selected by the exam builders (status='active'),
-# so a fresh install can serve practice without exposing live exam items.
-# Insert-only by fixed id: an admin edit or archive is never overwritten.
-PRACTICE_SEED = [
-    ("sql", "CAT-01", "SQL", "Which SQL clause filters rows after GROUP BY?", ["WHERE", "HAVING", "ORDER BY", "LIMIT"], "HAVING"),
-    ("sql", "CAT-01", "SQL", "Which join returns only rows with matches in both tables?", ["LEFT JOIN", "FULL OUTER JOIN", "INNER JOIN", "CROSS JOIN"], "INNER JOIN"),
-    ("python", "CAT-03", "Python", "Which keyword creates a generator function in Python?", ["return", "yield", "async", "lambda"], "yield"),
-    ("python", "CAT-03", "Python", "Which built-in type is immutable?", ["list", "dict", "set", "tuple"], "tuple"),
-    ("statistics", "CAT-08", "Statistics", "Which measure is least affected by outliers?", ["Mean", "Median", "Range", "Variance"], "Median"),
-    ("visualization", "CAT-08", "Data Visualization", "Which chart best shows a trend over time?", ["Pie chart", "Line chart", "Treemap", "Radar chart"], "Line chart"),
-    ("excel", "CAT-08", "Excel", "Which Excel function looks up a value in the first column of a range?", ["VLOOKUP", "SUMIF", "COUNTA", "CONCAT"], "VLOOKUP"),
-    ("git", "CAT-13", "Git", "Which command creates a new branch and switches to it?", ["git merge -b", "git switch -c", "git push -u", "git stash"], "git switch -c"),
-    ("javascript", "CAT-12", "JavaScript & TypeScript", "Which keyword declares a block-scoped, non-reassignable binding?", ["var", "let", "const", "static"], "const"),
-    ("java", "CAT-05", "Java", "Which collection does not allow duplicate elements?", ["ArrayList", "LinkedList", "HashSet", "Vector"], "HashSet"),
-    ("docker", "CAT-13", "Docker", "Which Dockerfile instruction sets the default command?", ["RUN", "CMD", "COPY", "EXPOSE"], "CMD"),
-    ("linux", "CAT-13", "Linux & Bash", "Which command shows the current working directory?", ["ls", "cd", "pwd", "whoami"], "pwd"),
-]
-
-
-def _seed_practice_questions():
-    now = time.time()
-    for index, (skill, category, subcategory, text, options, answer) in enumerate(PRACTICE_SEED, start=1):
-        run("""INSERT INTO question_bank(id,category_id,subcategory,question_type,difficulty_level,question_text,
-               options,correct_answer,explanation,reference_answer,grading_rubric,marks,time_allocation,status,
-               created_by,created_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING""",
-            (f"practice-{skill}-{index:02d}", category, subcategory, "MCQ", "Easy", text, json.dumps(options),
-             answer, "", "", "Deterministic answer-key comparison", 1, 60, "practice",
-             "MOCK curated practice pool", now, 1))
-
-
-try:
-    _seed_practice_questions()
-except Exception:
-    log.exception("Could not seed the practice question pool")
-
-
 def _guess_question_category(question_text):
     text = str(question_text or "").lower()
     rules = [
@@ -3354,8 +2885,7 @@ def _infer_question_type(question_text, options=None, requested=""):
 
 
 def _seed_question_bank():
-    # The MOCK practice pool is seeded separately and must not suppress this seed.
-    if one("SELECT id FROM question_bank WHERE status<>'practice' LIMIT 1"):
+    if one("SELECT id FROM question_bank LIMIT 1"):
         return
     from content import QUESTIONS as curated_questions
     legacy_map = {"sql":"CAT-01","python":"CAT-03","statistics":"CAT-08","visualization":"CAT-08","excel":"CAT-08","git":"CAT-08","communication":"CAT-06"}
@@ -3412,84 +2942,19 @@ def _question_payload(raw, actor="Admin"):
     if difficulty not in ("Easy","Medium","Hard"): errors.append("Difficulty must be Easy, Medium or Hard.")
     if marks<0.5 or marks>100: errors.append("Marks must be between 0.5 and 100.")
     if seconds<15 or seconds>7200: errors.append("Time allocation must be 15–7200 seconds.")
-    if status not in QUESTION_STATUSES: errors.append("Status must be Draft, Active, Practice or Archived.")
+    if status not in ("draft","active","archived"): errors.append("Status must be Draft, Active or Archived.")
     if len(qtext)>10000: errors.append("Question text is too long.")
     if len(options)>10: errors.append("A question can have at most 10 options.")
     if qtype == "MCQ" and len(options)<2: errors.append("MCQ requires at least two options.")
-    correct_answer = _canonical_mcq_answer(
-        str(raw.get("correct_answer") if raw.get("correct_answer") is not None else raw.get("answer") or "").strip(),
-        options if qtype == "MCQ" else [])
-    payload = {"id":str(raw.get("id") or uuid.uuid4().hex[:12]),"category_id":category_id or "",
+    return {"id":str(raw.get("id") or uuid.uuid4().hex[:12]),"category_id":category_id or "",
         "subcategory":str(raw.get("subcategory") or "General").strip()[:100],"question_type":qtype[:40],
         "difficulty_level":difficulty,"question_text":qtext,"options":options,
-        "correct_answer":correct_answer,
+        "correct_answer":str(raw.get("correct_answer") if raw.get("correct_answer") is not None else raw.get("answer") or "").strip(),
         "explanation":str(raw.get("explanation") or "").strip(),
         "reference_answer":str(raw.get("reference_answer") or raw.get("reference") or "").strip(),
         "grading_rubric":str(raw.get("grading_rubric") or raw.get("rubric") or "").strip(),
         "marks":marks,"time_allocation":seconds,"status":status,"created_by":actor,
         "created_at":time.time(),"version":int(raw.get("version") or 1),"errors":errors}
-    payload["content_errors"] = _question_content_errors(payload)
-    return payload
-
-
-# "practice" items form a separate pool: they are never selected for exams
-# (exam selectors use status='active') and are the only items the practice
-# tools serve to candidates.
-QUESTION_STATUSES = ("draft", "active", "archived", "practice")
-QUESTION_SERVED_STATUSES = ("active", "practice")
-
-
-def _canonical_mcq_answer(answer, options):
-    """Map an imported MCQ key onto the exact option text when unambiguous:
-    case-insensitive option text, or a single option letter (A, B, ...)."""
-    if not options or not answer:
-        return answer
-    for option in options:
-        if option == answer:
-            return option
-    lowered = answer.strip().lower()
-    for option in options:
-        if option.strip().lower() == lowered:
-            return option
-    letter = re.fullmatch(r"\(?([A-Ja-j])[\).]?", answer.strip())
-    if letter:
-        index = ord(letter.group(1).upper()) - ord("A")
-        if 0 <= index < len(options):
-            return options[index]
-    return answer
-
-
-def _question_content_errors(payload):
-    """Answer-key completeness, mirroring agent_questions.validate: an MCQ needs a
-    correct answer that is one of its options; any other type needs a stored
-    reference answer or grading rubric (scores come only from stored keys)."""
-    errors = []
-    if str(payload.get("question_type", "")).upper() == "MCQ":
-        answer = str(payload.get("correct_answer") or "").strip()
-        if not answer:
-            errors.append("MCQ requires a correct answer.")
-        elif answer not in (payload.get("options") or []):
-            errors.append("MCQ correct answer must match one of the options.")
-    elif not (str(payload.get("reference_answer") or "").strip() or str(payload.get("grading_rubric") or "").strip()):
-        errors.append("A reference answer or grading rubric is required for this question type.")
-    return errors
-
-
-def _import_errors(payload):
-    return list(payload["errors"]) + list(payload.get("content_errors") or [])
-
-
-def _insert_question(conn, payload, actor):
-    """Insert a validated question as a new draft with a server-generated id."""
-    question_id = uuid.uuid4().hex[:12]
-    conn.execute("""INSERT INTO question_bank(id,category_id,subcategory,question_type,difficulty_level,question_text,
-        options,correct_answer,explanation,reference_answer,grading_rubric,marks,time_allocation,status,
-        created_by,created_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (question_id,payload["category_id"],payload["subcategory"],payload["question_type"],payload["difficulty_level"],
-         payload["question_text"],json.dumps(payload["options"]),payload["correct_answer"],payload["explanation"],
-         payload["reference_answer"],payload["grading_rubric"],payload["marks"],payload["time_allocation"],
-         "draft",actor,time.time(),1))
-    return question_id
 
 def _question_row(row):
     item=dict(row)
@@ -3515,8 +2980,7 @@ def admin_questions(user=Depends(current_user)):
         categories.append(c)
     return {"items":items,"categories":categories,
         "summary":{"total":len(items),"active":sum(q["status"]=="active" for q in items),
-        "draft":sum(q["status"]=="draft" for q in items),"archived":sum(q["status"]=="archived" for q in items),
-        "practice":sum(q["status"]=="practice" for q in items)},
+        "draft":sum(q["status"]=="draft" for q in items),"archived":sum(q["status"]=="archived" for q in items)},
         "governance":"Database-backed question bank with versioned edits, explicit status and audited imports."}
 
 @router.post("/api/admin/questions/categories")
@@ -3536,32 +3000,29 @@ def admin_create_question_category(body: dict, user=Depends(current_user)):
 
 @router.post("/api/admin/questions")
 def admin_create_question(body: dict, user=Depends(current_user)):
-    """Create a question. New questions are always drafts with a server id;
-    activation goes through PUT with full answer-key validation."""
     admin_only(user,"questions")
-    payload=_question_payload({**dict(body or {}),"status":"draft"},user.get("name") or "Admin")
+    payload=_question_payload(body,user.get("name") or "Admin")
     if payload["errors"]: raise HTTPException(422,{"errors":payload["errors"]})
-    with _transaction() as conn:
-        duplicate=conn.execute("SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=?",
-                               (payload["question_text"],payload["category_id"])).fetchone()
-        if duplicate: raise HTTPException(409,"A question with the same text already exists in this category.")
-        question_id=_insert_question(conn,payload,payload["created_by"])
-    audit(user["id"],"question_created",question_id)
-    item=_question_row(one("SELECT * FROM question_bank WHERE id=?",(question_id,)))
-    item["content_errors"]=payload["content_errors"]
-    return item
+    duplicate=one("SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=?",(payload["question_text"],payload["category_id"]))
+    if duplicate: raise HTTPException(409,"A question with the same text already exists in this category.")
+    run("""INSERT INTO question_bank(id,category_id,subcategory,question_type,difficulty_level,question_text,
+        options,correct_answer,explanation,reference_answer,grading_rubric,marks,time_allocation,status,
+        created_by,created_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (payload["id"],payload["category_id"],payload["subcategory"],payload["question_type"],payload["difficulty_level"],
+        payload["question_text"],json.dumps(payload["options"]),payload["correct_answer"],payload["explanation"],
+        payload["reference_answer"],payload["grading_rubric"],payload["marks"],payload["time_allocation"],
+        payload["status"],payload["created_by"],payload["created_at"],1))
+    audit(user["id"],"question_created",payload["id"])
+    return _question_row(one("SELECT * FROM question_bank WHERE id=?",(payload["id"],)))
 
 @router.put("/api/admin/questions/{question_id}")
 def admin_update_question(question_id: str, body: dict, user=Depends(current_user)):
     admin_only(user,"questions")
     current=one("SELECT * FROM question_bank WHERE id=?",(question_id,))
     if not current: raise HTTPException(404,"Question not found")
-    merged=dict(current); merged.update(body or {}); merged["id"]=question_id
+    merged=dict(current); merged.update(body); merged["id"]=question_id
     payload=_question_payload(merged,user.get("name") or "Admin")
     if payload["errors"]: raise HTTPException(422,{"errors":payload["errors"]})
-    if payload["status"] in QUESTION_SERVED_STATUSES and payload["content_errors"]:
-        # Activation (exam or practice) requires a complete stored answer key.
-        raise HTTPException(422,{"errors":payload["content_errors"]})
     duplicate=one("SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=? AND id<>?",
         (payload["question_text"],payload["category_id"],question_id))
     if duplicate: raise HTTPException(409,"A question with the same text already exists in this category.")
@@ -3577,11 +3038,9 @@ def admin_update_question(question_id: str, body: dict, user=Depends(current_use
     return _question_row(one("SELECT * FROM question_bank WHERE id=?",(question_id,)))
 
 @router.post("/api/admin/questions/import/preview")
-def admin_preview_question_import(file: UploadFile=File(...), category_id: str=Form(""), user=Depends(current_user)):
-    # Sync handler (threadpool): bounded read plus CSV/JSON/PDF parsing never
-    # block the event loop.
+async def admin_preview_question_import(file: UploadFile=File(...), category_id: str=Form(""), user=Depends(current_user)):
     admin_only(user,"questions")
-    name=(file.filename or "").lower(); data=file.file.read(5_000_001)
+    name=(file.filename or "").lower(); data=await file.read()
     if len(data)>5_000_000: raise HTTPException(413,"Upload must be smaller than 5 MB.")
     try:
         if name.endswith(".csv"):
@@ -3609,8 +3068,7 @@ def admin_preview_question_import(file: UploadFile=File(...), category_id: str=F
     for raw in records:
         if not isinstance(raw,dict): raw={"question_text":str(raw),"category_id":category_id}
         if not raw.get("category_id") and category_id: raw["category_id"]=category_id
-        item=_question_payload({**raw,"status":"draft"},user.get("name") or "Admin")
-        item["errors"]=_import_errors(item)
+        item=_question_payload(raw,user.get("name") or "Admin")
         dup=one("SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=?",
             (item["question_text"],item["category_id"])) if item["question_text"] and item["category_id"] else None
         item["duplicate"]=bool(dup)
@@ -3625,34 +3083,24 @@ class QuestionImportCommit(BaseModel):
 
 @router.post("/api/admin/questions/import/commit")
 def admin_commit_question_import(body: QuestionImportCommit,user=Depends(current_user)):
-    """Import validated questions as drafts, all-or-nothing in one transaction.
-
-    Client ids and statuses are ignored: every row gets a server id and the
-    draft status; activation happens later through PUT (validated)."""
     admin_only(user,"questions")
-    actor=user.get("name") or "Admin"
-    added=0; skipped=0; rejected=0; rejected_items=[]; imported_ids=[]
-    # Category rows may be created while normalising; do that before the write lock.
-    payloads=[_question_payload({**(raw if isinstance(raw,dict) else {}),"status":"draft"},actor) for raw in body.questions]
-    seen=set()
-    with _transaction() as conn:
-        for index,payload in enumerate(payloads):
-            errors=_import_errors(payload)
-            if errors:
-                rejected+=1
-                if len(rejected_items)<100: rejected_items.append({"index":index,"errors":errors})
-                continue
-            key=(payload["question_text"].strip().lower(),payload["category_id"])
-            duplicate=key in seen or conn.execute(
-                "SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=?",
-                (payload["question_text"],payload["category_id"])).fetchone()
-            if duplicate: skipped+=1; continue
-            seen.add(key)
-            imported_ids.append(_insert_question(conn,payload,actor))
-            added+=1
+    added=0; skipped=0; rejected=0
+    for raw in body.questions:
+        payload=_question_payload(raw,user.get("name") or "Admin")
+        if payload["errors"]: rejected+=1; continue
+        duplicate=one("SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=?",
+            (payload["question_text"],payload["category_id"]))
+        if duplicate: skipped+=1; continue
+        run("""INSERT INTO question_bank(id,category_id,subcategory,question_type,difficulty_level,question_text,
+            options,correct_answer,explanation,reference_answer,grading_rubric,marks,time_allocation,status,
+            created_by,created_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (payload["id"],payload["category_id"],payload["subcategory"],payload["question_type"],payload["difficulty_level"],
+            payload["question_text"],json.dumps(payload["options"]),payload["correct_answer"],payload["explanation"],
+            payload["reference_answer"],payload["grading_rubric"],payload["marks"],payload["time_allocation"],
+            payload["status"],payload["created_by"],payload["created_at"],1))
+        added+=1
     audit(user["id"],"question_bulk_import",f"added={added};skipped={skipped};rejected={rejected}")
-    return {"added":added,"skipped":skipped,"rejected":rejected,"status":"draft",
-            "imported_ids":imported_ids,"rejected_items":rejected_items}
+    return {"added":added,"skipped":skipped,"rejected":rejected}
 
 
 # ---------------------------------------------------------------------------
@@ -3669,7 +3117,7 @@ def _staging_row(row):
     try: item["raw"] = json.loads(item.get("raw") or "{}")
     except Exception: item["raw"] = {}
     payload = _question_payload(item, item.get("created_by") or "Admin")
-    item["errors"] = _import_errors(payload)
+    item["errors"] = payload["errors"]
     dup = one("SELECT id FROM question_bank WHERE lower(question_text)=lower(?) AND category_id=?",
               (payload["question_text"], payload["category_id"])) if payload["question_text"] and payload["category_id"] else None
     item["duplicate"] = bool(dup)
@@ -3746,7 +3194,6 @@ def admin_commit_staging(body: StagingCommitRequest, user=Depends(current_user))
     actor = user.get("name") or "Admin"
     added = skipped = rejected = missing = 0
     imported_ids = []
-    staged = []
     for staging_id in dict.fromkeys(body.question_ids):
         row = one("SELECT * FROM question_import_staging WHERE id=?", (staging_id,))
         if not row:
@@ -3757,22 +3204,30 @@ def admin_commit_staging(body: StagingCommitRequest, user=Depends(current_user))
             raw["options"] = json.loads(raw.get("options") or "[]")
         except (TypeError, ValueError):
             raw["options"] = []
-        staged.append((staging_id, _question_payload({**raw, "status": "draft"}, actor)))
-    with _transaction() as conn:
-        for staging_id, payload in staged:
-            if _import_errors(payload):
-                rejected += 1
-                continue
-            duplicate = conn.execute(
-                "SELECT id FROM question_bank WHERE lower(trim(question_text))=lower(trim(?)) AND category_id=?",
-                (payload["question_text"], payload["category_id"])
-            ).fetchone()
-            if duplicate:
-                skipped += 1
-                continue
-            imported_ids.append(_insert_question(conn, payload, actor))
-            conn.execute("DELETE FROM question_import_staging WHERE id=?", (staging_id,))
-            added += 1
+        payload = _question_payload(raw, actor)
+        if payload["errors"]:
+            rejected += 1
+            continue
+        duplicate = one(
+            "SELECT id FROM question_bank WHERE lower(trim(question_text))=lower(trim(?)) AND category_id=?",
+            (payload["question_text"], payload["category_id"])
+        )
+        if duplicate:
+            skipped += 1
+            continue
+        payload["id"] = uuid.uuid4().hex[:12]
+        payload["created_at"] = time.time()
+        run("""INSERT INTO question_bank(id,category_id,subcategory,question_type,difficulty_level,question_text,
+            options,correct_answer,explanation,reference_answer,grading_rubric,marks,time_allocation,status,
+            created_by,created_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (payload["id"], payload["category_id"], payload["subcategory"], payload["question_type"],
+             payload["difficulty_level"], payload["question_text"], json.dumps(payload["options"]),
+             payload["correct_answer"], payload["explanation"], payload["reference_answer"],
+             payload["grading_rubric"], payload["marks"], payload["time_allocation"],
+             payload["status"], actor, payload["created_at"], 1))
+        run("DELETE FROM question_import_staging WHERE id=?", (staging_id,))
+        imported_ids.append(payload["id"])
+        added += 1
     audit(user["id"], "question_scrape_import",
           f"added={added};skipped={skipped};rejected={rejected};missing={missing}")
     return {"added": added, "skipped": skipped, "rejected": rejected,
@@ -3796,28 +3251,11 @@ def admin_clear_staging(user=Depends(current_user)):
 @router.get("/api/admin/ai-operations")
 def admin_ai_operations(user=Depends(current_user)):
     admin_only(user, "ai")
-    import ai_providers as AIP
-    import ai_routing
-    try:
-        order = AIP.get_provider_order()
-    except Exception:
-        order = []
-    configured = AIP.any_provider_configured()
-    providers = [{"provider": name, "model": AIP.get_provider_model(name), "configured": bool(AIP.get_provider_keys(name))}
-                 for name in order]
-    primary = next((p for p in providers if p["configured"]), providers[0] if providers else None)
-    budget = ai_routing.budget_status()
-    return {"provider": primary["provider"] if primary else None,
-            "model": primary["model"] if primary else None,
-            "providers": providers, "configured": configured,
-            "status": ("budget_exhausted" if configured and budget.get("exhausted") else
-                       "configured" if configured else "fallback_mode"),
-            "fallback": "Rule-based CV extraction",
-            "budget": budget, "metrics_available": True,
-            "note": ("Every provider call is metered in ai_usage_ledger (provider token counts when reported, "
-                     "otherwise an estimate) and checked against the AI budget before it is made. When the budget "
-                     "is exhausted or no provider is configured, CV extraction uses the offline parser. "
-                     "AI never grades answers.")}
+    import main as core
+    return {"provider":"Anthropic-compatible configured provider","model":core.LLM_MODEL,
+            "configured":bool(core.ANTHROPIC_API_KEY),"status":"configured" if core.ANTHROPIC_API_KEY else "fallback_mode",
+            "fallback":"Rule-based CV extraction","metrics_available":False,
+            "note":"Provider latency, token/cost telemetry, prompt evaluation history and a remote kill switch are not instrumented in this deployment."}
 
 
 def ensure_billing_schema():
@@ -3994,12 +3432,6 @@ def admin_decide_billing_refund(refund_id: str, body: BillingRefundDecision, use
     run("UPDATE billing_refunds SET status=?,reviewed_by=?,review_reason=?,reviewed_at=? WHERE id=?",
         (status,user["id"],body.reason.strip(),time.time(),refund_id))
     audit(user["id"],"billing_refund_reviewed",refund_id+":"+status)
-    requester=one("SELECT requested_by FROM billing_refunds WHERE id=?",(refund_id,))
-    if requester:
-        _notify(requester["requested_by"],"refund_decision",
-                "Refund request approved" if body.decision=="approve" else "Refund request not approved",
-                ("Approved; the payment provider still has to process the refund." if body.decision=="approve"
-                 else body.reason.strip()[:500]),"profile",dedupe_key="refund_decision:"+refund_id)
     return {"id":refund_id,"status":status,"note":"Approval is not a completed refund; provider processing and settlement confirmation are still required."}
 
 
@@ -4036,8 +3468,7 @@ def admin_console_staff(user=Depends(current_user)):
     rows=allr("""SELECT u.id,u.name,u.email,s.admin_role,s.updated_at FROM user_roles r
                  JOIN users u ON u.id=r.user_id LEFT JOIN admin_staff_roles s ON s.user_id=u.id
                  WHERE r.role='admin' ORDER BY u.created""")
-    # admin_role is null for an admin account with no assigned staff role (no scopes).
-    return {"items":[{**dict(r),"admin_role":r["admin_role"]} for r in rows]}
+    return {"items":[{**dict(r),"admin_role":r["admin_role"] or "super_admin"} for r in rows]}
 
 class AdminStaffRoleInput(BaseModel):
     admin_role: str
@@ -4091,7 +3522,7 @@ def admin_console_set_staff_role(user_id: int, body: AdminStaffRoleInput, user=D
 
 
 def _staff_target(user_id):
-    return one("""SELECT u.id,u.name,u.email,COALESCE(s.admin_role,'unassigned') AS admin_role
+    return one("""SELECT u.id,u.name,u.email,COALESCE(s.admin_role,'super_admin') AS admin_role
                   FROM users u JOIN user_roles r ON r.user_id=u.id AND r.role='admin'
                   LEFT JOIN admin_staff_roles s ON s.user_id=u.id WHERE u.id=?""", (user_id,))
 
@@ -4099,9 +3530,9 @@ def _staff_target(user_id):
 def _super_admin_ids():
     rows = allr("""SELECT DISTINCT u.id FROM users u
                    JOIN user_roles r ON r.user_id=u.id AND r.role='admin'
-                   JOIN admin_staff_roles s ON s.user_id=u.id
+                   LEFT JOIN admin_staff_roles s ON s.user_id=u.id
                    LEFT JOIN admin_user_status st ON st.user_id=u.id
-                   WHERE s.admin_role='super_admin'
+                   WHERE (s.admin_role IS NULL OR s.admin_role='super_admin')
                      AND (st.status IS NULL OR st.status!='suspended')""")
     return {row["id"] for row in rows}
 
@@ -4159,8 +3590,10 @@ def admin_console_delete_staff(user_id: int, user=Depends(current_user)):
 @router.get("/api/admin/console/me")
 def admin_console_me(user=Depends(current_user)):
     require_role(user, "admin")
-    staff_role=staff_role_of(user["id"])
-    return {"user_id":user["id"],"admin_role":staff_role,"scopes":admin_scopes_for(staff_role) if staff_role else []}
+    row=one("SELECT admin_role FROM admin_staff_roles WHERE user_id=?",(user["id"],))
+    staff_role=row["admin_role"] if row else "super_admin"
+    scopes=sorted([scope for scope,roles in ADMIN_SCOPE_ROLES.items() if staff_role in roles])
+    return {"user_id":user["id"],"admin_role":staff_role,"scopes":scopes}
 
 
 # ---------------------------------------------------------------------------

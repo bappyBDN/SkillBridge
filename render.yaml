@@ -4,12 +4,7 @@
 # dashboard (or via `render blueprint launch`) to your Neon connection string, e.g.:
 #   postgresql://USER:PASSWORD@HOST:5432/skillbridge?sslmode=require
 # The question bank (10 per topic) and Skill->Question graph edges are seeded
-# idempotently by start.sh. With SEED_QUESTION_BANK_ON_BOOT=false (set below) the
-# seed runs only when the active bank is empty, so restarts stay fast.
-#
-# Health: healthCheckPath is the cheap liveness probe (/api/health, no DB call).
-# GET /api/ready returns 503 when the database is unreachable; use it for
-# external uptime monitoring/alerts (see docs/OPERATIONS.md).
+# automatically and idempotently by start.sh on every deploy.
 services:
   - type: web
     name: skillbridge
@@ -35,9 +30,8 @@ services:
         value: "false"
       - key: ENV
         value: production
-      # Every exam is proctored (AGENTS.md, docs/PROCTORED_EXAM.md): camera,
-      # microphone, entire-screen sharing and full-screen are mandatory. Keep r1;
-      # there is no camera-free mode for real deployments.
+      # R1 proctored exam: camera, microphone, entire-screen and full-screen are
+      # mandatory. Set to r0 to serve the camera-free assessment instead.
       - key: ASSESSMENT_PROCTORING_MODE
         value: r1
       - key: EVIDENCE_RETENTION_DAYS
@@ -59,11 +53,9 @@ services:
         value: "90"
       - key: MAX_CV_TEXT_CHARS
         value: "25000"
-      # CV + profile photo storage. 'database' keeps the bytes in Neon, so they
-      # survive redeploys and free-plan spin-downs. Never use 'local' here: the
-      # Render container disk is wiped on every deploy. 's3' (e.g. R2) also works.
+      # CV file storage: 'local' (ephemeral) or 's3' (S3-compatible bucket, e.g. R2).
       - key: STORAGE_BACKEND
-        value: database
+        value: local
       - key: CORS_ORIGINS
         value: https://skillbridge-seven-peach.vercel.app,https://skillbridge.onrender.com
       - key: LLM_MODEL
@@ -83,28 +75,5 @@ services:
         sync: false
       - key: NEO4J_DATABASE
         value: neo4j
-      # The en_core_web_sm model is not installed in the image (it adds tens of MB
-      # of RAM on a 512 MB free instance). blank:en is spaCy's deterministic
-      # tokenizer; skill matching relies on explicit alias rules either way.
       - key: SPACY_MODEL
-        value: blank:en
-      # ---- Runtime / scaling ----
-      # Uvicorn worker processes. Each worker runs its own DB pool and its own
-      # copy of the background loops (evidence purge etc.). Keep 1 on free plan.
-      - key: WEB_CONCURRENCY
-        value: "1"
-      # Max Postgres connections per worker. Keep WEB_CONCURRENCY x PG_POOL_MAX
-      # under the Neon pooler/compute connection limit.
-      - key: PG_POOL_MAX
-        value: "10"
-      # Render's router is the proxy in front of the container: trust
-      # exactly one X-Forwarded-For hop for client IPs (rate limits, audit).
-      - key: TRUSTED_PROXY_HOPS
-        value: "1"
-      # Lets uvicorn honour X-Forwarded-Proto/For. Safe only because the
-      # container is reachable solely through Render's proxy.
-      - key: FORWARDED_ALLOW_IPS
-        value: "*"
-      # Seed the question bank only when it is empty (idempotent either way).
-      - key: SEED_QUESTION_BANK_ON_BOOT
-        value: "false"
+        value: en_core_web_sm

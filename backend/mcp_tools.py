@@ -1,18 +1,13 @@
 """Read-only tool implementations shared by the MCP server and the in-app console.
 
 Design rules (see AGENTS.md and docs/MCP_ROADMAP.md):
-- Tools are read-only. The only write is one audit row per authenticated
-  candidate tool call (``authorize_call``); scores and content never change.
+- Nothing here writes to the database. Every function is read-only.
 - ``main`` is imported lazily inside functions (invariant 9) so importing this
   module never creates a circular import.
 - Question payloads are produced by :func:`graphrag.question_page`, which only
   whitelists public fields. Answer and reference-answer columns are never
   returned, so the "no answer/ref" contract holds by construction.
 """
-import hashlib
-import os
-import threading
-import time
 from typing import Any
 
 ANSWER_FIELDS = {"answer", "correct_answer", "reference_answer", "ref", "explanation", "grading_rubric"}
@@ -52,95 +47,25 @@ def _bearer_token(ctx: Any) -> str | None:
     return None
 
 
-# Set only by mcp_server.run_stdio(): the local, trusted stdio transport. The
-# HTTP app never calls run_stdio, so this stays False in the web process.
-_STDIO_TRANSPORT = False
-
-
-def enable_stdio_transport() -> None:
-    global _STDIO_TRANSPORT
-    _STDIO_TRANSPORT = True
-
-
-def _has_http_request(ctx: Any) -> bool:
-    try:
-        return ctx is not None and ctx.request_context.request is not None
-    except Exception:
-        return False
-
-
-def transport_of(ctx: Any) -> str:
-    """'http' when the call arrived over Streamable HTTP; 'stdio' only when the
-    process runs the stdio transport and no HTTP request is attached."""
-    if _has_http_request(ctx):
-        return "http"
-    return "stdio" if _STDIO_TRANSPORT else "unknown"
-
-
-# --------------------------------------------------------------------------- rate limit
-_RATE_WINDOW_SECONDS = 60.0
-_rate_hits: dict = {}
-_rate_lock = threading.Lock()
-
-
-def _rate_limit() -> int:
-    try:
-        return max(1, int(os.getenv("MCP_RATE_LIMIT_PER_MINUTE", "60")))
-    except (TypeError, ValueError):
-        return 60
-
-
-def _check_rate(key: str) -> None:
-    """Simple in-process sliding window (per token / per stdio user)."""
-    now = time.monotonic()
-    with _rate_lock:
-        hits = [t for t in _rate_hits.get(key, []) if now - t < _RATE_WINDOW_SECONDS]
-        if len(hits) >= _rate_limit():
-            _rate_hits[key] = hits
-            raise ValueError("rate_limited")
-        hits.append(now)
-        _rate_hits[key] = hits
-        if len(_rate_hits) > 10_000:  # bound memory: drop idle keys
-            for stale in [k for k, v in _rate_hits.items() if not v or now - v[-1] >= _RATE_WINDOW_SECONDS]:
-                _rate_hits.pop(stale, None)
-
-
 def resolve_user(email: str = "", ctx: Any = None) -> dict:
     """Resolve the acting user for a candidate tool.
 
-    HTTP transport: a valid bearer token is REQUIRED (the MCP inherits the
-    existing session and MFA policy); an ``email`` argument is ignored there,
-    so nobody can act as another user by naming their address. Only the local
-    stdio transport (trusted host process) may identify the user by ``email``.
+    HTTP transport: prefer the bearer token, so the MCP inherits the existing
+    session and MFA policy. stdio transport (local, trusted) may pass ``email``.
     """
     m = _main()
-    transport = transport_of(ctx)
     token = _bearer_token(ctx)
-    if transport == "http" or token:
-        if not token:
-            raise ValueError("authentication_required")
-        _check_rate("token:" + hashlib.sha256(token.encode()).hexdigest()[:24])
+    if token:
         try:
             return dict(m.current_user("Bearer " + token))
         except Exception as exc:  # invalid or expired session
             raise ValueError("invalid_session") from exc
-    if email and transport == "stdio":
+    if email:
         row = m.one("SELECT * FROM users WHERE lower(email)=lower(?)", (email.strip(),))
         if not row:
             raise ValueError("unknown_email")
-        _check_rate("stdio:" + str(row["id"]))
         return dict(row)
     raise ValueError("authentication_required")
-
-
-def authorize_call(tool: str, email: str = "", ctx: Any = None) -> dict:
-    """Resolve the caller for one tool call and write one audit row."""
-    user = resolve_user(email, ctx)
-    try:
-        _main().audit(user["id"], "mcp_tool_call", f"{tool}:{transport_of(ctx)}")
-    except Exception:
-        pass
-    return user
 
 
 # --------------------------------------------------------------------------- S1: verification
@@ -193,25 +118,14 @@ def my_weak_topics(user_id: int) -> dict:
     }
 
 
-# Practice items are a separate pool. Live exam items (status='active') are
-# NEVER served here: candidates could otherwise rehearse the exact questions
-# the exam selector draws from. The pool is status='practice' (never selected
-# for exams, which use status='active'). If a topic has no practice items yet,
-# retired exam items (status='archived', no longer selectable) are used as a
-# labelled fallback. Drafts are never served.
-PRACTICE_POOLS = (("practice", "practice"), ("archived", "retired"))
-
-
-def _topic_rows(topic: str, status: str = "practice") -> list[dict]:
-    """Rows of one non-exam pool for a topic, matched by canonical subcategory."""
+def _topic_rows(topic: str) -> list[dict]:
+    """Active question-bank rows for a topic, matched by canonical subcategory."""
     import graphrag as G
     from content import TAXONOMY
 
-    if status not in {pool for pool, _ in PRACTICE_POOLS}:
-        raise ValueError("unsupported_practice_pool")
     m = _main()
     rows = m.allr(
-        "SELECT * FROM question_bank WHERE status=? AND subcategory != 'Legacy curated'", (status,)
+        "SELECT * FROM question_bank WHERE status='active' AND subcategory != 'Legacy curated'"
     )
     ids = G.canonical_skill_ids(topic) or [str(topic or "").strip().lower()]
     wanted: set[str] = set()
@@ -234,32 +148,22 @@ def _topic_rows(topic: str, status: str = "practice") -> list[dict]:
 
 
 def practice_questions(user_id: int, topic: str, count: int = 5) -> dict:
-    """Practice-pool questions for a topic (never live exam items). Answers are never returned."""
+    """Approved practice questions for a topic. Answer fields are never returned."""
     import graphrag as G
 
     try:
         size = max(1, min(int(count), 10))
     except (TypeError, ValueError):
         size = 5
-    questions, pool = [], "none"
-    for status, label in PRACTICE_POOLS:
-        questions = _topic_rows(topic, status)[:size]
-        if questions:
-            pool = label
-            break
+    questions = _topic_rows(topic)[:size]
     page = G.question_page(questions, 0, {}) if questions else {"questions": []}
     public = page["questions"]
     return {
         "topic": topic,
         "requested": size,
         "count": len(public),
-        "pool": pool,
         "questions": public,
-        "note": (
-            "Read-only practice set from the practice pool (MOCK curated practice items, or retired "
-            "exam items when no practice items exist). Live exam questions are never served. "
-            "Correct answers are withheld."
-        ),
+        "note": "Read-only practice set from the approved bank. Correct answers are intentionally withheld.",
     }
 
 

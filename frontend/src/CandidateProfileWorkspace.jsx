@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import Avatar from "./Avatar.jsx";
 import CvUpdatePanel from "./CvUpdatePanel.jsx";
-import { normalizeProject, PROJECT_DEFAULTS, projectsForSave, splitTechnologies } from "./profileFields.js";
 
 const SCALAR_FIELDS = ["headline", "phone", "location", "summary", "linkedin", "github", "portfolio"];
 const LIST_KEYS = {
@@ -34,7 +33,7 @@ function mergeCvSuggestion(current, incoming) {
   for (const key of Object.keys(LIST_KEYS)) {
     const items = (incoming[key] || []).map((item) =>
       key === "projects"
-        ? normalizeProject(item)
+        ? { name: item.name || "", url: item.url || item.project_url || "" }
         : key === "skills"
           ? { ...DEFAULTS.skills, ...item, status: "claimed" }
           : { ...DEFAULTS[key], ...item },
@@ -94,7 +93,7 @@ const SECTIONS = [
 const DEFAULTS = {
   education: { institution: "", degree: "", field: "", location: "", start_year: "", end_year: "", grade: "", details: "" },
   experience: { company: "", title: "", location: "", employment_type: "", start_date: "", end_date: "", current: false, duration_months: 0, description: "", achievements: [], technologies: [] },
-  projects: PROJECT_DEFAULTS,
+  projects: { name: "", url: "" },
   skills: { name: "", category: "Other", status: "claimed" },
   certifications: { name: "", issuer: "", issue_date: "", expiry_date: "", credential_id: "", credential_url: "" },
   achievements: { title: "", description: "", date: "" },
@@ -154,7 +153,10 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
         setProfile({
           ...EMPTY_PROFILE,
           ...data,
-          projects: (data.projects || []).map(normalizeProject),
+          projects: (data.projects || []).map(({ name = "", url = "", project_url = "" }) => ({
+            name,
+            url: url || project_url,
+          })),
           skills: (data.skills || []).map((skill) => ({ ...skill, status: "claimed" })),
           preferences: { ...EMPTY_PROFILE.preferences, ...(data.preferences || {}) },
         });
@@ -246,7 +248,7 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
     setMessage("");
     try {
       if (draftMode) {
-        const saved = await api("/candidate/profile/draft", { method: "PUT", body: { ...profile, projects: projectsForSave(profile.projects) } });
+        const saved = await api("/candidate/profile/draft", { method: "PUT", body: profile });
         if (saved.completeness) setCompleteness(saved.completeness);
         if (saved.extraction) setReview(saved.extraction);
         if (confirm) {
@@ -257,7 +259,7 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
           setMessage("Draft saved.");
         }
       } else {
-        const saved = await api("/candidate/profile", { method: "PUT", body: { ...profile, projects: projectsForSave(profile.projects) } });
+        const saved = await api("/candidate/profile", { method: "PUT", body: profile });
         if (saved.completeness) setCompleteness(saved.completeness);
         setMessage("Profile saved.");
         await onSaved?.();
@@ -331,12 +333,6 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
                 Current role
               </label>
               {field("Description", item.description, (value) => updateItem(key, index, "description", value), section, `${key}[${index}].description`, { multiline: true, rows: 3 })}
-            </>
-          )}
-          {key === "projects" && (
-            <>
-              {field("Technologies, comma-separated", (item.technologies || []).join(", "), (value) => updateItem(key, index, "technologies", splitTechnologies(value, { keepEmpty: true })), section, `${key}[${index}].technologies`)}
-              {field("Project description", item.description, (value) => updateItem(key, index, "description", value), section, `${key}[${index}].description`, { multiline: true, rows: 3, maxLength: 3000 })}
             </>
           )}
           {key === "achievements" && field("Description", item.description, (value) => updateItem(key, index, "description", value), section, `${key}[${index}].description`, { multiline: true, rows: 2 })}
@@ -437,10 +433,7 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
       ["issue_date", "Issue date"], ["expiry_date", "Expiry date"],
       ["credential_id", "Credential ID"], ["credential_url", "Credential URL"],
     ]),
-    projects: collectionEditor("projects", "projects", "Project", [
-      ["name", "Project title"], ["url", "Project link", "url"],
-      ["start_date", "Start date"], ["end_date", "End date"],
-    ]),
+    projects: collectionEditor("projects", "projects", "Project", [["name", "Project title"], ["url", "Project link", "url"]]),
     languages: collectionEditor("languages", "languages", "Language", [["name", "Language"], ["proficiency", "Proficiency"]]),
     references: collectionEditor("references", "references", "Reference", [
       ["name", "Name"], ["relationship", "Relationship"], ["email", "Email", "email"], ["phone", "Phone"],
@@ -513,10 +506,7 @@ function CandidateProfileWorkspace({ onSaved, ownerKey, draftMode = false }) {
     if (key === "projects") return profile.projects.length
       ? profile.projects.map((item, index) => <p className="profile-project-preview" key={`project-preview-${index}`}>
         <strong>{item.name || "Untitled project"}</strong>
-        {(item.start_date || item.end_date) && <> · {[item.start_date, item.end_date].filter(Boolean).join(" – ")}</>}
         {item.url && <> · <a href={normalizeUrl(item.url)} target="_blank" rel="noreferrer">Project link</a></>}
-        {splitTechnologies(item.technologies).length > 0 && <><br /><small>{splitTechnologies(item.technologies).join(", ")}</small></>}
-        {item.description && <><br /><small>{item.description}</small></>}
       </p>)
       : <p>{summary(key)}</p>;
     if (key === "languages") return profile.languages.length

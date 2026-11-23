@@ -119,12 +119,11 @@ test("candidate search, latest result, notifications and mobile navigation work"
   await expect(page.getByRole("heading", { name: "Career overview" })).toBeVisible();
   await expect(page.getByText("Latest score: 86%")).toBeVisible();
   await noOverflow(page);
-  // Visual artifact only; Chromium can refuse a full-page capture under load.
-  await page.screenshot({ path: testInfo.outputPath("candidate-overview.png"), fullPage: true }).catch(() => {});
+  await page.screenshot({ path: testInfo.outputPath("candidate-overview.png"), fullPage: true });
   await page.getByRole("button", { name: "Notifications", exact: true }).click();
   const notifications = page.getByRole("region", { name: "Assessment notifications" });
   await expect(notifications).toBeVisible();
-  await expect(notifications.locator(".assessment-notification-count")).toHaveText("2");
+  await expect(notifications.locator(".assessment-notification-toggle")).toContainText("2");
   await expect(notifications.getByText("Awaiting review")).toHaveCount(0);
   await expect(notifications.getByText("— / 100")).toHaveCount(0);
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
@@ -479,7 +478,7 @@ test("admin can edit draft marks and approve academics without prematurely publi
     answer_evidence: [{ number: 1, question_id: "explain-1", question: "Explain input validation.", topic: "Python", type: "Explanation", candidate_answer: "Validate input types.", max_marks: 2, evaluation }] };
   let savedMark = null;
   let approved = null;
-  await page.route("**/api/admin/assessment-reviews?*", (route) => route.fulfill({ json: { items: [report] } }));
+  await page.route("**/api/admin/assessment-reviews", (route) => route.fulfill({ json: { items: [report] } }));
   await page.route("**/api/admin/attempts/review-1/evaluations/explain-1", (route) => {
     savedMark = route.request().postDataJSON();
     Object.assign(evaluation, savedMark, { final_marks: savedMark.marks });

@@ -183,8 +183,6 @@ export default function AgentConsole() {
   const [queue, setQueue] = useState(null);
   const [queueError, setQueueError] = useState("");
   const [artifactBusy, setArtifactBusy] = useState("");
-  // Per-artifact draft validation errors returned by a refused approval.
-  const [draftErrors, setDraftErrors] = useState({});
 
   const endRef = useRef(null);
   const composerRef = useRef(null);
@@ -298,7 +296,6 @@ export default function AgentConsole() {
 
   const decide = async (artifact, action) => {
     setArtifactBusy(artifact.id);
-    setDraftErrors((current) => ({ ...current, [artifact.id]: null }));
     try {
       if (action === "approve") {
         await api(`/agent/artifacts/${artifact.id}/approve`, { method: "POST" });
@@ -307,17 +304,7 @@ export default function AgentConsole() {
       }
       await loadQueue();
     } catch (e) {
-      const detail = e?.detail;
-      if (e?.status === 422 && detail && typeof detail === "object" && detail.detail === "question_drafts_invalid") {
-        const byDraft = {};
-        for (const item of detail.results || []) {
-          if (item?.draft_id && item.errors?.length) byDraft[item.draft_id] = item.errors;
-        }
-        setDraftErrors((current) => ({ ...current, [artifact.id]: byDraft }));
-        setQueueError("Some question drafts are incomplete. Edit the drafts marked below, then approve again.");
-      } else {
-        setQueueError(e.message || "Could not update that draft.");
-      }
+      setQueueError(e.message || "Could not update that draft.");
     } finally {
       setArtifactBusy("");
     }
@@ -334,7 +321,7 @@ export default function AgentConsole() {
           <span>AI</span>
         </div>
         <div className="copilot-hero-copy">
-          <span className="copilot-kicker">Agent platform · Human-in-the-loop</span>
+          <span className="copilot-kicker">AGENT PLATFORM · HUMAN-IN-THE-LOOP</span>
           <h2>SkillBridge Copilot</h2>
           <p>
             Ask in plain language. I run the read-only agent tools, show what I used, and
@@ -453,8 +440,6 @@ export default function AgentConsole() {
               <HumanArtifact
                 key={artifact.id}
                 artifact={artifact}
-                draftErrors={draftErrors[artifact.id]}
-                onDraftSaved={loadQueue}
                 actions={
                   <>
                     <button
@@ -513,7 +498,7 @@ function RunCard({ result }) {
 }
 
 /* ------------------------------------------------------------------ artifacts */
-function HumanArtifact({ artifact, actions, draftErrors, onDraftSaved }) {
+function HumanArtifact({ artifact, actions }) {
   return (
     <article className="copilot-artifact">
       <header>
@@ -521,7 +506,7 @@ function HumanArtifact({ artifact, actions, draftErrors, onDraftSaved }) {
         <span className={`copilot-badge ${artifact.status}`}>{humanize(artifact.status)}</span>
       </header>
       <h4>{artifact.title}</h4>
-      <ArtifactBody kind={artifact.kind} body={artifact.body || {}} draftErrors={draftErrors} onDraftSaved={actions ? onDraftSaved : undefined} />
+      <ArtifactBody kind={artifact.kind} body={artifact.body || {}} />
       {actions && <div className="copilot-artifact-actions">{actions}</div>}
       <details className="copilot-details">
         <summary>Technical details</summary>
@@ -542,88 +527,7 @@ function Chips({ items, empty = "None yet." }) {
   );
 }
 
-const errorText = (value) => (typeof value === "string" ? value.replaceAll("_", " ") : value?.message || JSON.stringify(value));
-
-/** Minimal editor for a pending question draft (PATCH /admin/agent/questions/drafts/{id}). */
-function DraftEditor({ draft, onSaved }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
-  const [form, setForm] = useState(() => ({
-    question_text: draft.question_text || "",
-    question_type: draft.question_type || "",
-    difficulty_level: draft.difficulty_level || "",
-    options: (draft.options || []).join("\n"),
-    correct_answer: draft.correct_answer || "",
-    explanation: draft.explanation || "",
-    reference_answer: draft.reference_answer || "",
-    grading_rubric: draft.grading_rubric || "",
-    marks: draft.marks ?? "",
-    time_allocation: draft.time_allocation ?? "",
-  }));
-  const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
-  const save = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const body = {};
-      for (const [key, value] of Object.entries(form)) {
-        if (key === "options") {
-          const options = value.split("\n").map((line) => line.trim()).filter(Boolean);
-          if (options.length) body.options = options;
-        } else if (key === "marks" || key === "time_allocation") {
-          if (value !== "" && value != null) body[key] = Number(value);
-        } else if (String(value).trim()) {
-          body[key] = String(value).trim();
-        }
-      }
-      const res = await api(`/admin/agent/questions/drafts/${encodeURIComponent(draft.id)}`, { method: "PATCH", body });
-      setResult(res);
-      if (res?.approvable) await onSaved?.();
-    } catch (e) {
-      setError(e.message || "Could not save the draft.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!open) {
-    return <button type="button" className="copilot-refresh" onClick={() => setOpen(true)}>Edit draft</button>;
-  }
-  const field = (key, label, props = {}) => (
-    <label className="copilot-draft-field">
-      {label}
-      {props.multiline ? <textarea rows={props.rows || 3} value={form[key]} onChange={set(key)} /> : <input type={props.type || "text"} value={form[key]} onChange={set(key)} min={props.min} max={props.max} step={props.step} />}
-    </label>
-  );
-  return (
-    <form className="copilot-draft-editor" onSubmit={save}>
-      {field("question_text", "Question text", { multiline: true, rows: 3 })}
-      {field("question_type", "Question type (e.g. MCQ, scenario)")}
-      {field("difficulty_level", "Difficulty (Easy / Medium / Hard)")}
-      {field("options", "Options, one per line (MCQ)", { multiline: true, rows: 4 })}
-      {field("correct_answer", "Correct answer")}
-      {field("explanation", "Explanation", { multiline: true })}
-      {field("reference_answer", "Reference answer (written questions)", { multiline: true })}
-      {field("grading_rubric", "Grading rubric", { multiline: true })}
-      {field("marks", "Marks (0.5–10)", { type: "number", min: 0.5, max: 10, step: 0.5 })}
-      {field("time_allocation", "Time allocation in seconds (30–600)", { type: "number", min: 30, max: 600, step: 1 })}
-      <div aria-live="polite">
-        {error && <p className="copilot-error" role="alert">{error}</p>}
-        {result && (result.approvable
-          ? <p className="copilot-note">Draft saved and ready to approve.</p>
-          : <p className="copilot-error">Saved, still incomplete: {(result.validation || []).map(errorText).join(", ")}</p>)}
-      </div>
-      <div className="copilot-artifact-actions">
-        <button type="submit" className="copilot-accept" disabled={busy}>{busy ? "Saving…" : "Save draft"}</button>
-        <button type="button" className="copilot-reject" onClick={() => setOpen(false)} disabled={busy}>Close</button>
-      </div>
-    </form>
-  );
-}
-
-function ArtifactBody({ kind, body, draftErrors, onDraftSaved }) {
+function ArtifactBody({ kind, body }) {
   if (kind === "study_plan") {
     return (
       <div className="copilot-plan">
@@ -760,10 +664,6 @@ function ArtifactBody({ kind, body, draftErrors, onDraftSaved }) {
             {draft.validation?.length > 0 && (
               <small>Needs authoring: {draft.validation.join(", ").replaceAll("_", " ")}</small>
             )}
-            {draftErrors?.[draft.id] && (
-              <small className="copilot-error" role="alert">Cannot approve yet: {draftErrors[draft.id].map(errorText).join("; ")}</small>
-            )}
-            {onDraftSaved && draft.id && <DraftEditor draft={draft} onSaved={onDraftSaved} />}
           </div>
         ))}
       </div>

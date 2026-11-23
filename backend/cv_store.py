@@ -66,12 +66,9 @@ def _m():
 
 def ensure_schema() -> None:
     """Create the tables. Safe to call on every start-up."""
-    import storage
     run = _m().run
     for statement in SCHEMA:
         run(statement)
-    run(storage.DB_SCHEMA)  # bytes for the default 'database' storage backend
-    run(storage.PENDING_DELETE_SCHEMA)  # failed storage deletes waiting for a retry
 
 
 # ------------------------------------------------------------------ documents
@@ -197,12 +194,11 @@ def read_document_bytes(user_id: int, doc_id: str) -> bytes:
 
 
 def _delete_document_rows(user_id: int, doc: dict) -> None:
-    import storage as storage_module
     m = _m()
-    # An unreachable store must not block deleting the database record, but the
-    # key is remembered (storage_pending_deletes) and retried by the sweeper
-    # instead of being forgotten as an orphaned CV file.
-    storage_module.delete_or_defer(doc["storage_key"])
+    try:
+        get_storage().delete(doc["storage_key"])
+    except StorageError:
+        pass  # a missing/unreachable file must not block deleting the database record
     m.run("DELETE FROM cv_files WHERE document_id=? AND user_id=?", (doc["id"], user_id))
     m.run("DELETE FROM cv_extractions WHERE document_id=? AND user_id=?", (doc["id"], user_id))
     m.run("DELETE FROM cv_documents WHERE id=? AND user_id=?", (doc["id"], user_id))
@@ -216,13 +212,9 @@ def _prune_old_documents(user_id: int) -> None:
 
 def delete_user_documents(user_id: int) -> int:
     """Privacy: remove every stored CV file and extraction for a user (account deletion)."""
-    import storage as storage_module
     rows = _m().allr("SELECT * FROM cv_documents WHERE user_id=?", (user_id,))
     for r in rows:
         _delete_document_rows(user_id, dict(r))
-    # Catch files whose cv_documents row was already gone (failed inserts,
-    # earlier partial deletions): everything under the user's CV folder.
-    storage_module.delete_or_defer(f"cv/{int(user_id)}/", is_prefix=True)
     _m().run("DELETE FROM cv_files WHERE user_id=?", (user_id,))
     _m().run("DELETE FROM cv_extractions WHERE user_id=?", (user_id,))
     return len(rows)

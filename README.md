@@ -4,14 +4,14 @@ AI-native skill verification loop for one role (**Junior Data Analyst**):
 **CV → skills → gap → adaptive SQL/MCQ test → learning path → re-test → Skill Passport**, with Bangla/English UI, consent screen, trust label and PII redaction.
 Built from the *TalentForge Global BRD & PRD v1.0* (Release **R0**, PRD §11) and the *TalentForge BD* report.
 
-- **Frontend:** React 18 + Vite (Vercel in the hosted deployment; nginx for self-hosting)
-- **Backend:** FastAPI + PostgreSQL (Neon in the hosted deployment, or the optional local Postgres 16 container); SQLite is used for tests and lightweight local runs when `DATABASE_URL` is unset
-- **Run / deploy:** Vercel + Render + Neon (hosted), or Docker Compose (self-hosted). Operations runbook: [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
+- **Frontend:** React 18 + Vite (served by nginx)
+- **Backend:** FastAPI + PostgreSQL 16 (Docker volume); SQLite remains available for lightweight local engine tests when DATABASE_URL is unset
+- **Run / deploy:** Docker Compose
 
 ## Run
 
 ```bash
-cp .env.example .env          # SECRET_KEY must be >= 32 random chars outside local demos; change POSTGRES_PASSWORD
+cp .env.example .env          # change SECRET_KEY and POSTGRES_PASSWORD outside local demos
 # Docker Compose wires the backend to PostgreSQL
 docker compose up --build
 # open http://localhost:8080   (health check: http://localhost:8080/api/health)
@@ -30,13 +30,13 @@ Deploy on any VPS with Docker: clone, create `.env` (strong `SECRET_KEY`), `dock
 
 ## Deploy: Vercel frontend + Render API
 
-The frontend and FastAPI backend are separate deployments. The Vercel project should use the `frontend` directory (`frontend/vercel.json` adds the security headers, SPA rewrite and asset caching); Render runs the API; the database is an external Neon PostgreSQL project. Topology, backups and scaling: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+The frontend and FastAPI backend are separate deployments. The Vercel project should use the `frontend` directory; Render runs the API and managed PostgreSQL.
 
 ### 1. Deploy the backend on Render
 
 1. Open Render Dashboard → **New → Blueprint** and connect this repository. Render reads the root `render.yaml`.
-2. Review the resources before confirming. The Blueprint creates a single Render web service on the free plan (it may sleep when idle). It does **not** create a database: set `DATABASE_URL` to your Neon connection string (`...?sslmode=require`) in the Render dashboard.
-3. The backend service uses `backend/Dockerfile`, uses `/api/health` as its liveness check (`/api/ready` additionally checks the database), generates `SECRET_KEY`, and allows the current Vercel origin through CORS.
+2. Review the resources before confirming. The Blueprint creates a Render web service and a **paid, persistent PostgreSQL database** on the lowest paid database tier. The web service is configured on Render's free tier and may sleep when idle.
+3. The backend service uses `backend/Dockerfile`, exposes `/api/health`, receives `DATABASE_URL` from the managed database, generates `SECRET_KEY`, and allows the current Vercel origin through CORS.
 4. Wait for the Render service to finish deploying. Its default URL is `https://skillbridge.onrender.com`. Verify `https://skillbridge.onrender.com/api/health` returns JSON with `"ok": true`.
 
 ### 2. Connect the Vercel frontend
@@ -67,7 +67,7 @@ Enter your own email and a unique password of at least 8 characters when prompte
 ### 4. Production settings
 
 - Keep `SECRET_KEY` generated and stable; do not rotate it casually because it signs active login tokens and Skill Passports.
-- Keep `DATABASE_URL` connected to Neon PostgreSQL. Do not use SQLite on an ephemeral web-service filesystem for production. Keep `STORAGE_BACKEND=database` (or `s3`) so CVs and photos survive redeploys.
+- Keep `DATABASE_URL` connected to the managed PostgreSQL database. Do not use SQLite on an ephemeral web-service filesystem for production.
 - The Blueprint sets `RETEST_COOLDOWN_HOURS=336` and `SEED_DEMO=false`. Seeding is opt-in and refuses to run with `ENV=production`.
 - Set `ENV=production` on any public deployment. It enables the MFA requirement for admin and company-owner accounts and blocks seeding.
 - Configure `SMTP_HOST`, `SMTP_FROM` (plus optional `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`) to send email-verification messages. Without SMTP the deployment verifies addresses automatically and says so, so demos keep working.
@@ -82,11 +82,11 @@ Enter your own email and a unique password of at least 8 characters when prompte
 
 ## Verify exam integrity controls
 
-Every exam is proctored (see `docs/PROCTORED_EXAM.md`): the candidate Verify flow requires camera, microphone, entire-screen sharing and full-screen mode before starting or resuming an attempt. Candidates pick the screen in the browser's native permission picker; window/tab sharing is rejected where the browser reports the surface. If sharing stops or full-screen mode is exited, the UI warns the candidate and disables SQL execution and answer submission until the required state is restored.
+The candidate Verify flow now requests browser screen sharing and full-screen mode before starting or resuming an attempt. Candidates choose the screen, window or tab in the browser's native permission picker. If sharing stops or full-screen mode is exited, the UI warns the candidate and disables SQL execution and answer submission until the required state is restored.
 
 During an active attempt, the frontend blocks ordinary copy, cut, paste, keyboard clipboard shortcuts and the context menu, and records copy/cut/paste attempts, window blur, hidden-tab events, full-screen exits and screen-sharing interruptions. The backend stores event counts with the attempt and includes them in the advisory trust label. Integrity signals do not change the score or automatically fail a candidate; the existing appeal and human-review approach remains.
 
-**Browser-enforced limits:** browsers do not let a website silently start screen sharing. The candidate must approve the browser prompt, and the browser may allow sharing a single tab/window instead of the entire desktop. A web page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, browser extensions or a determined user from bypassing client-side controls. The API also checks that the latest reported screen-sharing event is active before accepting an answer or running SQL. This is a consistency check, not cryptographic proof: browser telemetry is client-reported and a determined user can forge requests. These controls are deterrents and review signals, not a secure remote-proctoring system. The webcam stream (required) is used for on-device AI analysis. Before an assessment starts, the candidate also completes an on-device identity check: a face-recognition model compares the live webcam frame with the candidate's uploaded profile photo. Only the resulting similarity/distance event is stored — no biometric template or continuous video is uploaded. Webcam frames are not continuously uploaded or recorded. Only limited JPEG snapshots associated with selected AI alerts may be uploaded. Microphone monitoring is required before an assessment starts but stays on-device: it measures a loudness level only to show a "speaking detected" review signal, and audio is never recorded, stored or uploaded. Use HTTPS (or localhost for development) and test in supported desktop browsers.
+**Browser-enforced limits:** browsers do not let a website silently start screen sharing. The candidate must approve the browser prompt, and the browser may allow sharing a single tab/window instead of the entire desktop. A web page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, browser extensions or a determined user from bypassing client-side controls. The API also checks that the latest reported screen-sharing event is active before accepting an answer or running SQL. This is a consistency check, not cryptographic proof: browser telemetry is client-reported and a determined user can forge requests. These controls are deterrents and review signals, not a secure remote-proctoring system. Phase 2 adds an optional-permission webcam stream for on-device AI analysis. Before an assessment starts, the candidate also completes an on-device identity check: a face-recognition model compares the live webcam frame with the candidate's uploaded profile photo. Only the resulting similarity/distance event is stored — no biometric template or continuous video is uploaded. Webcam frames are not continuously uploaded or recorded. Only limited JPEG snapshots associated with selected AI alerts may be uploaded. Microphone monitoring is required before an assessment starts but stays on-device: it measures a loudness level only to show a "speaking detected" review signal, and audio is never recorded, stored or uploaded. Use HTTPS (or localhost for development) and test in supported desktop browsers.
 
 ## Phase 1 exam-integrity update
 
@@ -104,7 +104,7 @@ The Phase 1 implementation on `feature/exam-integrity-monitoring` now includes:
 
 **Limitations:** A browser cannot prove that the user is not using another device, cannot reliably detect every form of tampering, and does not expose the selected share surface consistently in every browser. An unknown surface is rejected rather than assumed to be a monitor. The application does not record or upload continuous screen video or microphone audio. Phase 2 adds local webcam inference and limited alert snapshots; see the Phase 2 section below. These controls improve observability but are not a secure remote-proctoring guarantee.
 
-**Verification status:** Covered by the backend suite (`tests/test_proctoring.py`, `tests/test_exam_start_flow.py`, `tests/test_api_hardening.py`) and the frontend build, which run in CI on every push. Manual multi-browser and offline testing is still required before high-stakes use.
+**Verification status:** The changes are committed to this feature branch. They still need to be run through the project's backend test suite, frontend production build, and manual multi-browser/offline testing before being treated as production-ready.
 ## Phase 2: browser-local AI monitoring
 
 On `feature/exam-integrity-monitoring`, Phase 2 adds a browser-side MediaPipe Tasks Vision integration:
@@ -123,7 +123,7 @@ On `feature/exam-integrity-monitoring`, Phase 2 adds a browser-side MediaPipe Ta
 
 **Deployment:** The frontend downloads the MediaPipe JavaScript package and model assets at runtime. A production deployment should pin and self-host reviewed model assets, verify model licences and hashes, test GPU/CPU fallback, and configure HTTPS. Evidence images are sensitive personal data; disclose the collection and retention period before enabling this feature in a real exam.
 
-**Verification status:** Backend tests (including trust scoring and evidence handling) and the Vite build run in CI. Real webcam inference, model loading on a range of devices and end-to-end evidence upload against Postgres still need manual verification per release.
+**Verification status:** Source changes and a focused trust-scoring unit test have been committed. Backend tests, Vite build, real webcam inference, model asset loading, Postgres migration and end-to-end evidence upload have not yet been run in this environment.
  
 ## What is real vs. mock (honest list)
 | Area | R0 status |
@@ -138,11 +138,7 @@ On `feature/exam-integrity-monitoring`, Phase 2 adds a browser-side MediaPipe Ta
 | Skill Passport | **Real**: HMAC-signed, revocable, public verify page. Signature is server-secret HMAC, not public-key |
 | Job profile, question pool (25 items), percentile | **MOCK / tiny**. Percentile intentionally not shown |
 | Bangla | UI + explanations. Question text is English only |
-| Company / recruiter / admin roles | **Real**: tenant-scoped company workspace and admin console (`backend/enterprise.py`) |
-| Camera + microphone + screen proctoring | **Real**, on-device inference; advisory flags only (`docs/PROCTORED_EXAM.md`) |
-| MCP server | **Real**, read-only (verification + candidate learning), off by default (`MCP_ENABLED`) |
-| Billing | Invoice records only; live checkout/payment confirmation disabled |
-| Not built (roadmap) | AI interviewer, pgvector RAG, SSO, virus scan |
+| Not built (roadmap) | Recruiter/company/admin roles, camera proctoring, AI interviewer, MCP servers, pgvector, billing, SSO, virus scan |
 
 ## Optional GraphRAG assessment prototype
 
@@ -188,12 +184,14 @@ The repository includes an explicit, repeatable seed script with **100 synthetic
 - Per-skill difficulty in the CV bank: 2 Easy, 4 Medium, 4 Hard, so a 1/2/2 selection is available for two attempts.
 - Includes MCQ, coding, SQL, scenario and explanation formats, answer keys/reference solutions, rubrics and per-question time allocations.
 
-`backend/start.sh` runs this seed at startup, controlled by `SEED_QUESTION_BANK_ON_BOOT`:
+Run this only against a **development or staging database**. If your Render Free service does not provide Shell access, you can use the temporary startup option instead:
 
-- `true` (default, docker-compose): seed on every start.
-- `false` (set in `render.yaml`): seed only when the active question bank is empty, so ordinary restarts skip it.
+1. In Render → your TalentForge backend service → **Environment**, add or change `SEED_GRAPHRAG_QUESTIONS` to `true`.
+2. Save the change and let Render redeploy the backend. The startup script runs `python /app/seed_graphrag_questions.py` before starting the API and prints the seed summary in deployment logs.
+3. After the logs confirm that 45 questions were inserted/verified, change `SEED_GRAPHRAG_QUESTIONS` back to `false` and redeploy. The script is disabled by default and does not run on ordinary restarts after that.
+4. Rebuild search + graph index from Admin → Question Governance.
 
-The seed uses stable IDs and `ON CONFLICT DO NOTHING`, so a repeated run does not duplicate or overwrite these seeded records. A seed failure is logged and the API still starts. After seeding, rebuild search + graph index from Admin → Question Governance.
+The seed uses stable IDs and `ON CONFLICT DO NOTHING`, so a repeated run does not duplicate or overwrite these seeded records. If the seed command fails, startup stops and the deployment logs show the error; correct the database/configuration issue before disabling the flag. This startup option requires the Render service to use the repository's `start.sh` entrypoint (the supplied Render Blueprint does).
 
 The script is idempotent: it uses stable question IDs and `ON CONFLICT DO NOTHING`, so rerunning it will not duplicate or overwrite existing questions. It does not create candidate accounts or write candidate data. Existing question-bank records are preserved.
 
@@ -212,7 +210,7 @@ Set these on the backend service (Render for the current deployment):
 
 - `MEILISEARCH_URL`, `MEILISEARCH_API_KEY`, `MEILISEARCH_QUESTION_INDEX`
 - `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`
-- `SPACY_MODEL` (`blank:en` in `render.yaml` and `.env.example`: spaCy's blank English tokenizer plus deterministic alias matching. No trained model is installed in the image; to use one, install it in the Dockerfile and set e.g. `en_core_web_sm`. A missing model falls back to blank English.)
+- `SPACY_MODEL` (defaults to `en_core_web_sm`; if the model is not installed, spaCy's blank English tokenizer and deterministic alias matching are used)
 
 After configuring both services, sign in as an admin, open **Question Governance**, and select **Rebuild search + graph index**. The Admin GraphRAG status endpoint reports question coverage and service configuration. Keep service credentials in Render environment variables, never in the frontend or repository.
 
@@ -240,22 +238,7 @@ docker-compose.yml · .env.example · .github/workflows/ci.yml
 ```
 
 ## Tests
-`cd backend && python -m pytest -q tests` covers redaction, SQL sandbox (including DROP and infinite recursion), grading on hidden datasets, adaptivity, retest freshness, trust label, learning-path honesty, signing, proctoring/session controls, tenant isolation and MCP.
-
-## Quality gates
-
-Every push and pull request runs `.github/workflows/ci.yml`:
-
-| Gate | Command (local equivalent) |
-|---|---|
-| Backend tests + coverage gate | `cd backend && python -m pytest -q tests --cov=. --cov-fail-under=72` |
-| Frontend lint | `cd frontend && npm run lint` |
-| Frontend unit tests | `cd frontend && npm test` |
-| Frontend production build | `cd frontend && npm run build` |
-| End-to-end (Playwright, API mocked) | `cd frontend && npx playwright install chromium && npx playwright test` |
-| Dependency audit (non-blocking) | `pip-audit -r backend/requirements.txt`, `cd frontend && npm audit --audit-level=high` |
-
-Run the backend gate before committing (`AGENTS.md`). Deployment, health/readiness, backups, retention, CSP and secret rotation are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+`cd backend && python -m pytest -q tests` covers redaction, SQL sandbox (including DROP and infinite recursion), grading on hidden datasets, adaptivity, retest freshness, trust label, learning-path honesty, signing.
 
 ## Compliance notes
 Planning prototype, not legal advice. Confirm privacy/employment-AI obligations with counsel per market (BRD §12). Third-party resource terms must be checked before launch.
@@ -304,8 +287,7 @@ This is an initial vertical slice, not a completed production platform. Alembic 
   DOCX/TXT/pasted CVs get a generated PDF rendering, so admin and recruiter views
   always have a file to open and never depend on ephemeral container storage.
 - The original upload is still kept in the configured storage backend
-  (`database` by default, or `local` / `s3`), and the existing per-user
-  pruning/retention applies.
+  (`local` or `s3`), and the existing per-user pruning/retention applies.
 - **Admin console**: *Users & accounts → View candidate* opens the candidate
   record with the stored CV, structured profile, CV-extracted skills, every
   assessment score, the Skill Passport and the application history.
@@ -350,10 +332,10 @@ The candidate journey is now:
 
 ## Exam integrity monitoring (Phase 1 — advisory)
 
-The candidate Verify flow requires camera, microphone, entire-screen sharing and full-screen mode before an assessment can start or resume. The candidate must approve the browser's native sharing picker; window/tab sharing is rejected where the browser reports the surface. If sharing stops or full-screen mode is exited, the candidate UI disables answer saving, question navigation, SQL execution and submission until the required state is restored.
+The candidate Verify flow requests browser screen sharing and full-screen mode before an assessment can start or resume. The candidate must approve the browser's native sharing picker; supported browsers may offer a screen, window or tab. If sharing stops or full-screen mode is exited, the candidate UI disables answer saving, question navigation, SQL execution and submission until the required state is restored.
 
 During an active attempt, the frontend blocks ordinary copy, cut, paste, clipboard keyboard shortcuts and the context menu, and records browser-reported clipboard, focus, visibility, full-screen and screen-sharing events. The backend stores event timestamps and calculates a versioned, explainable trust label separately from the technical score. The same integrity gate is applied to the standard adaptive assessment and the optional GraphRAG assessment routes. Administrators with the appropriate integrity-review permission can inspect attempt summaries, event timelines and available answer timing evidence.
 
-**Privacy and browser limits:** TalentForge does not record, upload or store the screen stream or camera video. Microphone monitoring is required, but only an on-device loudness level is computed to flag possible speaking; audio is never recorded, stored or uploaded. A browser page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, extensions or a determined user from bypassing client-side controls. Event telemetry is client-reported; a malicious client can forge requests. Browser screen sharing is not proof of full-desktop visibility. Trust labels are review signals only: they do not change technical marks or automatically fail candidates. Candidates can appeal.
+**Privacy and browser limits:** TalentForge does not record, upload or store the screen stream or camera video. If the candidate opts into microphone monitoring, only an on-device loudness level is computed to flag possible speaking; audio is never recorded, stored or uploaded. A browser page cannot reliably prevent screenshots, another device, OS-level shortcuts, developer tools, extensions or a determined user from bypassing client-side controls. Event telemetry is client-reported; a malicious client can forge requests. Browser screen sharing is not proof of full-desktop visibility. Trust labels are review signals only: they do not change technical marks or automatically fail candidates. Candidates can appeal.
 
-**Implemented since Phase 1** (see the Phase 1 update above): per-attempt session tokens with single-session invalidation on resume, monotonic event sequence numbers with replay/gap rejection, a server-side per-attempt event rate limit, 10-second heartbeats with gap detection, client event buffering with `sendBeacon` flush, full-monitor surface validation where the browser exposes it, and a step-by-step pre-exam device check. **Not implemented:** cryptographically signed event sequencing and clipboard-origin tracking for code editors. These controls are not a secure remote-proctoring system and must not be treated as proof of misconduct.
+**Not yet implemented:** per-attempt session binding and single-session invalidation, signed event sequencing, server-side rate limiting, heartbeat collection/gap detection, event buffering with reliable sendBeacon delivery, strict full-monitor surface validation, clipboard-origin tracking for code editors, and a complete pre-exam system-check page. These controls are not a secure remote-proctoring system and must not be treated as proof of misconduct.
