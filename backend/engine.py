@@ -7,6 +7,15 @@ from content import *
 # ---------- PII redaction (runs BEFORE any text reaches an LLM) ----------
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
+# Scheme-less links ("github.com/rafi", "linkedin.com/in/x") identify a person
+# just as well. A bare host only counts as a link when it has a path or is a
+# known profile host, so skill names such as "Node.js" or "ASP.NET" survive.
+BARE_URL_RE = re.compile(
+    r"(?<![\w@.\-/])(?:"
+    r"(?:[a-z0-9-]+\.)+[a-z]{2,24}/[^\s]*"
+    r"|(?:[a-z0-9-]+\.)*(?:linkedin|github|gitlab|bitbucket|behance|dribbble|kaggle|leetcode|"
+    r"stackoverflow|medium|twitter|facebook|instagram|hackerrank|codeforces)\.(?:com|io|org|me)(?![\w-]|\.\w)"
+    r")", re.I)
 PHONE_RE = re.compile(r"(?<![\w])\+?\d[\d\s\-().]{8,}\d(?![\w])")
 ADDR_RE = re.compile(r"^.*\b(house|road|rd\.|block|sector|flat|village|post office)\b.*\d.*$", re.I | re.M)
 
@@ -16,6 +25,7 @@ def redact(text, known_names=(), assume_first_line_name=True):
         s, n = rx.subn(tag, s); counts[key] += n; return s
     text = sub(EMAIL_RE, "[EMAIL]", "email", text)
     text = sub(URL_RE, "[URL]", "url", text)
+    text = sub(BARE_URL_RE, "[URL]", "url", text)
     text = sub(PHONE_RE, "[PHONE]", "phone", text)
     text = sub(ADDR_RE, "[ADDRESS]", "address", text)
     for part in {p for n in known_names for p in n.split() if len(p) >= 3}:

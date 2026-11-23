@@ -133,11 +133,25 @@ def _spacy_terms(text: str) -> set[str]:
         log.info("spaCy unavailable; using alias matcher (%s)", type(exc).__name__)
         return {part for token in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]*", text.lower()) for part in _norm(token).split() if part}
 
+def _service_timeout(name: str, default: float = 3.0) -> float:
+    """Short, configurable network timeout for optional search/graph services.
+
+    A slow or unreachable Meilisearch/Neo4j must never stall a request thread;
+    every caller already falls back to the local deterministic path.
+    """
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(0.5, min(value, 30.0))
+
+
 @lru_cache(maxsize=1)
 def _meilisearch_client():
     import meilisearch
     url = os.getenv("MEILISEARCH_URL", "").rstrip("/")
-    return meilisearch.Client(url, os.getenv("MEILISEARCH_API_KEY", "") or None)
+    return meilisearch.Client(url, os.getenv("MEILISEARCH_API_KEY", "") or None,
+                              timeout=_service_timeout("MEILISEARCH_TIMEOUT_SECONDS"))
 
 @lru_cache(maxsize=1)
 def _meilisearch_index():
@@ -146,8 +160,11 @@ def _meilisearch_index():
 @lru_cache(maxsize=1)
 def _neo4j_driver():
     from neo4j import GraphDatabase
+    timeout = _service_timeout("NEO4J_TIMEOUT_SECONDS")
     return GraphDatabase.driver(os.getenv("NEO4J_URI", ""),
-        auth=(os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", "")))
+        auth=(os.getenv("NEO4J_USERNAME", "neo4j"), os.getenv("NEO4J_PASSWORD", "")),
+        connection_timeout=timeout, connection_acquisition_timeout=timeout,
+        max_transaction_retry_time=timeout)
 
 def _alias_token_ok(alias: str, tokens: set[str]) -> bool:
     """Symbol aliases (C++, C#, .NET, Node.js) are matched by regex only."""

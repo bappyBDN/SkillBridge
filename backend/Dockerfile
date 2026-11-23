@@ -11,10 +11,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# backend/.dockerignore keeps data/, .env, *.db and .secret out of the image.
+# No secrets are baked in: SECRET_KEY, DATABASE_URL and provider keys come from
+# the runtime environment.
 COPY . .
 RUN useradd -m app && mkdir -p /data && chown app /data
 USER app
 EXPOSE 8000
-HEALTHCHECK --interval=15s --timeout=3s CMD python -c "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"
-# start.sh seeds the GraphRAG question bank (idempotent) then launches uvicorn.
+# Liveness only (cheap, no DB round trip). Readiness is GET /api/ready.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s CMD python -c "import os,urllib.request;urllib.request.urlopen('http://localhost:%s/api/health' % os.getenv('PORT','8000'), timeout=2)"
+# start.sh optionally seeds the GraphRAG question bank (idempotent), then launches uvicorn.
 CMD ["sh", "start.sh"]

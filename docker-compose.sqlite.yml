@@ -9,17 +9,35 @@ services:
     environment:
       DATABASE_URL: "" # empty = use SQLite (overrides the value in .env)
       DB_PATH: /data/skillbridge.db
+      # SQLite on the volume already persists, so 'local' files are fine here.
       STORAGE_BACKEND: local
       STORAGE_LOCAL_DIR: /data/cv_files
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+      SEED_QUESTION_BANK_ON_BOOT: ${SEED_QUESTION_BANK_ON_BOOT:-true}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
     volumes:
       - sb_data:/data
     restart: unless-stopped
     expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
   frontend:
     build: ./frontend
-    depends_on: [backend]
+    depends_on:
+      backend:
+        condition: service_healthy
     ports:
       - "${WEB_PORT:-8080}:80"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
 volumes:
   sb_data:

@@ -43,12 +43,59 @@ function formatApiError(detail, statusText) {
 
 // Server-provided document URLs already include /api. Never attach a bearer
 // token to an arbitrary absolute URL, even if it came from a response.
-export function apiUrl(path) {
+export function apiUrl(path, base = API_BASE) {
   if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || /[\\\r\n]/.test(path)) {
     throw new Error("Invalid API path");
   }
   const normalized = path === "/api" || path.startsWith("/api/") ? path : "/api" + path;
-  return API_BASE + normalized;
+  return base + normalized;
+}
+
+/** True when the API lives on another origin (for example Vercel UI + Render API). */
+export function isCrossOriginApi(base = API_BASE, origin = globalThis.location?.origin) {
+  if (!base) return false;
+  try {
+    return new URL(base, origin || "http://localhost").origin !== origin;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Deliver a JSON payload while the page is unloading. sendBeacon cannot set an
+ * Authorization header, so callers put the bearer token in the body (the
+ * backend's /event/beacon endpoint reads `authorization`). A cross-origin
+ * application/json request needs a CORS preflight, which sendBeacon does not
+ * perform reliably, so the split deployment uses fetch keepalive instead.
+ * Returns "beacon", "fetch" or "failed".
+ */
+export function sendExitBeacon(path, payload, {
+  base = API_BASE,
+  origin = globalThis.location?.origin,
+  navigatorImpl = globalThis.navigator,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  let url;
+  try { url = apiUrl(path, base); } catch { return "failed"; }
+  const json = JSON.stringify(payload);
+  if (!isCrossOriginApi(base, origin) && typeof navigatorImpl?.sendBeacon === "function") {
+    try {
+      if (navigatorImpl.sendBeacon(url, new Blob([json], { type: "application/json" }))) return "beacon";
+    } catch {
+      /* fall through to fetch */
+    }
+  }
+  if (typeof fetchImpl !== "function") return "failed";
+  try {
+    const pending = fetchImpl(url, {
+      method: "POST", keepalive: true, mode: "cors", credentials: "omit",
+      headers: { "Content-Type": "application/json" }, body: json,
+    });
+    pending?.catch?.(() => {});
+    return "fetch";
+  } catch {
+    return "failed";
+  }
 }
 
 export async function api(path, { method = "GET", body, form, responseType, signal, headers: extraHeaders } = {}) {
@@ -70,6 +117,7 @@ export async function api(path, { method = "GET", body, form, responseType, sign
   if (!res.ok) {
     const err = new Error(formatApiError(data?.detail, res.statusText));
     err.status = res.status; err.code = typeof data?.detail === "string" ? data.detail : null;
+    err.detail = data?.detail ?? null;
     throw err;
   }
   return data;

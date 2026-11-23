@@ -12,14 +12,18 @@ import json
 import os
 import time
 
-try:
-    from dotenv import load_dotenv
-    for _candidate in (os.path.join(os.path.dirname(__file__), "..", ".env"),
-                       os.path.join(os.path.dirname(__file__), ".env")):
-        if os.path.exists(_candidate):
-            load_dotenv(_candidate)
-except ImportError:
-    pass
+# Load .env only when no database was chosen explicitly. A caller that sets
+# DB_PATH (local SQLite) must never be silently redirected to the DATABASE_URL
+# in .env, which is usually the production database.
+if not os.getenv("DB_PATH") and not os.getenv("DATABASE_URL") and os.getenv("SKILLBRIDGE_NO_DOTENV") != "1":
+    try:
+        from dotenv import load_dotenv
+        for _candidate in (os.path.join(os.path.dirname(__file__), "..", ".env"),
+                           os.path.join(os.path.dirname(__file__), ".env")):
+            if os.path.exists(_candidate):
+                load_dotenv(_candidate)
+    except ImportError:
+        pass
 
 ACTOR = "TalentForge synthetic GraphRAG demo seed"
 NOW = time.time()

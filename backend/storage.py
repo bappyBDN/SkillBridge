@@ -1,18 +1,25 @@
-"""File storage for original CV documents.
+"""File storage for original CV documents and candidate profile photos.
 
-One small interface, two backends:
+One small interface, three backends:
 
-* ``local``  - files on disk (default; used with SQLite for local development)
-* ``s3``     - any S3-compatible bucket (AWS S3, Cloudflare R2, Supabase Storage,
-               MinIO, DigitalOcean Spaces ...) for when TalentForge is scaled
+* ``database`` - bytes kept in the application database (default). Survives
+                 container restarts and redeploys on hosts with an ephemeral
+                 filesystem (Render, Railway, Fly without a volume ...), because
+                 the database itself (SQLite file or PostgreSQL/Neon) is durable.
+* ``local``    - files on disk. Only permanent when the folder is on a mounted
+                 volume (see docker-compose.yml).
+* ``s3``       - any S3-compatible bucket (AWS S3, Cloudflare R2, Supabase Storage,
+                 MinIO, DigitalOcean Spaces ...) for when TalentForge is scaled
 
 Switch backend with the STORAGE_BACKEND env var - no code changes needed.
 The rest of the app only calls ``get_storage()`` and never knows which backend is active.
 
 Env vars
 --------
-STORAGE_BACKEND        local (default) | s3
-STORAGE_LOCAL_DIR      local only. Default: <folder of DB_PATH>/cv_files
+STORAGE_BACKEND        database (default) | local | s3
+STORAGE_LOCAL_DIR      local folder. Default: <folder of DB_PATH>/cv_files. With the
+                       database backend, files still found here (written before the
+                       switch) are read once and copied into the database.
 S3_BUCKET              s3 only (required)
 S3_REGION              s3 only. Default: auto
 S3_ENDPOINT_URL        s3 only. Leave empty for AWS; set for R2 / MinIO / Supabase
@@ -24,6 +31,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
@@ -31,6 +39,10 @@ from typing import Optional
 
 class StorageError(RuntimeError):
     pass
+
+
+class StorageNotFound(StorageError):
+    """The key does not exist. Unlike other StorageErrors this is not transient."""
 
 
 class StorageBackend(ABC):
@@ -49,9 +61,25 @@ class StorageBackend(ABC):
     @abstractmethod
     def exists(self, key: str) -> bool: ...
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every file whose key starts with ``prefix`` (e.g. ``cv/42/``).
+
+        Returns how many files were removed. Must NOT raise when nothing matches.
+        """
+        raise NotImplementedError
+
     def presigned_url(self, key: str, expires: int = 300) -> Optional[str]:
         """Temporary direct-download URL, or None if the backend cannot provide one."""
         return None
+
+
+def _clean_prefix(prefix: str) -> str:
+    """A prefix must name at least one folder (``cv/42/``) so it can never match everything."""
+    prefix = (prefix or "").replace("\\", "/").lstrip("/")
+    if "/" not in prefix or not prefix.split("/")[0]:
+        raise StorageError("Invalid storage prefix")
+    _clean_key(prefix.rstrip("/") or "x")
+    return prefix
 
 
 def _clean_key(key: str) -> str:
@@ -94,7 +122,7 @@ class LocalStorage(StorageBackend):
         try:
             return self._path(key).read_bytes()
         except FileNotFoundError as e:
-            raise StorageError("File not found") from e
+            raise StorageNotFound("File not found") from e
 
     def delete(self, key):
         try:
@@ -104,6 +132,25 @@ class LocalStorage(StorageBackend):
 
     def exists(self, key):
         return self._path(key).is_file()
+
+    def delete_prefix(self, prefix):
+        prefix = _clean_prefix(prefix)
+        removed = 0
+        folder, _, stem = prefix.rpartition("/")
+        base = self._path(folder + "/.probe").parent if folder else self.root
+        if not base.is_dir():
+            return 0
+        for path in list(base.rglob("*")):
+            rel = path.relative_to(self.root).as_posix()
+            if path.is_file() and rel.startswith(prefix):
+                try:
+                    path.unlink()
+                    removed += 1
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    raise StorageError(f"Local delete failed: {type(e).__name__}") from e
+        return removed
 
 
 class S3Storage(StorageBackend):
@@ -144,6 +191,9 @@ class S3Storage(StorageBackend):
         try:
             return self.client.get_object(Bucket=self.bucket, Key=self._k(key))["Body"].read()
         except Exception as e:
+            code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
+            if code in ("NoSuchKey", "404", "NotFound"):
+                raise StorageNotFound("File not found") from e
             raise StorageError(f"S3 download failed: {type(e).__name__}") from e
 
     def delete(self, key):
@@ -159,9 +209,191 @@ class S3Storage(StorageBackend):
         except Exception:
             return False
 
+    def delete_prefix(self, prefix):
+        full = self.prefix + _clean_prefix(prefix)
+        removed = 0
+        try:
+            paginator = self.client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=full):
+                keys = [{"Key": item["Key"]} for item in page.get("Contents", []) or []]
+                if keys:
+                    self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True})
+                    removed += len(keys)
+        except Exception as e:
+            raise StorageError(f"S3 prefix delete failed: {type(e).__name__}") from e
+        return removed
+
     def presigned_url(self, key, expires=300):
         return self.client.generate_presigned_url(
             "get_object", Params={"Bucket": self.bucket, "Key": self._k(key)}, ExpiresIn=expires)
+
+
+DB_SCHEMA = """CREATE TABLE IF NOT EXISTS stored_files(
+    storage_key TEXT PRIMARY KEY, content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL, data BYTEA NOT NULL, updated REAL NOT NULL)"""
+
+
+class DatabaseStorage(StorageBackend):
+    """Keep file bytes in the application database (SQLite or PostgreSQL).
+
+    ``legacy`` is an optional LocalStorage holding files written before the
+    switch to this backend; a file found there is copied into the database on
+    first read, so existing uploads are migrated instead of lost.
+    """
+    name = "database"
+
+    def __init__(self, legacy: Optional[LocalStorage] = None):
+        self.legacy = legacy
+        self._ready = False
+
+    @staticmethod
+    def _db():
+        import main  # lazy: main imports this module
+        return main
+
+    def _ensure(self):
+        if not self._ready:
+            self._db().run(DB_SCHEMA)
+            self._ready = True
+
+    def put(self, key, data, content_type="application/octet-stream"):
+        key = _clean_key(key)
+        self._ensure()
+        m = self._db()
+        try:
+            m.run(
+                "INSERT INTO stored_files(storage_key,content_type,size_bytes,data,updated) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(storage_key) DO UPDATE SET content_type=excluded.content_type,"
+                "size_bytes=excluded.size_bytes,data=excluded.data,updated=excluded.updated",
+                (key, content_type, len(data), bytes(data), time.time()),
+            )
+        except Exception as e:
+            raise StorageError(f"Database upload failed: {type(e).__name__}") from e
+
+    def get(self, key):
+        key = _clean_key(key)
+        self._ensure()
+        try:
+            row = self._db().one("SELECT data,content_type FROM stored_files WHERE storage_key=?", (key,))
+        except Exception as e:
+            raise StorageError(f"Database download failed: {type(e).__name__}") from e
+        if row:
+            return bytes(row["data"])
+        if self.legacy is not None:
+            data = self.legacy.get(key)  # raises StorageNotFound when absent there too
+            try:
+                self.put(key, data, _guess_type(key))
+            except StorageError:
+                pass  # serving the file matters more than migrating it right now
+            return data
+        raise StorageNotFound("File not found")
+
+    def delete(self, key):
+        key = _clean_key(key)
+        self._ensure()
+        try:
+            self._db().run("DELETE FROM stored_files WHERE storage_key=?", (key,))
+        except Exception as e:
+            raise StorageError(f"Database delete failed: {type(e).__name__}") from e
+        if self.legacy is not None:
+            self.legacy.delete(key)
+
+    def delete_prefix(self, prefix):
+        prefix = _clean_prefix(prefix)
+        self._ensure()
+        m = self._db()
+        # Exact prefix comparison (not LIKE): "_" or "%" in a prefix must not
+        # act as wildcards, so "cv/4/" can never match "cv/41/...".
+        where = "substr(storage_key,1,?)=?"
+        args = (len(prefix), prefix)
+        try:
+            row = m.one(f"SELECT COUNT(*) AS n FROM stored_files WHERE {where}", args)
+            m.run(f"DELETE FROM stored_files WHERE {where}", args)
+        except Exception as e:
+            raise StorageError(f"Database prefix delete failed: {type(e).__name__}") from e
+        removed = int(row["n"] or 0) if row else 0
+        if self.legacy is not None:
+            removed += self.legacy.delete_prefix(prefix)
+        return removed
+
+    def exists(self, key):
+        key = _clean_key(key)
+        self._ensure()
+        if self._db().one("SELECT 1 AS present FROM stored_files WHERE storage_key=?", (key,)):
+            return True
+        return bool(self.legacy and self.legacy.exists(key))
+
+
+# Deletes that failed (storage unreachable) are remembered and retried by the
+# background sweeper instead of being forgotten, so no orphaned CV or photo
+# bytes survive an account deletion or document prune.
+PENDING_DELETE_SCHEMA = """CREATE TABLE IF NOT EXISTS storage_pending_deletes(
+    target TEXT PRIMARY KEY, is_prefix INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, last_error TEXT NOT NULL DEFAULT '')"""
+
+
+def _main():
+    import main  # lazy: main imports this module
+    return main
+
+
+def record_pending_delete(target: str, *, is_prefix: bool = False, error: str = "") -> None:
+    try:
+        m = _main()
+        m.run(PENDING_DELETE_SCHEMA)
+        m.run("INSERT INTO storage_pending_deletes(target,is_prefix,attempts,created,last_error) VALUES (?,?,0,?,?) "
+              "ON CONFLICT(target) DO UPDATE SET last_error=excluded.last_error",
+              (target, 1 if is_prefix else 0, time.time(), str(error)[:200]))
+    except Exception:  # pragma: no cover - last resort, keep the log line
+        import logging
+        logging.getLogger("skillbridge.storage").error("Could not record pending storage delete for %s", target)
+
+
+def delete_or_defer(target: str, *, is_prefix: bool = False) -> bool:
+    """Delete a key/prefix now; on a storage error remember it for a retry. True if done now."""
+    try:
+        storage = get_storage()
+        if is_prefix:
+            storage.delete_prefix(target)
+        else:
+            storage.delete(target)
+        return True
+    except (StorageError, NotImplementedError) as e:
+        record_pending_delete(target, is_prefix=is_prefix, error=type(e).__name__)
+        return False
+
+
+def retry_pending_deletes(limit: int = 100) -> int:
+    """Retry remembered deletes. Returns how many succeeded."""
+    m = _main()
+    m.run(PENDING_DELETE_SCHEMA)
+    done = 0
+    for row in m.allr("SELECT target,is_prefix,attempts FROM storage_pending_deletes ORDER BY created LIMIT ?", (limit,)):
+        try:
+            storage = get_storage()
+            if int(row["is_prefix"] or 0):
+                storage.delete_prefix(row["target"])
+            else:
+                storage.delete(row["target"])
+        except (StorageError, NotImplementedError) as e:
+            m.run("UPDATE storage_pending_deletes SET attempts=attempts+1,last_error=? WHERE target=?",
+                  (type(e).__name__, row["target"]))
+            continue
+        m.run("DELETE FROM storage_pending_deletes WHERE target=?", (row["target"],))
+        done += 1
+    return done
+
+
+_TYPES = {".pdf": "application/pdf", ".webp": "image/webp", ".txt": "text/plain", ".md": "text/markdown",
+          ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+
+def _guess_type(key: str) -> str:
+    return next((t for ext, t in _TYPES.items() if key.lower().endswith(ext)), "application/octet-stream")
+
+
+def _local_dir() -> str:
+    return os.getenv("STORAGE_LOCAL_DIR") or str(Path(os.getenv("DB_PATH", "/data/skillbridge.db")).parent / "cv_files")
 
 
 _instance: Optional[StorageBackend] = None
@@ -171,8 +403,11 @@ def get_storage() -> StorageBackend:
     """Return the configured backend (created once per process)."""
     global _instance
     if _instance is None:
-        backend = os.getenv("STORAGE_BACKEND", "local").strip().lower()
-        if backend == "s3":
+        backend = (os.getenv("STORAGE_BACKEND") or "database").strip().lower()
+        if backend in ("database", "db"):
+            legacy_dir = Path(_local_dir())
+            _instance = DatabaseStorage(LocalStorage(legacy_dir) if legacy_dir.is_dir() else None)
+        elif backend == "s3":
             _instance = S3Storage(
                 bucket=os.getenv("S3_BUCKET", ""),
                 region=os.getenv("S3_REGION", "auto"),
@@ -182,10 +417,9 @@ def get_storage() -> StorageBackend:
                 prefix=os.getenv("S3_PREFIX", ""),
             )
         elif backend == "local":
-            root = os.getenv("STORAGE_LOCAL_DIR") or str(Path(os.getenv("DB_PATH", "/data/skillbridge.db")).parent / "cv_files")
-            _instance = LocalStorage(root)
+            _instance = LocalStorage(_local_dir())
         else:
-            raise StorageError(f"Unknown STORAGE_BACKEND '{backend}' (use 'local' or 's3')")
+            raise StorageError(f"Unknown STORAGE_BACKEND '{backend}' (use 'database', 'local' or 's3')")
     return _instance
 
 

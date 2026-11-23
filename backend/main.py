@@ -29,9 +29,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 COOLDOWN_HOURS = float(os.getenv("RETEST_COOLDOWN_HOURS", "0"))   # spec default is 14 days (336h); 0 for demos
 MAX_ATTEMPTS_90D = int(os.getenv("MAX_ATTEMPTS_90D", "3"))
-UNLIMITED_EXAM_EMAILS = {"i@gmail.com"}
+# Demo/test accounts whose *legacy* attempts run without a timer. Comma list from
+# the environment, empty by default and ignored entirely in production.
+UNLIMITED_EXAM_EMAILS = {
+    e.strip().lower() for e in os.getenv("UNLIMITED_EXAM_EMAILS", "").split(",") if e.strip()
+}
 EVIDENCE_RETENTION_DAYS = max(1, min(90, int(os.getenv("EVIDENCE_RETENTION_DAYS", "30"))))
 MAX_EVIDENCE_BYTES = 180 * 1024
+EXPORT_EVIDENCE_MAX_BYTES = int(os.getenv("EXPORT_EVIDENCE_MAX_BYTES", str(8 * 1024 * 1024)))
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-5-5")
 CONSENT_VERSION = "r0-2"
@@ -45,7 +50,28 @@ MFA_REQUIRED_ROLES = {
 }
 
 
+SECRET_KEY_PLACEHOLDER = "change-me-to-a-long-random-string"
+
+
+def _production_secret_problem(value: Optional[str]) -> Optional[str]:
+    """Why a SECRET_KEY is unacceptable in production, or None when it is fine."""
+    value = (value or "").strip()
+    if not value:
+        return "SECRET_KEY is not set"
+    if value == SECRET_KEY_PLACEHOLDER:
+        return "SECRET_KEY still uses the .env.example placeholder"
+    if len(value) < 32:
+        return "SECRET_KEY must be at least 32 characters"
+    return None
+
+
 def _secret() -> str:
+    if IS_PRODUCTION:
+        problem = _production_secret_problem(os.getenv("SECRET_KEY"))
+        if problem:
+            # Tokens signed with a guessable or per-container key are forgeable
+            # or silently invalidated on redeploy; refuse to start instead.
+            raise RuntimeError(f"Refusing to start in production: {problem}")
     if os.getenv("SECRET_KEY"): return os.environ["SECRET_KEY"]
     p = Path(DB_PATH).parent / ".secret"
     try:
@@ -99,18 +125,29 @@ CREATE TABLE IF NOT EXISTS identity_reviews(id TEXT PRIMARY KEY, user_id INT NOT
 
 
 class PgCompatConnection:
-    """Small DB-API adapter so the prototype can keep parameterized SQL on PostgreSQL."""
+    """Small DB-API adapter so the prototype can keep parameterized SQL on PostgreSQL.
+
+    Pooled connections run in autocommit mode, so ``with db() as c`` alone does
+    NOT make a block atomic on PostgreSQL. Code that needs a transaction (row
+    locks, read-modify-write) must use ``transaction()`` or issue BEGIN itself;
+    ``__exit__`` then really commits / rolls back because psycopg acts on the
+    server-side transaction status, not on the autocommit flag.
+    """
     def __init__(self, connection, pool=None):
         self.connection = connection
         self._pool = pool
     def execute(self, sql, args=()):
-        return self.connection.execute(sql.replace("?", "%s"), args)
+        # psycopg treats "%" as a placeholder marker: escape literal percent
+        # signs (e.g. LIKE 'cv/%') before turning SQLite "?" into "%s".
+        return self.connection.execute(sql.replace("%", "%%").replace("?", "%s"), args)
     def executescript(self, script):
         for statement in script.split(";"):
             if statement.strip():
                 self.execute(statement)
     def commit(self):
         self.connection.commit()
+    def rollback(self):
+        self.connection.rollback()
     def close(self):
         if self._pool is not None:
             pool, connection = self._pool, self.connection
@@ -138,6 +175,8 @@ class PgCompatConnection:
 
 _pg_pool = None
 _pg_pool_lock = threading.Lock()
+PG_POOL_MAX = max(2, int(os.getenv("PG_POOL_MAX", "20")))
+PG_POOL_TIMEOUT_SECONDS = max(0.5, float(os.getenv("PG_POOL_TIMEOUT_SECONDS", "3")))
 
 
 def _connection_pool():
@@ -151,28 +190,75 @@ def _connection_pool():
                 _pg_pool = ConnectionPool(
                     DATABASE_URL,
                     min_size=1,
-                    max_size=10,
+                    max_size=PG_POOL_MAX,
                     max_idle=240,
-                    timeout=15,
+                    timeout=PG_POOL_TIMEOUT_SECONDS,
                     open=False,
+                    # Autocommit keeps single statements cheap. Multi-statement
+                    # critical sections use transaction(), which issues BEGIN.
                     kwargs={"row_factory": dict_row, "prepare_threshold": 5, "autocommit": True},
                 )
                 _pg_pool.open(wait=False)
     return _pg_pool
 
 
+class DatabaseBusy(HTTPException):
+    """Every pooled connection is in use: fail fast instead of opening more."""
+    def __init__(self):
+        super().__init__(503, "database_busy")
+
+
 def db():
     if DATABASE_URL:
+        pool = _connection_pool()
         try:
-            pool = _connection_pool()
-            return PgCompatConnection(pool.getconn(timeout=15), pool)
-        except Exception:
-            import psycopg
-            from psycopg.rows import dict_row
-            return PgCompatConnection(psycopg.connect(DATABASE_URL, row_factory=dict_row))
+            connection = pool.getconn(timeout=PG_POOL_TIMEOUT_SECONDS)
+        except Exception as ex:
+            # Never fall back to an unpooled connection: under load that only
+            # multiplies connections past the server limit and leaks them.
+            log.warning("PostgreSQL pool exhausted or unreachable: %s", type(ex).__name__)
+            raise DatabaseBusy() from ex
+        return PgCompatConnection(connection, pool)
     c = sqlite3.connect(DB_PATH, timeout=10)
     c.row_factory = sqlite3.Row
     return c
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def transaction():
+    """A real write-locking transaction on both engines.
+
+    SQLite: BEGIN IMMEDIATE takes the database write lock up-front.
+    PostgreSQL: the pool runs in autocommit mode, so without an explicit BEGIN
+    every ``SELECT ... FOR UPDATE`` would run (and release its lock) on its
+    own. Here BEGIN opens one transaction so FOR UPDATE row locks are held until
+    COMMIT. Any exception (including HTTPException) rolls everything back.
+    """
+    conn = db()
+    try:
+        conn.execute("BEGIN" if DATABASE_URL else "BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                log.warning("Transaction rollback failed", exc_info=True)
+            raise
+        conn.execute("COMMIT")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _for_update() -> str:
+    """Row-lock suffix; SQLite already holds the database lock via BEGIN IMMEDIATE."""
+    return " FOR UPDATE" if DATABASE_URL else ""
 
 
 def init_db():
@@ -190,10 +276,19 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_attempts_user_status ON attempts(user_id, status)",
             "CREATE INDEX IF NOT EXISTS idx_attempts_status_finished ON attempts(status, finished)",
             "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts)",
+            "CREATE INDEX IF NOT EXISTS idx_consents_user_version ON consents(user_id, version)",
+            "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_passports_user ON passports(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_attempts_status_started ON attempts(status, started)",
         ):
             c.execute(index_sql)
         c.execute("CREATE TABLE IF NOT EXISTS exam_evidence(id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, event_id INTEGER, captured_at REAL NOT NULL, mime_type TEXT NOT NULL, image_data BYTEA NOT NULL, size_bytes INTEGER NOT NULL, expires_at REAL NOT NULL, vision_json TEXT, vision_model TEXT, vision_at DOUBLE PRECISION)")
+        # (attempt_id, captured_at) also serves attempt_id-only lookups.
         c.execute("CREATE INDEX IF NOT EXISTS idx_exam_evidence_attempt ON exam_evidence(attempt_id, captured_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_exam_evidence_expires ON exam_evidence(expires_at)")
+        # Candidate replies to a reviewer's "needs more information" decision.
+        c.execute("CREATE TABLE IF NOT EXISTS attempt_review_responses(id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, user_id INTEGER NOT NULL, note TEXT NOT NULL, created DOUBLE PRECISION NOT NULL)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_attempt_review_responses_attempt ON attempt_review_responses(attempt_id, created)")
         # Additive migration for existing databases.
         if DATABASE_URL:
             event_columns = {row["column_name"] for row in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='events'").fetchall()}
@@ -337,6 +432,8 @@ def init_db():
         run("ALTER TABLE passports ADD COLUMN source_attempt TEXT")
     import cv_store  # CV document + extraction-draft tables (imported here to avoid a circular import)
     cv_store.ensure_schema()
+    import notification_center
+    notification_center.ensure_schema()
     import assessment_workflow
     assessment_workflow.ensure_schema()
     backfill_passport_holders()
@@ -359,10 +456,10 @@ def run(sql, args=()):
     try:
         if DATABASE_URL:
             if sql.lstrip().upper().startswith("INSERT INTO USERS("):
-                cur = c.execute(sql.replace("?", "%s") + " RETURNING id", args)
+                cur = c.execute(sql + " RETURNING id", args)
                 result = cur.fetchone()["id"]
             else:
-                c.execute(sql.replace("?", "%s"), args)
+                c.execute(sql, args)
                 result = None
             c.commit()
             return result
@@ -371,6 +468,21 @@ def run(sql, args=()):
         return cur.lastrowid
     finally:
         c.close()
+
+
+def email_fingerprint(email: str) -> str:
+    """Short, non-reversible audit reference for an email address (no raw PII in audit rows)."""
+    return "email-sha256:" + hashlib.sha256((email or "").strip().lower().encode("utf-8")).hexdigest()[:16]
+
+
+_DUMMY_PASSWORD_HASH = None
+
+
+def _dummy_password_hash() -> str:
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = SEC.hash_password(secrets.token_urlsafe(24))
+    return _DUMMY_PASSWORD_HASH
 
 
 def audit(actor, action, target=""):
@@ -396,11 +508,30 @@ def rehash_password(uid, password):
     run("UPDATE users SET pw_hash=? WHERE id=?", (SEC.hash_password(password), uid))
 
 
+def _trusted_proxy_hops() -> int:
+    try:
+        return max(0, int(os.getenv("TRUSTED_PROXY_HOPS", "1")))
+    except ValueError:
+        return 1
+
+
 def _client_ip(request: Optional[Request]) -> str:
+    """Best-effort client address that a caller cannot spoof.
+
+    Each trusted proxy appends the address it received the request from, so
+    the left part of X-Forwarded-For is attacker-controlled. With N trusted
+    hops the real client is the N-th entry from the right.
+    """
     if request is None:
         return ""
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    return forwarded or (request.client.host if request.client else "")
+    peer = request.client.host if request.client else ""
+    hops = _trusted_proxy_hops()
+    if hops <= 0:
+        return peer
+    entries = [part.strip() for part in (request.headers.get("x-forwarded-for") or "").split(",") if part.strip()]
+    if len(entries) >= hops:
+        return entries[-hops]
+    return peer
 
 
 def create_session(uid, request: Optional[Request] = None) -> str:
@@ -507,13 +638,16 @@ def current_user(authorization: Optional[str] = Header(None)):
     u = one("SELECT * FROM users WHERE id=?", (data["uid"],))
     if not u: raise HTTPException(401, "Unknown user")
     # Revocable sessions (AUTH-05): a signed-out token stops working immediately.
+    # make_token always embeds a session id; a token without one could never be
+    # revoked, so it is rejected outright.
     sid = data.get("sid")
-    if sid:
-        session = one("SELECT * FROM auth_sessions WHERE id=? AND user_id=?", (sid, data["uid"]))
-        if not session or session["revoked"] or (session["expires"] or 0) < time.time():
-            raise HTTPException(401, "Session revoked or expired")
-        if time.time() - (session["last_seen"] or 0) > 300:
-            run("UPDATE auth_sessions SET last_seen=? WHERE id=?", (time.time(), sid))
+    if not sid:
+        raise HTTPException(401, "Session revoked or expired")
+    session = one("SELECT * FROM auth_sessions WHERE id=? AND user_id=?", (sid, data["uid"]))
+    if not session or session["revoked"] or (session["expires"] or 0) < time.time():
+        raise HTTPException(401, "Session revoked or expired")
+    if time.time() - (session["last_seen"] or 0) > 300:
+        run("UPDATE auth_sessions SET last_seen=? WHERE id=?", (time.time(), sid))
     # Suspended accounts lose access on their next authenticated request.
     try:
         status = one("SELECT status FROM admin_user_status WHERE user_id=?", (data["uid"],))
@@ -542,13 +676,72 @@ app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http
                    allow_methods=["*"], allow_headers=["*"])
 
 
-async def _purge_expired_exam_evidence():
-    while True:
+SWEEP_INTERVAL_SECONDS = max(10, int(os.getenv("ATTEMPT_SWEEP_INTERVAL_SECONDS", "60")))
+
+
+def finalize_expired_attempts(user_id=None, limit: int = 200) -> int:
+    """Grade every 'active' attempt whose server-side deadline passed.
+
+    Used by /api/state (finalize-on-read), the background sweeper and admin
+    queues. Same rule as the exam endpoints (attempt_timed_out), so the
+    non-production demo bypass is honoured consistently. Returns how many
+    attempts this call finalized.
+    """
+    sql = "SELECT * FROM attempts WHERE status='active'"
+    args: tuple = ()
+    if user_id is not None:
+        sql += " AND user_id=?"
+        args = (user_id,)
+    finalized = 0
+    for row in allr(sql + " ORDER BY started LIMIT ?", (*args, limit)):
+        att = dict(row)
         try:
-            run("DELETE FROM exam_evidence WHERE expires_at<?", (time.time(),))
+            st = json.loads(att["state"] or "{}")
+            if not attempt_timed_out(att, st):
+                continue
+            if finalize(att, st):
+                finalized += 1
+                import notification_center
+                notification_center.notify(
+                    att["user_id"], "assessment_time_ended", "Your assessment time ended",
+                    "Your saved answers were submitted automatically when the time ran out. "
+                    "The result appears after human review.",
+                    link="exams", dedupe_key="attempt-auto-submitted:" + att["id"])
+        except HTTPException:
+            raise
         except Exception:
-            log.exception("Could not purge expired exam evidence")
-        await asyncio.sleep(3600)
+            log.exception("Could not finalize expired attempt %s", att.get("id"))
+    return finalized
+
+
+def _sweep_once() -> None:
+    try:
+        finalize_expired_attempts()
+    except Exception:
+        log.exception("Expired-attempt sweep failed")
+    try:
+        import storage as storage_module
+        storage_module.retry_pending_deletes()
+    except Exception:
+        log.exception("Deferred storage delete retry failed")
+
+
+def _purge_evidence_once() -> None:
+    try:
+        run("DELETE FROM exam_evidence WHERE expires_at<?", (time.time(),))
+    except Exception:
+        log.exception("Could not purge expired exam evidence")
+
+
+async def _purge_expired_exam_evidence():
+    """Background maintenance loop (blocking DB work runs in the threadpool)."""
+    last_purge = 0.0
+    while True:
+        if time.time() - last_purge >= 3600:
+            await run_in_threadpool(_purge_evidence_once)
+            last_purge = time.time()
+        await run_in_threadpool(_sweep_once)
+        await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
 
 _evidence_cleanup_task = None
@@ -580,6 +773,41 @@ async def _shutdown():
 
 @app.get("/api/health")
 def health(): return {"ok": True, "llm_configured": bool(ANTHROPIC_API_KEY), "version": "r0"}
+
+
+READY_TIMEOUT_SECONDS = float(os.getenv("READY_TIMEOUT_SECONDS", "2"))
+
+
+def _database_ping() -> None:
+    if DATABASE_URL:
+        pool = _connection_pool()
+        connection = pool.getconn(timeout=READY_TIMEOUT_SECONDS)
+        try:
+            connection.execute(f"SET statement_timeout = {int(READY_TIMEOUT_SECONDS * 1000)}")
+            try:
+                connection.execute("SELECT 1").fetchone()
+            finally:
+                connection.execute("RESET statement_timeout")  # pooled: do not leak the setting
+        finally:
+            pool.putconn(connection)
+        return
+    c = sqlite3.connect(DB_PATH, timeout=READY_TIMEOUT_SECONDS)
+    try:
+        c.execute("SELECT 1").fetchone()
+    finally:
+        c.close()
+
+
+@app.get("/api/ready")
+def ready(response: Response):
+    """Readiness: 200 only when the database answers SELECT 1 quickly (health stays cheap)."""
+    try:
+        _database_ping()
+    except Exception as ex:
+        log.warning("Readiness check failed: %s", type(ex).__name__)
+        response.status_code = 503
+        return {"ready": False, "database": "unreachable"}
+    return {"ready": True, "database": "ok"}
 
 
 class Reg(BaseModel):
@@ -799,10 +1027,14 @@ def login(b: Login, request: Request):
     needs_rehash = False
     if u:
         ok, needs_rehash = verify_pw(dict(u), b.password)
+    else:
+        # Same PBKDF2 cost for unknown addresses, so response time does not
+        # reveal which emails have accounts.
+        SEC.verify_password(_dummy_password_hash(), b.password, None)
     if not u or not ok:
         for key in keys:
             throttle_fail(key)
-        audit(u["id"] if u else None, "login_failed", email)
+        audit(u["id"] if u else None, "login_failed", email_fingerprint(email))
         raise HTTPException(401, "Wrong email or password")
     for key in keys:
         throttle_reset(key)
@@ -1015,7 +1247,8 @@ def reset_password(b: ResetPassword, request: Request):
 
 # One registry of user-linked tables (SB-008). ``delete_me`` and ``export_data``
 # both walk it, so a new table cannot silently survive an account deletion.
-# (table, column, label)
+# (table, column, label). Every column MUST exist: registry_problems() reports a
+# typo loudly and tests/test_core_privacy.py fails on it.
 USER_DATA_REGISTRY = (
     ("consents", "user_id", "consents"),
     ("profiles", "user_id", "profiles"),
@@ -1024,6 +1257,7 @@ USER_DATA_REGISTRY = (
     ("candidate_profiles", "user_id", "candidate_profiles"),
     ("candidate_profile_drafts", "user_id", "candidate_profile_drafts"),
     ("candidate_avatars", "user_id", "candidate_avatars"),
+    ("notifications", "user_id", "notifications"),
     ("user_roles", "user_id", "user_roles"),
     ("assessment_blueprints", "user_id", "assessment_blueprints"),
     ("cv_skill_nodes", "user_id", "cv_skill_nodes"),
@@ -1040,13 +1274,30 @@ USER_DATA_REGISTRY = (
     ("learning_feedback", "user_id", "learning_feedback"),
     ("assessment_releases", "user_id", "assessment_releases"),
     ("assessment_learning_plans", "user_id", "assessment_learning_plans"),
-    ("billing_credit_ledger", "user_id", "billing_credits"),
+    ("attempt_review_responses", "user_id", "attempt_review_responses"),
     ("company_members", "user_id", "company_membership"),
     ("applications", "candidate_id", "applications"),
-    ("application_history", "candidate_id", "application_history"),
-    ("application_notes", "author_user_id", "application_notes"),
-    ("phase_two_invites", "candidate_id", "phase_two_invites"),
+    ("application_notes", "author_id", "application_notes_authored"),
+    ("agent_runs", "user_id", "agent_runs"),
+    ("agent_artifacts", "user_id", "agent_artifacts"),
 )
+# Rows that hang off one of the user's applications rather than the user:
+# (table, label). Deleted/exported via application_id IN (their applications).
+APPLICATION_DATA_REGISTRY = (
+    ("application_history", "application_history"),
+    ("application_notes", "application_notes"),
+    ("phase_two_invites", "phase_two_invites"),
+)
+# Financial records are retained for accounting (bookkeeping retention) after an
+# account is erased: they are exported, but on deletion only the link to the
+# person is removed (person columns set to ERASED_USER_ID).
+# (table, column, label, extra person columns to anonymize)
+RETAINED_FINANCIAL_REGISTRY = (
+    ("billing_invoices", "user_id", "billing_invoices", ()),
+    ("billing_subscriptions", "user_id", "billing_subscriptions", ()),
+    ("billing_credit_ledger", "user_id", "billing_credits", ("actor_id",)),
+)
+ERASED_USER_ID = 0
 # Rows that hang off an attempt rather than the user.
 ATTEMPT_DATA_REGISTRY = (
     "events",
@@ -1057,48 +1308,113 @@ ATTEMPT_DATA_REGISTRY = (
     "admin_attempt_reviews",
     "admin_appeal_decisions",
     "attempt_honesty_reviews",
+    "attempt_review_responses",
 )
-
-_known_tables = None
-_known_columns: dict[str, set[str]] = {}
 
 
 def known_tables() -> set[str]:
-    global _known_tables
-    if _known_tables is None:
-        if DATABASE_URL:
-            rows = allr("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()")
-            _known_tables = {r["table_name"] for r in rows}
-        else:
-            rows = allr("SELECT name FROM sqlite_master WHERE type='table'")
-            _known_tables = {r["name"] for r in rows}
-    return _known_tables
+    # Not cached: several modules create their tables lazily, and export /
+    # deletion are rare enough that one catalogue query does not matter.
+    if DATABASE_URL:
+        rows = allr("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()")
+        return {r["table_name"] for r in rows}
+    rows = allr("SELECT name FROM sqlite_master WHERE type='table'")
+    return {r["name"] for r in rows}
 
 
 def known_columns(table: str) -> set[str]:
-    if table not in _known_columns:
-        try:
-            if DATABASE_URL:
-                rows = allr("SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema=current_schema() AND table_name=?", (table,))
-                _known_columns[table] = {r["column_name"] for r in rows}
-            else:
-                rows = allr(f"PRAGMA table_info({table})")
-                _known_columns[table] = {r["name"] for r in rows}
-        except sqlite3.OperationalError:
-            _known_columns[table] = set()
-    return _known_columns[table]
+    try:
+        if DATABASE_URL:
+            rows = allr("SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema=current_schema() AND table_name=?", (table,))
+            return {r["column_name"] for r in rows}
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+            return set()
+        rows = allr(f"PRAGMA table_info({table})")
+        return {r["name"] for r in rows}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def registry_problems() -> list[str]:
+    """Registry entries whose table exists but whose linking column does not."""
+    tables = known_tables()
+    entries = [(t, c) for t, c, _l in USER_DATA_REGISTRY]
+    entries += [(t, "application_id") for t, _l in APPLICATION_DATA_REGISTRY]
+    for t, c, _l, extra in RETAINED_FINANCIAL_REGISTRY:
+        entries += [(t, c)] + [(t, e) for e in extra]
+    entries += [(t, "attempt_id") for t in ATTEMPT_DATA_REGISTRY]
+    return [f"{t}.{c}" for t, c in entries if t in tables and c not in known_columns(t)]
 
 
 def _registry_tables():
     tables = known_tables()
     for table, column, label in USER_DATA_REGISTRY:
-        if table in tables and column in known_columns(table):
-            yield table, column, label
+        if table not in tables:
+            continue  # module not initialised on this deployment
+        if column not in known_columns(table):
+            # A wrong column would silently leave personal data behind.
+            log.error("USER_DATA_REGISTRY column %s.%s does not exist; rows were NOT exported/deleted",
+                      table, column)
+            continue
+        yield table, column, label
+
+
+# Answer keys, rubrics and hidden test material. Never part of a client
+# payload, including the account data export (AGENTS.md).
+_KEY_MATERIAL_FIELDS = frozenset({
+    "correct_answer", "reference_answer", "grading_rubric", "rubric", "answer_key",
+    "expected_answer", "expected_output", "explanation", "solution", "solutions",
+    "hidden_tests", "test_cases", "hidden_datasets", "keywords", "expected_keywords",
+    "ref", "correct", "correct_option", "correct_index", "model_answer",
+})
+# In a question object "answer" is the key, not the candidate's response.
+_QUESTION_MARKERS = frozenset({"question_text", "prompt", "options", "question_type"})
+
+
+def strip_key_material(value):
+    """Recursively remove answer keys / rubrics from JSON-like data."""
+    if isinstance(value, dict):
+        is_question = bool(_QUESTION_MARKERS & value.keys())
+        return {
+            k: strip_key_material(v) for k, v in value.items()
+            if k not in _KEY_MATERIAL_FIELDS and not (is_question and k == "answer")
+        }
+    if isinstance(value, list):
+        return [strip_key_material(v) for v in value]
+    return value
+
+
+def _sanitize_export_row(row: dict) -> dict:
+    """Strip key material from JSON text columns (attempt state/result, blueprint payload ...)."""
+    clean = {}
+    for key, value in row.items():
+        if key in _KEY_MATERIAL_FIELDS:
+            continue
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            clean[key] = {"omitted_binary_bytes": len(bytes(value))}
+            continue
+        if isinstance(value, str) and value[:1] in ("{", "["):
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                clean[key] = value
+                continue
+            clean[key] = json.dumps(strip_key_material(parsed), ensure_ascii=False)
+            continue
+        clean[key] = value
+    return clean
+
+
+def _application_ids(uid) -> list[str]:
+    if "applications" not in known_tables():
+        return []
+    return [r["id"] for r in allr("SELECT id FROM applications WHERE candidate_id=?", (uid,))]
 
 
 def user_data_rows(uid) -> dict:
     data = {}
+    tables = known_tables()
     for table, column, label in _registry_tables():
         if table == "cv_files":
             # Never inline binary PDF bytes into the JSON export; the document
@@ -1106,7 +1422,23 @@ def user_data_rows(uid) -> dict:
             columns = "document_id,user_id,content_type,size_bytes,created"
             data[label] = [dict(r) for r in allr(f"SELECT {columns} FROM {table} WHERE {column}=?", (uid,))]
             continue
-        data[label] = [dict(r) for r in allr(f"SELECT * FROM {table} WHERE {column}=?", (uid,))]
+        data[label] = [_sanitize_export_row(dict(r))
+                       for r in allr(f"SELECT * FROM {table} WHERE {column}=?", (uid,))]
+    app_ids = _application_ids(uid)
+    for table, label in APPLICATION_DATA_REGISTRY:
+        if table not in tables or not app_ids:
+            continue
+        marks = ",".join("?" for _ in app_ids)
+        data[label] = [_sanitize_export_row(dict(r)) for r in allr(
+            f"SELECT * FROM {table} WHERE application_id IN ({marks})", tuple(app_ids))]
+    for table, column, label, _extra in RETAINED_FINANCIAL_REGISTRY:
+        if table in tables and column in known_columns(table):
+            data[label] = [_sanitize_export_row(dict(r))
+                           for r in allr(f"SELECT * FROM {table} WHERE {column}=?", (uid,))]
+    if "billing_refunds" in tables and "billing_invoices" in tables:
+        data["billing_refunds"] = [dict(r) for r in allr(
+            "SELECT * FROM billing_refunds WHERE invoice_id IN "
+            "(SELECT id FROM billing_invoices WHERE user_id=?)", (uid,))]
     return data
 
 
@@ -1136,7 +1468,7 @@ def purge_user_data(uid) -> list[str]:
                     if "applications" in tables:
                         app_ids = [r["id"] for r in allr("SELECT id FROM applications WHERE job_id=?", (jid,))]
                         for app_id in app_ids:
-                            for table in ("application_notes", "application_history"):
+                            for table, _label in APPLICATION_DATA_REGISTRY:
                                 if table in tables:
                                     run(f"DELETE FROM {table} WHERE application_id=?", (app_id,))
                         run("DELETE FROM applications WHERE job_id=?", (jid,))
@@ -1150,9 +1482,29 @@ def purge_user_data(uid) -> list[str]:
                     run(f"DELETE FROM {table} WHERE company_id=?", (cid,))
             run("DELETE FROM companies WHERE id=?", (cid,))
             touched.append("companies")
+    # Rows hanging off the candidate's own applications (stage history,
+    # recruiter notes about them, phase-two invites) go before the applications.
+    for app_id in _application_ids(uid):
+        for table, _label in APPLICATION_DATA_REGISTRY:
+            if table in tables:
+                run(f"DELETE FROM {table} WHERE application_id=?", (app_id,))
+                touched.append(table)
     for table, column, _label in _registry_tables():
         run(f"DELETE FROM {table} WHERE {column}=?", (uid,))
         touched.append(table)
+    for table, column, _label, extra in RETAINED_FINANCIAL_REGISTRY:
+        if table not in tables:
+            continue
+        columns = known_columns(table)
+        for col in (column, *extra):
+            if col in columns:
+                run(f"UPDATE {table} SET {col}=? WHERE {col}=?", (ERASED_USER_ID, uid))
+        touched.append(table + ":anonymized")
+    if "billing_refunds" in tables:
+        refund_columns = known_columns("billing_refunds")
+        for col in ("requested_by", "reviewed_by"):
+            if col in refund_columns:
+                run(f"UPDATE billing_refunds SET {col}=? WHERE {col}=?", (ERASED_USER_ID, uid))
     if "audit" in tables:
         # Keep the audit trail, but drop the link to the deleted identity.
         run("UPDATE audit SET actor=NULL WHERE actor=?", (uid,))
@@ -1333,6 +1685,8 @@ def avatar_metadata(user_id):
 @app.get("/api/state")
 def state(u=Depends(current_user)):
     import assessment_workflow as workflow
+    # An expired attempt must not sit 'active' until the candidate clicks again.
+    finalize_expired_attempts(u["id"])
     prof = one("SELECT * FROM profiles WHERE user_id=?", (u["id"],))
     candidate_profile = one(
         "SELECT skills FROM candidate_profiles WHERE user_id=?", (u["id"],)
@@ -1348,6 +1702,7 @@ def state(u=Depends(current_user)):
                    LEFT JOIN admin_appeal_decisions d ON d.attempt_id=a.id
                    WHERE a.user_id=? ORDER BY a.finished DESC,a.started DESC""", (u["id"],))
     pp = allr("SELECT id,created,revoked,payload,source_attempt FROM passports WHERE user_id=? ORDER BY created DESC", (u["id"],))
+    responses = latest_review_responses([a["id"] for a in atts])
     attempt_items = []
     for a in atts:
         try:
@@ -1369,6 +1724,14 @@ def state(u=Depends(current_user)):
             "reviewed_at": a["reviewed_at"], "appeal": a["appeal"],
             "appeal_decision": a["appeal_decision"], "appeal_reason": a["appeal_reason"],
             "appeal_decided_at": a["appeal_decided_at"],
+            # Additive fields: terminal outcomes and the reviewer conversation.
+            "publication_stage": (result.get("publication") or {}).get("stage"),
+            "terminal": bool((result.get("publication") or {}).get("terminal")),
+            "appealable": bool((result.get("publication") or {}).get("appealable")) and not a["appeal"],
+            "honesty_status": (result.get("publication") or {}).get("honesty_status"),
+            "honesty_reason": ((result.get("publication") or {}).get("honesty") or {}).get("reason"),
+            "review_response": responses.get(a["id"]),
+            "review_response_allowed": review_response_allowed(a, responses.get(a["id"])),
         })
     approved_attempt_ids = {a["id"] for a in attempt_items if a["finalized"]}
     passport_items = []
@@ -1424,25 +1787,44 @@ def export_data(u=Depends(current_user)):
     avatar = one("SELECT * FROM candidate_avatars WHERE user_id=?", (u["id"],))
     d["candidate_avatar"] = None
     if avatar:
-        from storage import StorageError, get_storage
+        from storage import StorageError, StorageNotFound, get_storage
         try:
             avatar_data = get_storage().get(avatar["storage_key"])
+        except StorageNotFound:
+            avatar_data = None  # file already lost; export the rest instead of failing
         except StorageError as ex:
             log.error("Avatar export failed: %s", ex)
             raise HTTPException(503, "Could not export the profile photo, please try again")
-        d["candidate_avatar"] = {
-            **dict(avatar),
-            "data_base64": base64.b64encode(avatar_data).decode("ascii"),
-        }
+        if avatar_data is not None:
+            d["candidate_avatar"] = {
+                **dict(avatar),
+                "data_base64": base64.b64encode(avatar_data).decode("ascii"),
+            }
     import cv_store
     d["cv_documents"] = cv_store.list_documents(u["id"])
     d["cv_extractions"] = cv_store.list_extractions(u["id"])
-    d["answer_evaluations"] = [evaluation_view(r) for r in allr(
+    # Rubric keywords are grading-key material: strip them like attempt state.
+    d["answer_evaluations"] = [strip_key_material(evaluation_view(r)) for r in allr(
         "SELECT * FROM answer_evaluations WHERE attempt_id IN "
         "(SELECT id FROM attempts WHERE user_id=?)", (u["id"],))]
-    d["exam_evidence"] = [{**{key: value for key, value in dict(row).items() if key != "image_data"},
-                           "image_base64": base64.b64encode(bytes(row["image_data"])).decode("ascii")}
-                          for row in allr("SELECT * FROM exam_evidence WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?) AND expires_at>?", (u["id"], time.time()))]
+    # Proctoring snapshots are the candidate's own data and stay in the export,
+    # but inline bytes are capped so one request cannot build a huge JSON body.
+    # Frames past the cap are listed with a download path instead (the
+    # per-frame endpoint already serves them to the owner).
+    budget = EXPORT_EVIDENCE_MAX_BYTES
+    evidence = []
+    for row in allr("SELECT * FROM exam_evidence WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?) "
+                    "AND expires_at>? ORDER BY captured_at", (u["id"], time.time())):
+        item = {key: value for key, value in dict(row).items() if key != "image_data"}
+        image = bytes(row["image_data"])
+        if len(image) <= budget:
+            item["image_base64"] = base64.b64encode(image).decode("ascii")
+            budget -= len(image)
+        else:
+            item["image_omitted"] = True
+            item["download_path"] = f"/api/attempts/{row['attempt_id']}/evidence/{row['id']}"
+        evidence.append(item)
+    d["exam_evidence"] = evidence
     audit(u["id"], "export")
     return d
 
@@ -1458,7 +1840,11 @@ def delete_me(u=Depends(current_user)):
             log.error("Avatar storage deletion failed: %s", ex)
             raise HTTPException(503, "Could not remove the profile photo, please try again")
     import cv_store
+    import storage as storage_module
     cv_store.delete_user_documents(u["id"])   # removes the stored CV files and extraction drafts too
+    # Older avatars that were replaced but never cleaned up live under the same
+    # folder; a failed delete is recorded and retried by the background sweeper.
+    storage_module.delete_or_defer(f"avatars/{int(u['id'])}/", is_prefix=True)
     touched = purge_user_data(u["id"])
     run("DELETE FROM users WHERE id=?", (u["id"],))
     # Pseudonymised audit entry: the account is gone, the action is still traceable.
@@ -1468,29 +1854,55 @@ def delete_me(u=Depends(current_user)):
 
 # ------------------------------------------------------------------ CV intelligence
 def read_upload(name: str, data: bytes) -> str:
-    n = name.lower()
+    """CV text for the skill-extraction flow. Same reader as profile creation
+    (headers, tables, OCR for scanned pages, PDF links), minus the link footer."""
+    n = (name or "").lower()
     if len(data) > 2_000_000: raise HTTPException(413, "File too large (max 2 MB)")
-    if n.endswith(".pdf"):
-        from pypdf import PdfReader
-        return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
-    if n.endswith(".docx"):
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            xml = z.read("word/document.xml").decode("utf8", "ignore")
-        return re.sub(r"<[^>]+>", " ", xml.replace("</w:p>", "\n"))
-    if n.endswith(".txt") or n.endswith(".md"): return data.decode("utf8", "ignore")
-    raise HTTPException(415, "Upload PDF, DOCX or TXT (or paste text)")
+    if not n.endswith((".pdf", ".docx", ".txt", ".md")):
+        raise HTTPException(415, "Upload PDF, DOCX or TXT (or paste text)")
+    text, _ = read_profile_cv(name, data)
+    return _strip_link_footer(text)
+
+
+LINK_FOOTER_MARKER = "\n\nLINKS FOUND IN DOCUMENT:"
+
+
+def _strip_link_footer(text: str) -> str:
+    """Drop the appended link list; links are PII-bearing and handled separately."""
+    return (text or "").split(LINK_FOOTER_MARKER, 1)[0].rstrip()
+
+
+def _redacted_link_block(links: list[str], known_names=()) -> str:
+    """Link list safe for an LLM prompt: every URL and identifier is redacted."""
+    if not links:
+        return ""
+    redacted, _ = E.redact("\n".join(links), known_names=known_names, assume_first_line_name=False)
+    return redacted
 
 
 def llm_extract(redacted: str):
     """Optional LLM extraction. Input is already PII-redacted. Output is schema-validated; one retry; else fall back to rules."""
     system = (Path(__file__).parent / "prompts" / "skill_extract.v1.md").read_text()
+    import ai_routing
+    prompt = "<cv>\n" + redacted[:12000] + "\n</cv>"
     for _ in range(2):
+        # Shared AI budget guard: estimate generously (chars/3 tokens in, the
+        # full max_tokens out) and fall back to the rule extractor when the
+        # call would overrun the budget.
+        estimate = ai_routing.estimate_cost("anthropic", (len(system) + len(prompt)) // 3, 800)
+        if not ai_routing.can_spend(estimate):
+            log.warning("LLM extraction skipped: AI budget exhausted")
+            return None
         try:
             r = httpx.post("https://api.anthropic.com/v1/messages", timeout=30,
                            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                           json={"model": LLM_MODEL, "max_tokens": 800, "system": system, "messages": [{"role": "user", "content": "<cv>\n" + redacted[:12000] + "\n</cv>"}]})
+                           json={"model": LLM_MODEL, "max_tokens": 800, "system": system, "messages": [{"role": "user", "content": prompt}]})
             r.raise_for_status()
-            text = "".join(b.get("text", "") for b in r.json()["content"]).strip()
+            body = r.json()
+            usage = body.get("usage") or {}
+            ai_routing.record_usage("anthropic", LLM_MODEL, int(usage.get("input_tokens") or 0),
+                                    int(usage.get("output_tokens") or 0), purpose="legacy_cv_skill_extract")
+            text = "".join(b.get("text", "") for b in body["content"]).strip()
             text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
             skills = E.validate_llm_skills(json.loads(text).get("skills"))
             if skills: return skills
@@ -1506,10 +1918,20 @@ _URL_RE = re.compile(
 )
 
 
+# Contact links are personal data, not profile URLs: never turn them into
+# "https://mailto:..." and never carry them into AI input.
+_NON_WEB_SCHEMES = ("mailto:", "tel:", "sms:", "callto:", "fax:", "skype:", "whatsapp:")
+
+
 def _normalize_profile_url(value: str) -> str:
     value = (value or "").strip().rstrip(".,;:!?)]}")
     if not value:
         return ""
+    lowered = value.lower()
+    if lowered.startswith(_NON_WEB_SCHEMES) or re.match(r"^[a-z][a-z0-9+-]*:(?!//)", lowered):
+        return ""  # any non-web scheme (mailto:, tel:, javascript:, ...)
+    if "@" in re.sub(r"^[a-z]+://", "", lowered).split("/", 1)[0]:
+        return ""  # user@host is an email address (or credentials), not a profile link
     if value.startswith("//"):
         value = value[2:]
     value = re.sub(r"^https?://", "", value, flags=re.I)
@@ -1631,6 +2053,50 @@ def _pdf_text_pypdf(data: bytes):
     return page_texts, links
 
 
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+
+def _docx_lines(root) -> list[str]:
+    """Visible text lines of one WordprocessingML part, in reading order.
+
+    Tabs become a space and line breaks a newline, so "Engineer<tab>2021"
+    does not collapse into "Engineer2021". Text boxes are stored twice (modern
+    shape + legacy VML fallback); the fallback copy is skipped, as are
+    formatting properties (their <w:tab> elements are tab stops, not text),
+    deleted tracked-change text and field codes.
+    """
+    lines: list[str] = []
+    skipped = {_MC_FALLBACK, _W_NS + "pPr", _W_NS + "rPr", _W_NS + "sectPr",
+               _W_NS + "delText", _W_NS + "instrText", _W_NS + "del"}
+
+    def walk(node, buffer: list[str]):
+        for child in node:
+            tag = child.tag
+            if tag in skipped:
+                continue
+            if tag == _W_NS + "p":
+                inner: list[str] = []
+                walk(child, inner)
+                for line in "".join(inner).split("\n"):
+                    line = re.sub(r"[ \t ]+", " ", line).strip()
+                    if line:
+                        lines.append(line)
+                continue
+            if tag == _W_NS + "t":
+                buffer.append(child.text or "")
+            elif tag == _W_NS + "tab":
+                buffer.append("\t")
+            elif tag in (_W_NS + "br", _W_NS + "cr"):
+                buffer.append("\n")
+            elif tag == _W_NS + "noBreakHyphen":
+                buffer.append("-")
+            walk(child, buffer)
+
+    walk(root, [])
+    return lines
+
+
 def read_profile_cv(filename: str, data: bytes):
 
     """
@@ -1718,26 +2184,26 @@ def read_profile_cv(filename: str, data: bytes):
                     if "word/_rels/document.xml.rels" in names
                     else b""
                 )
+                # Many CV templates put the name, email and phone in the page
+                # header, so headers come first and footers last.
+                headers = [archive.read(n) for n in sorted(names) if re.fullmatch(r"word/header\d*\.xml", n)]
+                footers = [archive.read(n) for n in sorted(names) if re.fullmatch(r"word/footer\d*\.xml", n)]
 
             import xml.etree.ElementTree as ET
 
-            root = ET.fromstring(xml)
-            namespace = {
-                "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            }
-
             paragraphs = []
-
-            for paragraph in root.findall(".//w:p", namespace):
-                parts = [
-                    node.text or ""
-                    for node in paragraph.findall(".//w:t", namespace)
-                ]
-
-                line = "".join(parts).strip()
-
-                if line:
-                    paragraphs.append(line)
+            seen_edge_lines = set()
+            for part in headers:
+                for line in _docx_lines(ET.fromstring(part)):
+                    if line not in seen_edge_lines:  # first-page and default headers often repeat
+                        seen_edge_lines.add(line)
+                        paragraphs.append(line)
+            paragraphs.extend(_docx_lines(ET.fromstring(xml)))
+            for part in footers:
+                for line in _docx_lines(ET.fromstring(part)):
+                    if line not in seen_edge_lines:
+                        seen_edge_lines.add(line)
+                        paragraphs.append(line)
 
             raw_text = "\n".join(paragraphs)
             links = _urls_in_text(raw_text)
@@ -2487,11 +2953,11 @@ def _experience_duration(item: dict) -> tuple[int, bool]:
 
 def clean_profile(profile: dict) -> dict:
     """Canonicalize CV fields, remove parser noise, and deduplicate sections."""
-    from ai_providers import empty_profile, normalize_profile
+    from ai_providers import empty_profile, normalize_profile, normalize_project
 
     canonical = {**empty_profile(), **(profile or {})}
     canonical["projects"] = [
-        {"name": item.get("name", ""), "url": item.get("url") or item.get("project_url", "")}
+        normalize_project(item)
         for item in canonical.get("projects", [])
         if isinstance(item, dict)
     ]
@@ -2580,7 +3046,7 @@ def clean_profile(profile: dict) -> dict:
             if field == "skills" and len(results) >= 60:
                 continue
             if field == "projects":
-                item = {"name": item["name"], "url": _normalize_profile_url(item.get("url", ""))}
+                item = {**normalize_project(item), "url": _normalize_profile_url(item.get("url", ""))}
             results.append(item)
         cleaned[field] = results
 
@@ -2812,6 +3278,32 @@ def _profile_value_for_evidence(profile: dict, field: str):
     return str(value) if value not in (None, "") else None
 
 
+def _cv_identity_signal(u: dict, raw_text: str) -> dict:
+    """Derived CV-vs-account identity signal. No raw CV name or email is kept."""
+    compared = ID.compare(u, ID.extract_identity((raw_text or "")[:30000]))
+    return {
+        "status": compared["status"],
+        "score": compared.get("score"),
+        "email_match": bool(compared.get("email_match")),
+        "reasons": list(compared.get("reasons") or []),
+        "checked_at": time.time(),
+        "confirmed": compared["status"] == "match",
+    }
+
+
+def _record_cv_identity_signal(uid, signal: dict) -> None:
+    """Queue (or clear) the human identity review exactly like the legacy CV flow.
+
+    The signal never rejects anything by itself (AGENTS.md); it is a review cue.
+    """
+    if one("SELECT user_id FROM profiles WHERE user_id=?", (uid,)):
+        run("UPDATE profiles SET identity=? WHERE user_id=?", (json.dumps(signal), uid))
+    if signal["status"] in ("weak", "no_match", "unknown"):
+        _queue_identity_review(uid, signal)
+    else:
+        _supersede_identity_reviews(uid, "A later CV upload matched the account holder.")
+
+
 def _extract_cv_upload(u: dict, filename: str, file_bytes: bytes) -> dict:
     """Parse, extract and store one uploaded CV. Blocking: run it in a worker thread.
 
@@ -2824,6 +3316,9 @@ def _extract_cv_upload(u: dict, filename: str, file_bytes: bytes) -> dict:
         "name": u.get("name", "") or "",
         "email": u.get("email", "") or "",
     }
+    # Same identity check as the legacy /api/cv flow (SB-004): read from the raw
+    # CV before redaction; only the derived signal is kept, never the raw name.
+    identity_signal = _cv_identity_signal(u, raw_text)
     deterministic_profile, deterministic_evidence = extract_profile_fields(
         raw_text,
         identity=identity,
@@ -2843,10 +3338,13 @@ def _extract_cv_upload(u: dict, filename: str, file_bytes: bytes) -> dict:
     extraction_result = None
     ai_error = None
     links = parser_info.get("links_found", [])
-    cv_body = raw_text.split("\n\nLINKS FOUND IN DOCUMENT:", 1)[0]
+    cv_body = _strip_link_footer(raw_text)
     redacted_text, _ = E.redact(cv_body, known_names=[identity["name"]])
     if links:
-        redacted_text = _append_document_links(redacted_text, links)
+        # The deterministic parser keeps the real LinkedIn/GitHub URLs for the
+        # profile fields; the AI only ever sees the redacted link list.
+        redacted_text = (redacted_text.rstrip() + LINK_FOOTER_MARKER + "\n"
+                         + _redacted_link_block(links, known_names=[identity["name"]]))
     from ai_providers import AIExtractionError, extract_cv_profile
 
     try:
@@ -2952,7 +3450,10 @@ def _extract_cv_upload(u: dict, filename: str, file_bytes: bytes) -> dict:
             "Could not store the CV. Please try again.",
         )
 
+    _record_cv_identity_signal(u["id"], identity_signal)
+
     return {
+        "identity": identity_signal,
         "profile": profile,
         "document": document,
         "stored_evidence": stored_evidence,
@@ -2983,19 +3484,29 @@ def _document_payload(document: dict) -> dict:
     return {k: document[k] for k in ("id", "filename", "size_bytes", "status")}
 
 
-async def _read_cv_upload(file: UploadFile) -> tuple[str, bytes]:
+MAX_CV_UPLOAD_BYTES = 5_000_000
+
+
+def _read_bounded(file: UploadFile, limit: int, message: str) -> bytes:
+    """Read at most ``limit`` bytes from an upload (sync: endpoints run in the threadpool)."""
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, message)
+    return data
+
+
+def _read_cv_upload(file: UploadFile) -> tuple[str, bytes]:
     filename = file.filename or "cv"
-
     # Parse first. Do not store files that fail basic validation/parsing.
-    file_bytes = await file.read(5_000_001)
-    if len(file_bytes) > 5_000_000:
-        raise HTTPException(413, "CV file must be 5 MB or smaller")
-
+    file_bytes = _read_bounded(file, MAX_CV_UPLOAD_BYTES, "CV file must be 5 MB or smaller")
     return filename, file_bytes
 
 
+# The CV and evidence endpoints are plain ``def``: FastAPI runs them in its
+# threadpool, so parsing, OCR, AI calls and database writes never block the
+# event loop, and uploads are read with a hard byte bound.
 @app.post("/api/cv/profile-extract")
-async def upload_cv_profile(
+def upload_cv_profile(
     file: UploadFile = File(...),
     u=Depends(current_user),
 ):
@@ -3022,9 +3533,8 @@ async def upload_cv_profile(
             "Your profile is already confirmed. Update it from My Profile.",
         )
 
-    filename, file_bytes = await _read_cv_upload(file)
-    # Parsing, OCR and the AI call are blocking; keep them off the event loop.
-    result = await run_in_threadpool(_extract_cv_upload, u, filename, file_bytes)
+    filename, file_bytes = _read_cv_upload(file)
+    result = _extract_cv_upload(u, filename, file_bytes)
     profile, document, method, message = (
         result["profile"], result["document"], result["method"], result["message"],
     )
@@ -3076,12 +3586,13 @@ async def upload_cv_profile(
         "document": _document_payload(document),
         "extraction": _extraction_payload(result),
         "completeness": profile_completeness(profile),
+        "identity": result["identity"],
         "message": message,
     }
 
 
 @app.post("/api/cv/profile-update")
-async def update_cv_profile(
+def update_cv_profile(
     file: UploadFile = File(...),
     u=Depends(current_user),
 ):
@@ -3099,8 +3610,8 @@ async def update_cv_profile(
     if not one("SELECT user_id FROM candidate_profiles WHERE user_id=?", (u["id"],)):
         raise HTTPException(409, "Create your profile first, then update your CV.")
 
-    filename, file_bytes = await _read_cv_upload(file)
-    result = await run_in_threadpool(_extract_cv_upload, u, filename, file_bytes)
+    filename, file_bytes = _read_cv_upload(file)
+    result = _extract_cv_upload(u, filename, file_bytes)
     audit(u["id"], "candidate_cv_updated", result["document"]["id"])
     return {
         "ok": True,
@@ -3109,6 +3620,7 @@ async def update_cv_profile(
         "profile": result["profile"],
         "document": _document_payload(result["document"]),
         "extraction": _extraction_payload(result),
+        "identity": result["identity"],
         "message": result["message"],
     }
 
@@ -3127,12 +3639,12 @@ def list_my_cv_documents(u=Depends(current_user)):
 
 
 @app.post("/api/cv")
-async def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None), u=Depends(current_user)):
+def upload_cv(text: str = Form(""), file: Optional[UploadFile] = File(None), u=Depends(current_user)):
     need_consent(u)
     require_verified_email(u)
     raw, file_bytes = text, None
     if file is not None:
-        file_bytes = await file.read()
+        file_bytes = _read_bounded(file, MAX_CV_UPLOAD_BYTES, "CV file must be 5 MB or smaller")
         raw = read_upload(file.filename or "", file_bytes)
     raw = raw.strip()
     if len(raw) < 30: raise HTTPException(422, "CV text is too short")
@@ -3207,14 +3719,39 @@ IDENTITY_CONFIRMATION = (
 )
 
 
+_ACTIONABLE_IDENTITY_REVIEWS = ("open", "needs_review", "escalated")
+
+
+def _identity_signature(identity) -> str:
+    """The part of an identity signal that identifies *what* was compared, so a
+    re-upload of the same CV is recognised. Timestamps are ignored."""
+    if isinstance(identity, str):
+        try:
+            identity = json.loads(identity)
+        except ValueError:
+            return identity
+    if not isinstance(identity, dict):
+        return ""
+    stable = {k: v for k, v in identity.items() if k not in ("checked_at", "confirmed")}
+    return json.dumps(stable, sort_keys=True, default=str)
+
+
 def _queue_identity_review(uid, identity):
+    placeholders = ",".join("?" for _ in _ACTIONABLE_IDENTITY_REVIEWS)
     existing = one(
-        "SELECT id FROM identity_reviews WHERE user_id=? AND status='open'", (uid,)
+        f"SELECT id FROM identity_reviews WHERE user_id=? AND status IN ({placeholders}) "
+        "ORDER BY created DESC LIMIT 1", (uid, *_ACTIONABLE_IDENTITY_REVIEWS)
     )
     if existing:
         run("UPDATE identity_reviews SET signal=?, created=? WHERE id=?",
             (json.dumps(identity), time.time(), existing["id"]))
         return existing["id"]
+    # A reviewer already cleared this exact signal: re-uploading the same CV must
+    # not put the candidate back in the queue.
+    cleared = one("SELECT id,signal FROM identity_reviews WHERE user_id=? AND status='cleared' "
+                  "ORDER BY reviewed_at DESC LIMIT 1", (uid,))
+    if cleared and _identity_signature(cleared["signal"]) == _identity_signature(identity):
+        return cleared["id"]
     rid = uuid.uuid4().hex
     run("INSERT INTO identity_reviews(id,user_id,status,signal,created,note) VALUES (?,?,?,?,?,?)",
         (rid, uid, "open", json.dumps(identity), time.time(), ""))
@@ -3223,7 +3760,7 @@ def _queue_identity_review(uid, identity):
 
 
 def _supersede_identity_reviews(uid, note):
-    open_rows = allr("SELECT id FROM identity_reviews WHERE user_id=? AND status='open'", (uid,))
+    open_rows = allr("SELECT id FROM identity_reviews WHERE user_id=? AND status IN (?,?,?)", (uid, *_ACTIONABLE_IDENTITY_REVIEWS))
     for row in open_rows:
         run("UPDATE identity_reviews SET status='superseded', reviewed_at=?, note=? WHERE id=?",
             (time.time(), note, row["id"]))
@@ -3430,6 +3967,10 @@ def generate_job_blueprint(body: Optional[JobBlueprintRequest] = None, u=Depends
     import enterprise as admin_data
     admin_data._seed_question_bank()
     rows = allr("SELECT * FROM question_bank WHERE status='active' AND subcategory != 'Legacy curated'")
+    # Never re-serve a question shown in an earlier finished or quit attempt.
+    seen = asked_question_ids(u["id"])
+    if seen:
+        rows = [row for row in rows if str(row["id"]) not in seen]
     result = exam_policy.plan_job_exam(
         rows, profile_data, department=department, track=track,
         confirmed_skills=sorted(confirmed), job_skills=[],
@@ -3759,9 +4300,18 @@ def job(u=Depends(current_user)):
 
 
 # ------------------------------------------------------------------ assessment
+# Attempts whose questions the candidate has seen. A quit attempt showed its
+# questions just like a finished one, so quitting must not unlock fresh ones.
+SEEN_ATTEMPT_STATUSES = ("done", "quit")
+# Honest-path allowance: this many quit attempts per rolling 90 days do not
+# count toward the attempt cap / cooldown (a genuine technical failure on a
+# first try). Their questions are still excluded from the next exam.
+QUIT_ALLOWANCE_90D = max(0, int(os.getenv("QUIT_ALLOWANCE_90D", "1")))
+
+
 def seen_before(uid):
     s = set()
-    for a in allr("SELECT state FROM attempts WHERE user_id=? AND status='done'", (uid,)):
+    for a in allr("SELECT state FROM attempts WHERE user_id=? AND status IN ('done','quit')", (uid,)):
         try:
             s |= set((json.loads(a["state"]) or {}).get("used", []))
         except (TypeError, ValueError, AttributeError):
@@ -3770,23 +4320,23 @@ def seen_before(uid):
 
 
 def asked_question_ids(uid):
-    """Retake filter: every question a candidate has already been asked (ASKED_QUESTION).
+    """Retake filter: every question a candidate has already been shown (ASKED_QUESTION).
 
-    Reads the graph edge table first (the source of truth for GraphRAG attempts) and
-    falls back to parsing stored attempt state so legacy attempts are still respected.
+    Covers finished AND quit attempts. Reads the graph edge table (the source of
+    truth for GraphRAG attempts) and also parses stored attempt state, so legacy
+    attempts without edges are still respected.
     """
     ids: set[str] = set()
     for row in allr("SELECT question_id FROM attempt_questions WHERE attempt_id IN "
-                    "(SELECT id FROM attempts WHERE user_id=? AND status='done')", (uid,)):
+                    "(SELECT id FROM attempts WHERE user_id=? AND status IN ('done','quit'))", (uid,)):
         ids.add(str(row["question_id"]))
-    if not ids:
-        for a in allr("SELECT state FROM attempts WHERE user_id=? AND status='done'", (uid,)):
-            try:
-                for q in (json.loads(a["state"]).get("selected_questions") or []):
-                    if q.get("id"):
-                        ids.add(str(q["id"]))
-            except Exception:
-                continue
+    for a in allr("SELECT state FROM attempts WHERE user_id=? AND status IN ('done','quit')", (uid,)):
+        try:
+            for q in (json.loads(a["state"]).get("selected_questions") or []):
+                if q.get("id"):
+                    ids.add(str(q["id"]))
+        except Exception:
+            continue
     return ids
 
 
@@ -3817,13 +4367,47 @@ def sync_skill_question_edges():
     return len(edges)
 
 
+def _unlimited_exam_emails() -> set[str]:
+    # Never honoured in production: a timer bypass there is an integrity hole.
+    return set() if IS_PRODUCTION else set(UNLIMITED_EXAM_EMAILS)
+
+
 def unlimited_exam_user(uid, state=None):
     # New Initial exams always use the fixed budget, including demo accounts.
     # Existing saved exams keep their previous timing behavior.
     if state and state.get("mode") == "initial_cv_fundamentals":
         return False
+    emails = _unlimited_exam_emails()
+    if not emails:
+        return False
     user = one("SELECT email FROM users WHERE id=?", (uid,))
-    return bool(user and (user["email"] or "").strip().lower() in UNLIMITED_EXAM_EMAILS)
+    return bool(user and (user["email"] or "").strip().lower() in emails)
+
+
+def attempt_timed_out(att, st=None) -> bool:
+    """One rule for every endpoint, the state read and the sweeper:
+    the server-side deadline passed and the (non-production) demo bypass does not apply."""
+    att = dict(att)
+    if st is None:
+        try:
+            st = json.loads(att.get("state") or "{}")
+        except (TypeError, ValueError):
+            st = {}
+    return attempt_expired(att) and not unlimited_exam_user(att["user_id"], st)
+
+
+def _answered_count(answers) -> int:
+    """Only non-blank answers count as answered (blank saves are not answers)."""
+    if isinstance(answers, dict):
+        return sum(1 for value in answers.values() if str(value if value is not None else "").strip())
+    count = 0
+    for item in answers or []:
+        value = item.get("answer", item.get("choice")) if isinstance(item, dict) else item
+        if value is None and isinstance(item, dict):
+            count += 1  # legacy adaptive rows without a text field were real submissions
+        elif str(value if value is not None else "").strip():
+            count += 1
+    return count
 
 
 def attempt_seconds(att_or_state) -> int:
@@ -3889,7 +4473,7 @@ def view(att, include_session=False):
         all_questions = [_public(item, position) for position, item in enumerate(questions)]
         public = all_questions[index] if all_questions else None
         return {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"],
-            "remaining": remaining, "answered": len(st.get("answers", {})), "total": len(questions),
+            "remaining": remaining, "answered": _answered_count(st.get("answers", {})), "total": len(questions),
             "graphrag": True, "blueprint_id": st["blueprint_id"], "question": public,
             "all_questions": all_questions, "answers": st.get("answers", {}),
             "page": page, "question_index": index, "duration_seconds": duration,
@@ -3911,16 +4495,26 @@ def view(att, include_session=False):
                 str(q.get("question_type", "")).lower() in ("mcq", "multiple choice") or
                 ("sql" in str(q.get("question_type", "")).lower() and bool(str(q.get("reference_answer", "")).strip()))))}
     remaining = 0 if unlimited_time else max(0, int(attempt_deadline(att) - E.GRACE - time.time()))
-    out = {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"], "remaining": remaining, "unlimited_time": unlimited_time, "answered": len(st["answers"]), "total": len(E.SLOTS), **session}
+    out = {"attempt_id": att["id"], "kind": att["kind"], "status": att["status"], "remaining": remaining, "unlimited_time": unlimited_time, "answered": _answered_count(st["answers"]), "total": len(E.SLOTS), **session}
     if att["status"] == "active" and st["current"]:
         out["question"] = E.public_question(QBYID[st["current"]], st)
     return out
 
 
 def save(att_id, st, **kw):
+    """Write an in-progress attempt's state. Refuses (409) once the attempt left
+    'active', so a late answer/goto can never overwrite a finalized attempt."""
     sets, args = ["state=?"], [json.dumps(st)]
     for k, v in kw.items(): sets.append(f"{k}=?"); args.append(v)
-    run(f"UPDATE attempts SET {', '.join(sets)} WHERE id=?", (*args, att_id))
+    conn = db()
+    try:
+        cur = conn.execute(f"UPDATE attempts SET {', '.join(sets)} WHERE id=? AND status='active'", (*args, att_id))
+        changed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if changed != 1:
+        raise HTTPException(409, "attempt_not_active")
 
 
 # ------------------------------------------------------------------ answer evaluations
@@ -4098,6 +4692,15 @@ def candidate_result(result):
 
 
 def finalize(att, st):
+    """Grade an active attempt exactly once. Returns True when this call graded it.
+
+    A double submit (or an expiry race between endpoints, the state read and the
+    sweeper) grades once: the losing call sees the attempt is no longer active
+    and returns False so the caller serves the existing result.
+    """
+    current = one("SELECT status FROM attempts WHERE id=?", (att["id"],))
+    if not current or current["status"] != "active":
+        return False
     event_rows = allr("SELECT type, ts FROM events WHERE attempt_id=? ORDER BY ts, id", (att["id"],))
     ev = [{"type": r["type"], "server_ts": r["ts"]} for r in event_rows]
     exam_seconds = int(st.get("duration_seconds") or E.TEST_SECONDS)
@@ -4177,7 +4780,7 @@ def finalize(att, st):
             "review_status": "pending_human_review" if manual else "auto_graded",
             "manual_review_required": manual, "question_results": review_rows,
             "blueprint_id": st["blueprint_id"], "total_questions": len(st["selected_questions"]),
-            "answered_questions": len(answers),
+            "answered_questions": _answered_count(answers),
             "evaluation_summary": {
                 "subjective_questions": len(evaluations),
                 "pending_admin_approval": len(evaluations),
@@ -4199,8 +4802,16 @@ def finalize(att, st):
             "trust_hard_flags": integrity["hard_flags"], "percentile": None,
             "kind": att["kind"], "date": time.strftime("%Y-%m-%d"),
             "scoring_version": "legacy-adaptive"})
-    run("UPDATE attempts SET status='done', finished=?, result=?, state=? WHERE id=?", (time.time(), json.dumps(res), json.dumps(st), att["id"]))
+    with transaction() as conn:
+        locked = conn.execute("SELECT status FROM attempts WHERE id=?" + _for_update(), (att["id"],)).fetchone()
+        if not locked or locked["status"] != "active":
+            return False
+        cur = conn.execute("UPDATE attempts SET status='done', finished=?, result=?, state=? WHERE id=? AND status='active'",
+                           (time.time(), json.dumps(res), json.dumps(st), att["id"]))
+        if cur.rowcount != 1:
+            return False
     audit(att["user_id"], "attempt_done", att["id"])
+    return True
 
 
 def get_att(att_id, uid):
@@ -4255,8 +4866,7 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
     if b and b.resume_attempt_id and (not act or act["id"] != b.resume_attempt_id):
         raise HTTPException(409, "The saved attempt is no longer active. Refresh your assessment status.")
     if act:
-        unlimited_time = unlimited_exam_user(u["id"], json.loads(act["state"]))
-        if not unlimited_time and attempt_expired(dict(act)):
+        if attempt_timed_out(act):
             finalize(dict(act), json.loads(act["state"]))
             if b and b.resume_attempt_id:
                 return view(get_att(act["id"], u["id"]))
@@ -4295,6 +4905,10 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
               "question_index": 0, "answers": {}, "duration_seconds": exam_policy.TIME_BUDGET_SECONDS if initial_mode else int(payload["estimated_duration_seconds"]),
               "served_at": time.time(), "question_viewed_at": time.time(), "question_time_seconds": {}, "seed": seed}
         st["current"] = selected[0]["id"]
+        # A blueprint generated before a finished or quit attempt may contain
+        # questions the candidate has now seen; never re-serve them.
+        if asked_question_ids(u["id"]) & {str(q.get("id")) for q in selected}:
+            raise HTTPException(409, "blueprint_contains_seen_questions")
     else:
         # Every exam is proctored and built from an approved question blueprint.
         raise HTTPException(409, "assessment_blueprint_required")
@@ -4304,16 +4918,23 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
     st["proctoring"] = PROCTOR.validate_start(b, PROCTOR.policy(), now)
     # Serialize attempt creation per candidate. This prevents double-clicks or
     # parallel requests from opening two active exams or spending one credit twice.
-    with db() as conn:
+    # transaction() issues BEGIN on PostgreSQL too, so the FOR UPDATE user-row
+    # lock is held until the attempt row and credit debit are committed.
+    with transaction() as conn:
         if DATABASE_URL:
             conn.execute("SELECT id FROM users WHERE id=? FOR UPDATE", (u["id"],)).fetchone()
-        else:
-            conn.execute("BEGIN IMMEDIATE")
         active_now = conn.execute("SELECT * FROM attempts WHERE user_id=? AND status='active'", (u["id"],)).fetchone()
         if active_now:
             raise HTTPException(409, "active_attempt_exists")
         done = conn.execute("SELECT id,finished FROM attempts WHERE user_id=? AND status='done' ORDER BY finished DESC", (u["id"],)).fetchall()
         recent = [d for d in done if d["finished"] and d["finished"] > now - 90 * 86400]
+        # Quit attempts showed their questions too. Beyond a small honest-path
+        # allowance (oldest quits in the window) they count like a sitting.
+        quits = conn.execute("SELECT id,finished FROM attempts WHERE user_id=? AND status='quit' AND finished>? "
+                             "ORDER BY finished ASC", (u["id"], now - 90 * 86400)).fetchall()
+        counted_quits = list(quits)[QUIT_ALLOWANCE_90D:]
+        last_counted = max([d["finished"] for d in done[:1] if d["finished"]] +
+                           [q["finished"] for q in counted_quits if q["finished"]], default=None)
         # Retakes are unlocked only after the current result has a human-review
         # decision. This keeps Verify, Gap, Learn and Passport on one result.
         if done:
@@ -4324,16 +4945,20 @@ def start_attempt(b: Optional[StartAttempt] = None, u=Depends(current_user)):
             if not latest_review:
                 raise HTTPException(409, "result_awaiting_review")
             import assessment_workflow as workflow
-            if latest_review["decision"] == "approved" and not workflow.review_state(done[0]["id"])["ready"]:
+            latest_state = workflow.review_state(done[0]["id"])
+            # A rejected honesty review is terminal (like an invalidated result):
+            # the candidate may appeal and/or retake instead of waiting forever.
+            if (latest_review["decision"] == "approved" and not latest_state["ready"]
+                    and latest_state["stage"] != "honesty_rejected"):
                 raise HTTPException(409, "result_awaiting_honesty_review")
         kind = "post" if done else "pre"
         policy = conn.execute("SELECT cooldown_hours,max_attempts_90d,credits_per_attempt FROM learning_retake_policy WHERE id=1").fetchone()
         cooldown_hours = int(policy["cooldown_hours"]) if policy else int(COOLDOWN_HOURS)
         max_attempts = int(policy["max_attempts_90d"]) if policy else int(MAX_ATTEMPTS_90D)
         credit_cost = int(policy["credits_per_attempt"]) if policy else 1
-        if len(recent) >= max_attempts:
+        if len(recent) + len(counted_quits) >= max_attempts:
             raise HTTPException(429, "attempt_cap")
-        if done and cooldown_hours > 0 and now < done[0]["finished"] + cooldown_hours * 3600:
+        if last_counted and cooldown_hours > 0 and now < last_counted + cooldown_hours * 3600:
             raise HTTPException(429, "cooldown")
         if kind == "post":
             balance_row = conn.execute("SELECT COALESCE(SUM(delta),0) AS balance FROM billing_credit_ledger WHERE user_id=?", (u["id"],)).fetchone()
@@ -4370,13 +4995,21 @@ class QuitAttempt(BaseModel):
     session_id: str = Field(min_length=20, max_length=100)
 
 
+def _record_answer_event(aid, question_id, answer_value: str) -> None:
+    revision = one("SELECT COUNT(*) AS n FROM assessment_answer_events WHERE attempt_id=? AND question_id=?",
+                   (aid, question_id))["n"] + 1
+    run("INSERT INTO assessment_answer_events(id,attempt_id,question_id,revision,answer_hash,answer_length,created) VALUES (?,?,?,?,?,?,?)",
+        (uuid.uuid4().hex, aid, question_id, revision,
+         hashlib.sha256(answer_value.encode("utf-8")).hexdigest(), len(answer_value), time.time()))
+
+
 @app.post("/api/attempts/{aid}/answer")
 def answer(aid: str, b: Ans, request: Request, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     if att["status"] != "active": raise HTTPException(409, "Attempt already finished")
     require_screen_share(aid, request.headers.get("x-exam-session"))
     st = json.loads(att["state"])
-    if not unlimited_exam_user(u["id"], st) and attempt_expired(att):      # server owns the timer
+    if attempt_timed_out(att, st):      # server owns the timer
         finalize(att, st); return view(get_att(aid, u["id"]))
     if st.get("graphrag"):
         question = next((q for q in st["selected_questions"] if q["id"] == b.question_id), None)
@@ -4385,14 +5018,10 @@ def answer(aid: str, b: Ans, request: Request, u=Depends(current_user)):
         if b.question_id != st.get("current"):
             raise HTTPException(409, "Navigate to this question before saving its answer")
         answer_value = str(b.answer or "")
-        revision = one("SELECT COUNT(*) AS n FROM assessment_answer_events WHERE attempt_id=? AND question_id=?",
-                       (aid, b.question_id))["n"] + 1
-        run("INSERT INTO assessment_answer_events(id,attempt_id,question_id,revision,answer_hash,answer_length,created) VALUES (?,?,?,?,?,?,?)",
-            (uuid.uuid4().hex, aid, b.question_id, revision,
-             hashlib.sha256(answer_value.encode("utf-8")).hexdigest(), len(answer_value), time.time()))
         st.setdefault("answers", {})[b.question_id] = answer_value
         st["current"] = b.question_id
-        save(aid, st)
+        save(aid, st)   # 409 attempt_not_active if it was finalized meanwhile
+        _record_answer_event(aid, b.question_id, answer_value)
         return view(get_att(aid, u["id"]))
     _check_exam_session(att, b.session_id)
     if b.question_id != st["current"]: raise HTTPException(409, "Question mismatch")
@@ -4421,7 +5050,7 @@ def navigate_question(aid: str, b: NavigateQuestion, request: Request, u=Depends
     if att["status"] != "active" or not st.get("graphrag"):
         raise HTTPException(409, "Question navigation is unavailable")
     require_screen_share(aid, request.headers.get("x-exam-session"))
-    if attempt_expired(att):
+    if attempt_timed_out(att, st):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
     if b.index >= len(st["selected_questions"]):
@@ -4435,8 +5064,8 @@ def navigate_question(aid: str, b: NavigateQuestion, request: Request, u=Depends
     st["question_index"] = b.index
     st["current"] = st["selected_questions"][b.index]["id"]
     st["question_viewed_at"] = now
+    save(aid, st)   # 409 attempt_not_active if it was finalized meanwhile
     run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, "question_navigate", now))
-    save(aid, st)
     return view(get_att(aid, u["id"]))
 
 
@@ -4461,7 +5090,7 @@ def goto_question(aid: str, b: GotoQuestion, request: Request, u=Depends(current
     if not st.get("graphrag"):
         raise HTTPException(409, "Question navigation is unavailable")
     require_screen_share(aid, request.headers.get("x-exam-session"))
-    if attempt_expired(att):
+    if attempt_timed_out(att, st):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
     if b.index >= len(st["selected_questions"]):
@@ -4469,17 +5098,9 @@ def goto_question(aid: str, b: GotoQuestion, request: Request, u=Depends(current
     current_id = st.get("current")
     if b.question_id and b.question_id != current_id:
         raise HTTPException(409, "Question mismatch")
+    answer_value = None
     if current_id and b.answer is not None:
         answer_value = str(b.answer or "")
-        revision = one(
-            "SELECT COUNT(*) AS n FROM assessment_answer_events WHERE attempt_id=? AND question_id=?",
-            (aid, current_id),
-        )["n"] + 1
-        run(
-            "INSERT INTO assessment_answer_events(id,attempt_id,question_id,revision,answer_hash,answer_length,created) VALUES (?,?,?,?,?,?,?)",
-            (uuid.uuid4().hex, aid, current_id, revision,
-             hashlib.sha256(answer_value.encode("utf-8")).hexdigest(), len(answer_value), time.time()),
-        )
         st.setdefault("answers", {})[current_id] = answer_value
     now = time.time()
     if current_id:
@@ -4489,8 +5110,10 @@ def goto_question(aid: str, b: GotoQuestion, request: Request, u=Depends(current
     st["question_index"] = b.index
     st["current"] = st["selected_questions"][b.index]["id"]
     st["question_viewed_at"] = now
+    save(aid, st)   # 409 attempt_not_active if it was finalized meanwhile
+    if answer_value is not None:
+        _record_answer_event(aid, current_id, answer_value)
     run("INSERT INTO events(attempt_id,type,ts) VALUES (?,?,?)", (aid, "question_navigate", now))
-    save(aid, st)
     return view(get_att(aid, u["id"]))
 
 
@@ -4498,10 +5121,12 @@ def goto_question(aid: str, b: GotoQuestion, request: Request, u=Depends(current
 def submit_graphrag_attempt(aid: str, request: Request, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     st = json.loads(att["state"])
+    if att["status"] == "done" and st.get("graphrag"):
+        return view(att)   # a repeated submit returns the existing (single) result
     if att["status"] != "active" or not st.get("graphrag"):
         raise HTTPException(409, "This is not an active GraphRAG assessment")
     require_screen_share(aid, request.headers.get("x-exam-session"))
-    if attempt_expired(att):
+    if attempt_timed_out(att, st):
         finalize(att, st)
         return view(get_att(aid, u["id"]))
     # Skipped questions are allowed: the confirmation happens in the UI. Nothing
@@ -4521,9 +5146,28 @@ def quit_attempt(aid: str, b: QuitAttempt, u=Depends(current_user)):
     if att["status"] != "active":
         raise HTTPException(409, "attempt_not_active")
     _check_exam_session(att, b.session_id)
-    run("UPDATE attempts SET status='quit', finished=? WHERE id=? AND status='active'", (time.time(), aid))
+    st = json.loads(att["state"])
+    if attempt_timed_out(att, st):
+        # Time is already up: the answers are submitted, not abandoned.
+        finalize(att, st)
+        return view(get_att(aid, u["id"]))
+    now = time.time()
+    conn = db()
+    try:
+        changed = conn.execute("UPDATE attempts SET status='quit', finished=? WHERE id=? AND status='active'",
+                               (now, aid)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if changed != 1:
+        raise HTTPException(409, "attempt_not_active")
     audit(u["id"], "attempt_quit", aid)
-    return {"status": "quit"}
+    recent_quits = one("SELECT COUNT(*) AS n FROM attempts WHERE user_id=? AND status='quit' AND finished>?",
+                       (u["id"], now - 90 * 86400))["n"]
+    # The questions shown stay excluded from later exams either way. Beyond the
+    # honest-path allowance a quit counts toward the attempt cap and cooldown.
+    return {"status": "quit", "counts_toward_attempt_cap": int(recent_quits) > QUIT_ALLOWANCE_90D,
+            "quit_allowance_90d": QUIT_ALLOWANCE_90D}
 
 
 @app.post("/api/attempts/{aid}/sql-run")
@@ -4634,7 +5278,7 @@ def event_beacon(aid: str, b: BeaconEv, request: Request):
 
 
 @app.post("/api/attempts/{aid}/evidence")
-async def upload_exam_evidence(aid: str, request: Request,
+def upload_exam_evidence(aid: str, request: Request,
                               session_id: str = Form(...), event_seq: int = Form(...),
                               event_type: str = Form(...), confidence: float = Form(...),
                               source: str = Form(...),
@@ -4652,8 +5296,8 @@ async def upload_exam_evidence(aid: str, request: Request,
         raise HTTPException(422, "invalid_confidence")
     if image.content_type != "image/jpeg":
         raise HTTPException(415, "jpeg_evidence_required")
-    payload = await image.read(MAX_EVIDENCE_BYTES + 1)
-    if not payload or len(payload) > MAX_EVIDENCE_BYTES:
+    payload = _read_bounded(image, MAX_EVIDENCE_BYTES, "evidence_too_large")
+    if not payload:
         raise HTTPException(413, "evidence_too_large")
     if not payload.startswith(bytes([255, 216, 255])):
         raise HTTPException(415, "invalid_jpeg")
@@ -4678,10 +5322,8 @@ async def upload_exam_evidence(aid: str, request: Request,
     evidence_id = uuid.uuid4().hex
     expires = server_ts + int(policy["retention_days"]) * 86400
     note = PROCTOR.observation(event_type, source, json.loads(event_row["metadata"] or "{}"))
-    with db() as conn:
-        if not DATABASE_URL:
-            conn.execute("BEGIN IMMEDIATE")
-        current = conn.execute("SELECT session_id,status FROM attempts WHERE id=?" + (" FOR UPDATE" if DATABASE_URL else ""), (aid,)).fetchone()
+    with transaction() as conn:
+        current = conn.execute("SELECT session_id,status FROM attempts WHERE id=?" + _for_update(), (aid,)).fetchone()
         _check_exam_session(dict(current), session_id)
         if current["status"] != "active":
             raise HTTPException(409, "attempt_not_active")
@@ -4752,13 +5394,71 @@ class Appeal(BaseModel):
     note: str = Field(min_length=3, max_length=1000)
 
 
+class ReviewResponse(BaseModel):
+    note: str = Field(min_length=3, max_length=2000)
+
+
+def latest_review_responses(attempt_ids) -> dict:
+    """attempt_id -> {note, created} of the newest candidate reply to a reviewer."""
+    ids = [aid for aid in attempt_ids if aid]
+    if not ids:
+        return {}
+    marks = ",".join("?" for _ in ids)
+    out = {}
+    for row in allr(f"SELECT attempt_id,note,created FROM attempt_review_responses WHERE attempt_id IN ({marks}) "
+                    "ORDER BY created", tuple(ids)):
+        out[row["attempt_id"]] = {"note": row["note"], "created": row["created"]}
+    return out
+
+
+def attempt_review_response(attempt_id):
+    """Admin helper: the newest candidate reply for one attempt, or None."""
+    return latest_review_responses([attempt_id]).get(attempt_id)
+
+
+def review_response_allowed(attempt_row, response) -> bool:
+    """A reply is possible while the reviewer asks for more information and no
+    reply has been sent since that request."""
+    if not attempt_row or attempt_row["review_decision"] != "needs_more_info":
+        return False
+    if response and float(response["created"] or 0) >= float(attempt_row["reviewed_at"] or 0):
+        return False
+    return True
+
+
+@app.post("/api/attempts/{aid}/review-response")
+def review_response(aid: str, b: ReviewResponse, u=Depends(current_user)):
+    """Candidate reply to an academic reviewer's "needs more information" decision.
+
+    It is stored for the human reviewer only; it never changes a score.
+    """
+    att = get_att(aid, u["id"])   # owner only (404 otherwise)
+    review = one("SELECT decision,reviewed_at FROM admin_attempt_reviews WHERE attempt_id=?", (aid,))
+    if not review or review["decision"] != "needs_more_info":
+        raise HTTPException(409, "review_response_not_requested")
+    note = b.note.strip()
+    if len(note) < 3:
+        raise HTTPException(422, "review_response_too_short")
+    row = {"review_decision": review["decision"], "reviewed_at": review["reviewed_at"]}
+    if not review_response_allowed(row, attempt_review_response(aid)):
+        raise HTTPException(409, "review_response_already_submitted")
+    created = time.time()
+    run("INSERT INTO attempt_review_responses(id,attempt_id,user_id,note,created) VALUES (?,?,?,?,?)",
+        (uuid.uuid4().hex, aid, att["user_id"], note[:2000], created))
+    audit(u["id"], "review_response_submitted", aid)
+    return {"ok": True, "review_response": {"note": note[:2000], "created": created}}
+
+
 @app.post("/api/attempts/{aid}/appeal")
 def appeal(aid: str, b: Appeal, u=Depends(current_user)):
     att = get_att(aid, u["id"])
     if att["status"] != "done":
         raise HTTPException(409, "attempt_not_finished")
     review = one("SELECT decision FROM admin_attempt_reviews WHERE attempt_id=?", (aid,))
-    if not review or review["decision"] != "invalidated":
+    honesty = one("SELECT status FROM attempt_honesty_reviews WHERE attempt_id=?", (aid,))
+    invalidated = bool(review and review["decision"] == "invalidated")
+    honesty_rejected = bool(honesty and honesty["status"] == "rejected")
+    if not invalidated and not honesty_rejected:
         raise HTTPException(409, "appeal_only_available_for_invalidated_results")
     decision = one("SELECT decision FROM admin_appeal_decisions WHERE attempt_id=?", (aid,))
     if att.get("appeal"):
@@ -4977,3 +5677,47 @@ app.include_router(agent_router)
 # go to the new agent_artifacts queue; no existing route or table is touched.
 from agent_console_api import router as agent_console_router
 app.include_router(agent_console_router)
+
+# ------------------------------------------------------------------ Notification center (all roles)
+import notification_center as _notification_center
+app.include_router(_notification_center.bind(current_user))
+
+
+# ------------------------------------------------------------------ PostgreSQL timestamp precision
+def promote_real_columns_to_double() -> list:
+    """PostgreSQL REAL is a 4-byte float: Unix timestamps (~1.7e9) only keep
+    ~128 s resolution, which breaks login lockouts, review ordering and
+    expiry checks. Widen every remaining REAL column to DOUBLE PRECISION once.
+    Lossless and idempotent. Tables that hold file bytes (BYTEA) are skipped so
+    start-up never rewrites large blobs; their timestamps only drive coarse
+    retention. SQLite already stores REAL as an 8-byte float."""
+    if not DATABASE_URL:
+        return []
+    promoted = []
+    rows = allr("SELECT table_name, column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema=current_schema()")
+    blob_tables = {r["table_name"] for r in rows if r["data_type"] == "bytea"}
+    for r in rows:
+        table, column = r["table_name"], r["column_name"]
+        if r["data_type"] != "real" or table in blob_tables:
+            continue
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", table) or not re.fullmatch(r"[a-z_][a-z0-9_]*", column):
+            continue
+        try:
+            run(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION USING {column}::double precision")
+            promoted.append(f"{table}.{column}")
+        except Exception as exc:  # never block start-up on a single column
+            log.warning("Could not widen %s.%s to DOUBLE PRECISION: %s", table, column, type(exc).__name__)
+    if promoted:
+        log.info("Widened %d REAL timestamp columns to DOUBLE PRECISION", len(promoted))
+    return promoted
+
+
+# Create the lazily-initialised agent/AI tables now, so their timestamp
+# columns are widened in the same start-up pass.
+for _lazy_schema in ("agent_platform", "ai_routing", "agent_questions"):
+    try:
+        __import__(_lazy_schema).ensure_schema()
+    except Exception as _exc:  # optional modules must never block start-up
+        log.warning("Schema init for %s skipped: %s", _lazy_schema, type(_exc).__name__)
+promote_real_columns_to_double()

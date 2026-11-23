@@ -48,8 +48,8 @@ export const CONSOLE = {
       notAvailable: "Unavailable",
     },
     admin: {
-      brand: "PLATFORM CONTROL",
-      label: "ADMIN CONSOLE",
+      brand: "Platform control",
+      label: "Admin console",
       navAria: "Admin console",
       privilegedTitle: "Privileged workspace",
       privilegedBody: "Admin actions are permission-checked and recorded.",
@@ -57,7 +57,7 @@ export const CONSOLE = {
       signOutAdmin: "↪ Sign out of admin",
       platform: "Platform",
       secureSession: "Secure admin session",
-      title: "TALENTFORGE GLOBAL · PLATFORM OPERATIONS",
+      title: "TalentForge global · Platform operations",
       overviewTitle: "Platform overview",
       overviewDesc:
         "A clear view of platform activity, trust queues and operational health.",
@@ -123,7 +123,7 @@ export const CONSOLE = {
       },
       needsAttention: "Needs attention",
       needsAttentionSub: "Queues that may require an administrator",
-      liveData: "LIVE DATA",
+      liveData: "Live data",
       queues: {
         companyVerification: "Company verification",
         jobReview: "Job review queue",
@@ -221,9 +221,9 @@ export const CONSOLE = {
       },
     },
     company: {
-      brand: "HIRING WORKSPACE",
+      brand: "Hiring workspace",
       navAria: "Company workspace",
-      workspace: "WORKSPACE",
+      workspace: "Workspace",
       helpTitle: "Hiring with evidence",
       helpBody: "Review verified skills, not opaque AI scores.",
       companyAccount: "Company account",
@@ -243,7 +243,7 @@ export const CONSOLE = {
         security: "Security & MFA",
       },
       onboarding: {
-        kicker: "COMPANY WORKSPACE · SETUP",
+        kicker: "Company workspace · Setup",
         title: "Build your hiring workspace.",
         body:
           "Create your organisation profile to start drafting roles and inviting your team. Public jobs and real applicant access require company verification.",
@@ -258,7 +258,7 @@ export const CONSOLE = {
           "Verify your organisation to publish jobs and access applicant workflows.",
         review: "Review status →",
       },
-      overviewKicker: "YOUR HIRING OVERVIEW",
+      overviewKicker: "Your hiring overview",
       overviewTitle: "Good to see you back.",
       overviewSub: "Here’s what’s happening across your hiring workspace.",
       stages: {

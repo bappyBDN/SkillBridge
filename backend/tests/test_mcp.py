@@ -80,7 +80,10 @@ def test_practice_questions_never_leak_answer_fields():
         ),
     )
     result = T.practice_questions(1, "Python", 5)
+    # A fresh install serves the seeded MOCK practice pool, never live exam items.
     assert result["count"] >= 1
+    assert result["pool"] == "practice"
+    assert "mcp-test-q1" not in {q["id"] for q in result["questions"]}
     T.assert_no_answer_fields(result)
     for question in result["questions"]:
         assert "correct_answer" not in question
