@@ -206,9 +206,15 @@ def test_cv_text_extraction_stays_private_until_profile_confirmation(monkeypatch
     assert profile["education"][0]["grade"] == "3.8"
     assert profile["experience"][0]["achievements"] == ["Improved response times"]
     assert profile["experience"][0]["technologies"] == ["Python", "FastAPI"]
+    # Project details are kept through draft, confirm and profile read.
     assert profile["projects"][0] == {
         "name": "SkillBridge",
         "url": "",
+        "description": "Candidate profile app",
+        "role": "Developer",
+        "technologies": ["React"],
+        "start_date": "2024",
+        "end_date": "2025",
     }
 
     updated_profile = {key: value for key, value in profile.items() if key != "updated"}
@@ -344,7 +350,7 @@ def test_upload_stores_file_and_row():
     assert doc["filename"] == "my cv.txt" and doc["size_bytes"] == len(CV)
     assert cv_store.read_document_bytes(uid, doc["id"]) == CV
     row = cv_store.get_document(uid, doc["id"])
-    assert row["storage_backend"] == "local" and "my cv" not in row["storage_key"]
+    assert row["storage_backend"] == "database" and "my cv" not in row["storage_key"]
     # The viewable PDF is stored in the database for admin/recruiter review.
     pdf_bytes = cv_store.latest_pdf(uid)["data"]
     assert pdf_bytes.startswith(b"%PDF-")

@@ -36,7 +36,7 @@ export default function McpConsole() {
     };
   }, []);
 
-  const weakTopics = learning?.weak_topics?.weak_topics || [];
+  const weakTopics = useMemo(() => learning?.weak_topics?.weak_topics || [], [learning]);
   const topicOptions = useMemo(() => {
     const seen = new Map();
     for (const row of weakTopics) {
@@ -107,7 +107,7 @@ export default function McpConsole() {
     <div className="mcp-console">
       <section className={`mcp-hero ${enabled ? "is-on" : "is-off"}`}>
         <div className="mcp-hero-main">
-          <span className="mcp-kicker">MODEL CONTEXT PROTOCOL · READ-ONLY</span>
+          <span className="mcp-kicker">Model Context Protocol · Read-only</span>
           <h2>SkillBridge MCP</h2>
           <p>
             Any MCP-compatible AI host (Claude Desktop, Cursor, an HR agent) can discover these

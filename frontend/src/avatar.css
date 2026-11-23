@@ -63,7 +63,7 @@
 
 .reanalyse-cv summary {
   cursor: pointer;
-  color: #315ce8;
+  color: var(--ds-brand-600);
   font-weight: 700;
 }
 

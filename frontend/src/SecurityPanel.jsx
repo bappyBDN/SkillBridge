@@ -129,13 +129,13 @@ export default function SecurityPanel({ S, email }) {
         <div className="cr-toast" role="status">
           <span>✓</span>
           {toast}
-          <button onClick={() => setToast("")}>×</button>
+          <button type="button" aria-label="Dismiss" onClick={() => setToast("")}>×</button>
         </div>
       )}
       {error && (
         <div className="cr-error-banner" role="alert">
           {error}
-          <button onClick={() => setError("")}>×</button>
+          <button type="button" aria-label="Dismiss" onClick={() => setError("")}>×</button>
         </div>
       )}
 

@@ -1,0 +1,7 @@
+# Build context is ./frontend. Never copy host node_modules over the npm ci install.
+node_modules/
+dist/
+test-results/
+playwright-report/
+.env
+.env.*

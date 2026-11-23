@@ -18,15 +18,18 @@ import secrets
 import sys
 import time
 
-try:
-    from dotenv import load_dotenv
-    # Load the repo-root .env so DATABASE_URL (e.g. Neon) is picked up locally.
-    for candidate in (os.path.join(os.path.dirname(__file__), "..", ".env"),
-                      os.path.join(os.path.dirname(__file__), ".env")):
-        if os.path.exists(candidate):
-            load_dotenv(candidate)
-except ImportError:
-    pass
+# Load the repo-root .env so DATABASE_URL (e.g. Neon) is picked up locally, but
+# only when no database was chosen explicitly: DB_PATH must never be silently
+# overridden by the production DATABASE_URL in .env.
+if not os.getenv("DB_PATH") and not os.getenv("DATABASE_URL") and os.getenv("SKILLBRIDGE_NO_DOTENV") != "1":
+    try:
+        from dotenv import load_dotenv
+        for candidate in (os.path.join(os.path.dirname(__file__), "..", ".env"),
+                          os.path.join(os.path.dirname(__file__), ".env")):
+            if os.path.exists(candidate):
+                load_dotenv(candidate)
+    except ImportError:
+        pass
 
 from main import hash_pw, one, run
 from enterprise import ensure_admin_console_schema

@@ -68,7 +68,7 @@ test("public skill passport presents approved topic percentages and a separate h
   await expect(page.getByText("HONESTY REVIEW", { exact: true })).toBeVisible();
   await expect(page.getByText("87", { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Print / save PDF" })).toBeVisible();
-  expect(await page.getByRole("button", { name: "Print / save PDF" }).evaluate((button) => getComputedStyle(button).backgroundColor)).toBe("rgb(18, 117, 103)");
+  expect(await page.getByRole("button", { name: "Print / save PDF" }).evaluate((button) => getComputedStyle(button).backgroundColor)).toBe("rgb(22, 112, 92)"); // --ds-brand-600 primary
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("skill-passport.png"), fullPage: true });
 });

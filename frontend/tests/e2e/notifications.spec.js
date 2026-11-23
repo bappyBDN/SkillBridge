@@ -28,12 +28,12 @@ async function candidateWorkspace(page, attempts, { lang = "en" } = {}) {
   });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Career overview" })).toBeVisible();
-  return { errors, state };
+  return { errors, state, page };
 }
 
 const bell = (page) => page.getByRole("button", { name: "Notifications", exact: true });
 const panel = (page) => page.getByRole("region", { name: "Assessment notifications" });
-const toggle = (page) => panel(page).locator(".assessment-notification-toggle");
+const count = (page) => panel(page).locator(".assessment-notification-count");
 const items = (page) => panel(page).locator(".assessment-notification-item");
 const score = (page) => panel(page).locator(".assessment-notification-score");
 const dot = (page) => page.locator(".tf-dot");
@@ -48,7 +48,7 @@ test("a candidate with no attempt history gets no badge and an empty state", asy
   await expect(dot(page)).toHaveCount(0);
   await openNotifications(page);
   await expect(panel(page).getByText(/No assessment updates yet/)).toBeVisible();
-  await expect(toggle(page)).toHaveCount(0);
+  await expect(count(page)).toHaveCount(0);
   await expect(score(page)).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -63,7 +63,7 @@ test("unfinished, abandoned and first-review attempts never ring the bell", asyn
   await expect(dot(page)).toHaveCount(0);
   await openNotifications(page);
   await expect(panel(page).getByText(/No assessment updates yet/)).toBeVisible();
-  await expect(toggle(page)).toHaveCount(0);
+  await expect(count(page)).toHaveCount(0);
   await expect(items(page)).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -84,7 +84,7 @@ test("a published result shows one notification with its real score", async ({ p
   ]);
   await expect(dot(page)).toHaveCount(1);
   await openNotifications(page);
-  await expect(toggle(page)).toContainText("1");
+  await expect(count(page)).toHaveText("1");
   await expect(items(page)).toHaveCount(1);
   await expect(panel(page).getByText("Reassessment", { exact: true })).toBeVisible();
   await expect(panel(page).getByText("Assessment approved", { exact: true })).toBeVisible();
@@ -188,7 +188,7 @@ test("a pending appeal is reported as waiting without showing the appeal form ag
   expect(errors).toEqual([]);
 });
 
-test("only the three newest notifications are listed while the count stays complete", async ({ page }) => {
+test("every notification is listed, newest first, with a complete count", async ({ page }) => {
   const { errors } = await candidateWorkspace(page, [
     [1, 61],
     [2, 62],
@@ -205,10 +205,10 @@ test("only the three newest notifications are listed while the count stays compl
     finished: 1763150000 + index * 100,
   })));
   await openNotifications(page);
-  await expect(toggle(page)).toContainText("4");
-  await expect(items(page)).toHaveCount(3);
+  await expect(count(page)).toHaveText("4");
+  await expect(items(page)).toHaveCount(4);
   await expect(items(page).first().locator(".assessment-notification-score")).toHaveText("64 / 100");
-  await expect(panel(page).getByText("61 / 100")).toHaveCount(0);
+  await expect(items(page).last().locator(".assessment-notification-score")).toHaveText("61 / 100");
   expect(errors).toEqual([]);
 });
 
@@ -222,4 +222,56 @@ test("notification copy follows the candidate's language", async ({ page }) => {
   await expect(page.getByText("মূল্যায়ন অনুমোদিত", { exact: true })).toBeVisible();
   await expect(page.locator(".assessment-notification-score")).toHaveText("86 / 100");
   expect(errors).toEqual([]);
+});
+
+const publishedAttempt = (id, overall, reviewedAt) => ({
+  id, kind: "pre", status: "done", overall, review_decision: "approved",
+  finalized: true, reviewed_at: reviewedAt, finished: reviewedAt - 100,
+});
+
+test("the badge clears once read, stays cleared after a reload and returns for a new event", async ({ page }) => {
+  const { errors, state } = await candidateWorkspace(page, [publishedAttempt("first", 70, 1763200000)]);
+  await expect(dot(page)).toHaveCount(1);
+  await openNotifications(page);
+  await expect(items(page).first()).toHaveClass(/is-unread/);
+  await expect(dot(page)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Career overview" })).toBeVisible();
+  await expect(dot(page)).toHaveCount(0);
+  await openNotifications(page);
+  await expect(items(page).first()).not.toHaveClass(/is-unread/);
+  await bell(page).click();
+
+  state.attempts = [publishedAttempt("second", 82, 1763300000), ...state.attempts];
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Career overview" })).toBeVisible();
+  await expect(dot(page)).toHaveCount(1);
+  await openNotifications(page);
+  await expect(panel(page).locator(".assessment-notification-item.is-unread")).toHaveCount(1);
+  await expect(panel(page).locator(".assessment-notification-item.is-unread .assessment-notification-score")).toHaveText("82 / 100");
+  expect(errors).toEqual([]);
+});
+
+test("a review published while the candidate is away appears when the tab is opened again", async ({ page }) => {
+  const waiting = { id: "waiting", kind: "pre", status: "done", overall: null, review_decision: null, finalized: false, finished: 1763100000 };
+  const { errors, state } = await candidateWorkspace(page, [waiting]);
+  await expect(dot(page)).toHaveCount(0);
+  state.attempts = [{ ...publishedAttempt("waiting", 77, 1763200000), finished: 1763100000 }];
+  await page.clock.install();
+  await page.clock.fastForward(20000);
+  await page.evaluate(() => { window.dispatchEvent(new Event("blur")); window.dispatchEvent(new Event("focus")); });
+  await expect(dot(page)).toHaveCount(1);
+  await openNotifications(page);
+  await expect(score(page)).toHaveText("77 / 100");
+  expect(errors).toEqual([]);
+});
+
+test("navigating to another section closes the panel", async ({ page }) => {
+  await candidateWorkspace(page, [publishedAttempt("p", 70, 1763200000)]);
+  await openNotifications(page);
+  await page.getByRole("button", { name: "My exams", exact: true }).filter({ visible: true }).first().click();
+  await expect(panel(page)).toHaveCount(0);
 });

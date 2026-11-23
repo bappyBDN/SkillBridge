@@ -170,6 +170,11 @@ def test_validation_normalizes_nested_aliases_and_filters_unsupported_values():
     assert profile["projects"] == [{
         "name": "SkillBridge",
         "url": "https://example.test",
+        "description": "",
+        "role": "",
+        "technologies": [],
+        "start_date": "",
+        "end_date": "",
     }]
     assert profile["skills"] == []
 

@@ -328,7 +328,7 @@ export default function CodeWorkspace({
 
       <div className="cw-term">
         <div className="cw-term-head">
-          <span>TERMINAL</span>
+          <span>Terminal</span>
           <span className="cw-term-hint">Ctrl+Enter to run · output is yours only</span>
           <button
             type="button"

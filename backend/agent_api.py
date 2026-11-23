@@ -4,7 +4,7 @@ Every endpoint reuses the existing admin scope checks in ``enterprise.py`` and i
 disabled unless its feature flag is enabled. Nothing here changes scoring.
 """
 import os
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -114,6 +114,35 @@ def approve_question_draft(draft_id: str, user=Depends(_questions_admin)):
     if status == "duplicate":
         raise HTTPException(409, {"detail": "duplicate_question", "question_id": question_id})
     return {"approved": True, "question_id": question_id}
+
+
+class DraftEditBody(BaseModel):
+    """Fields an administrator may complete on a pending draft (all optional)."""
+    question_type: Optional[str] = Field(default=None, max_length=40)
+    difficulty_level: Optional[str] = Field(default=None, max_length=20)
+    question_text: Optional[str] = Field(default=None, max_length=4000)
+    options: Optional[List[str]] = Field(default=None, max_length=10)
+    correct_answer: Optional[str] = Field(default=None, max_length=1000)
+    explanation: Optional[str] = Field(default=None, max_length=4000)
+    reference_answer: Optional[str] = Field(default=None, max_length=4000)
+    grading_rubric: Optional[str] = Field(default=None, max_length=4000)
+    marks: Optional[float] = Field(default=None, ge=0.5, le=10, allow_inf_nan=False)
+    time_allocation: Optional[int] = Field(default=None, ge=30, le=600)
+    category_id: Optional[str] = Field(default=None, max_length=40)
+    subcategory: Optional[str] = Field(default=None, max_length=80)
+
+
+@router.patch("/questions/drafts/{draft_id}")
+def edit_question_draft(draft_id: str, body: DraftEditBody, user=Depends(_questions_admin)):
+    """Complete a pending draft (e.g. a needs_authoring scaffold). Validation is
+    recomputed and returned; approval re-validates before anything is active."""
+    _require_questions()
+    status, draft = questions.update_draft(draft_id, body.model_dump(exclude_none=True), user)
+    if status == "not_found":
+        raise HTTPException(404, "draft_not_found")
+    if status == "conflict":
+        raise HTTPException(409, "draft_not_pending")
+    return {"draft": draft, "validation": draft["validation"], "approvable": not draft["validation"]}
 
 
 @router.delete("/questions/drafts/{draft_id}")

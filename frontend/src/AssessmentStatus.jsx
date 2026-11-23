@@ -16,7 +16,7 @@ export default function AssessmentStatus({ publication, objective, onRefresh }) 
     ["Learning & passport", publication.ready, publication.ready ? "Released together" : "Locked until both approvals"],
   ];
   return <section className={`assessment-status ${publication.ready ? "is-ready" : "is-pending"}`} aria-label="Assessment review progress">
-    <div className="assessment-status-head"><div><small>ASSESSMENT WORKFLOW</small><h3>{STAGES[publication.stage] || "Review in progress"}</h3></div>{onRefresh && <button type="button" className="btn ghost sm" onClick={onRefresh}>Refresh status</button>}</div>
+    <div className="assessment-status-head"><div><small>Assessment workflow</small><h3>{STAGES[publication.stage] || "Review in progress"}</h3></div>{onRefresh && <button type="button" className="btn ghost sm" onClick={onRefresh}>Refresh status</button>}</div>
     {!publication.ready && <p>Objective questions are checked immediately. Topic percentages, personalized courses and the Skill Passport are published only after all response marks and the honesty report are approved.</p>}
     {objective?.mcq_questions > 0 && !publication.ready && <div className="assessment-objective"><strong>{objective.mcq_score ?? "—"}%</strong><span>MCQ-only score · {objective.mcq_questions} questions<br /><small>Provisional feedback, not your final assessment score.</small></span></div>}
     <ol>{steps.map(([label, done, detail]) => <li key={label} className={done ? "done" : "waiting"}><span aria-hidden="true">{done ? "✓" : "○"}</span><div><b>{label}</b><small>{detail}</small></div></li>)}</ol>

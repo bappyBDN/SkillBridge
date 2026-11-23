@@ -66,26 +66,84 @@ _BLOCKED_NETWORKS = (
 )
 
 
+MAX_REDIRECTS = 5
+_METADATA_HOSTS = {"metadata.google.internal", "metadata", "instance-data"}
+
+
+def _ip_blocked(ip):
+    """True for any address an outbound fetch must never reach."""
+    if getattr(ip, "ipv4_mapped", None) is not None:
+        ip = ip.ipv4_mapped
+    if getattr(ip, "sixtofour", None) is not None:
+        ip = ip.sixtofour
+    if any(ip in net for net in _BLOCKED_NETWORKS if net.version == ip.version):
+        return True
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                or ip.is_reserved or ip.is_unspecified)
+
+
 def _assert_public_host(hostname):
-    hostname = (hostname or "").strip().rstrip(".")
+    """Reject hosts that are (or resolve to) private, loopback, link-local,
+    cloud-metadata or other reserved addresses, for IPv4 and IPv6 alike."""
+    hostname = (hostname or "").strip().rstrip(".").strip("[]")
     if not hostname:
         raise ValueError("URL has no host.")
-    if hostname.lower() == "localhost" or hostname.lower().endswith(".local"):
+    lowered = hostname.lower()
+    if lowered == "localhost" or lowered.endswith(".localhost") or lowered.endswith(".local")             or lowered.endswith(".internal") or lowered in _METADATA_HOSTS:
         raise ValueError("That host is not allowed.")
     try:
         infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror as exc:
+    except (socket.gaierror, UnicodeError) as exc:
         raise ValueError("Could not resolve the host.") from exc
     if not infos:
         raise ValueError("Could not resolve the host.")
     for info in infos:
-        addr = info[4][0]
+        addr = str(info[4][0])
         try:
             ip = ipaddress.ip_address(addr.split("%", 1)[0])
         except ValueError:
-            continue
-        if any(ip in net for net in _BLOCKED_NETWORKS):
+            raise ValueError("That host resolves to an unrecognised address and is not allowed.")
+        if _ip_blocked(ip):
             raise ValueError("That host resolves to a private or reserved address and is not allowed.")
+
+
+def _validate_url(url):
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http:// and https:// URLs are supported.")
+    if not parsed.hostname:
+        raise ValueError("Invalid URL.")
+    _assert_public_host(parsed.hostname)
+    return parsed
+
+
+def _fetch(url):
+    """GET ``url`` without automatic redirects. Each hop is re-validated
+    against the SSRF block list and the body is streamed with a hard cap, so a
+    huge or endless response is never buffered in memory."""
+    current = url
+    with httpx.Client(follow_redirects=False, timeout=TIMEOUT_SECONDS, headers=_browser_headers()) as client:
+        for _hop in range(MAX_REDIRECTS + 1):
+            _validate_url(current)
+            with client.stream("GET", current) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        raise ValueError("The site sent a redirect without a location.")
+                    current = str(resp.url.join(location))
+                    continue
+                declared = resp.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > MAX_BYTES:
+                    raise ValueError("Page is larger than 5 MB.")
+                chunks, size = [], 0
+                if resp.status_code < 400:
+                    for chunk in resp.iter_bytes():
+                        size += len(chunk)
+                        if size > MAX_BYTES:
+                            raise ValueError("Page is larger than 5 MB.")
+                        chunks.append(chunk)
+                return resp.status_code, str(resp.url), b"".join(chunks)
+    raise ValueError(f"The site redirected more than {MAX_REDIRECTS} times.")
 
 
 # ------------------------------------------------------------------- HTML
@@ -338,34 +396,24 @@ def extract_from_html(text, source_url=""):
 def scrape_url(url):
     """Fetch a URL and return (final_url, records). Raises ValueError on bad input."""
     url = (url or "").strip()
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError("Only http:// and https:// URLs are supported.")
-    if not parsed.hostname:
-        raise ValueError("Invalid URL.")
-    _assert_public_host(parsed.hostname)
+    _validate_url(url)
 
     try:
-        with httpx.Client(follow_redirects=True, timeout=TIMEOUT_SECONDS, headers=_browser_headers()) as client:
-            resp = client.get(url)
+        status_code, final_url, body = _fetch(url)
     except httpx.HTTPError as exc:
         raise ValueError("Could not fetch the URL: " + str(exc)[:160]) from exc
 
-    if resp.status_code == 403:
+    if status_code == 403:
         raise ValueError(
             "The site returned 403 Forbidden. It is likely protected by a bot filter "
             "(for example Cloudflare) that blocks automated requests. Changing the "
             "User-Agent will not reliably bypass this. Open the page in your browser "
             "and save or copy its HTML, then use the 'Paste HTML' option instead."
         )
-    if resp.status_code >= 400:
-        raise ValueError(f"The site returned HTTP {resp.status_code} and could not be fetched.")
+    if status_code >= 400:
+        raise ValueError(f"The site returned HTTP {status_code} and could not be fetched.")
 
-    body = resp.content
-    if len(body) > MAX_BYTES:
-        raise ValueError("Page is larger than 5 MB.")
     text = body.decode("utf-8", "ignore")
-    final_url = str(resp.url)
 
     return final_url, extract_from_html(text, final_url)
 

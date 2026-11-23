@@ -20,8 +20,41 @@ def _user(ctx):
 
 
 def _require_role(ctx, *roles):
+    """Role check through enterprise.require_role (applies the production MFA
+    gate) — never a direct user_roles read."""
+    import enterprise
+
     if ctx["role"] not in roles:
         raise RuntimeError("role_not_allowed")
+    enterprise.require_role(_user(ctx), *roles)
+
+
+def _flag(name):
+    import os
+
+    return os.getenv(name, "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _require_admin_scope(ctx, scope, flag):
+    """Same scoped staff check and feature flag as the admin agent API."""
+    import enterprise
+
+    _require_role(ctx, "admin")
+    enterprise.admin_only(_user(ctx), scope)
+    if not _flag(flag):
+        raise RuntimeError("agent_disabled")
+
+
+def _company_for_applicants(ctx):
+    """Verified company + owner/recruiter/hiring_manager before any applicant read."""
+    import enterprise
+
+    _require_role(ctx, "company")
+    company = enterprise.company_for_access(_user(ctx))
+    enterprise.require_company_permission(_user(ctx), company, "owner", "recruiter", "hiring_manager")
+    if not company.get("verified"):
+        raise RuntimeError("company_verification_required")
+    return company
 
 
 def _llm_polish(ctx, system, payload, max_tokens=400):
@@ -127,11 +160,8 @@ def company_context(ctx):
 
 
 def company_applications(ctx, shared_only=True):
-    _require_role(ctx, "company")
-    import enterprise
-
     m = _main()
-    company = enterprise.company_for_access(_user(ctx))
+    company = _company_for_applicants(ctx)
     rows = m.allr(
         """SELECT a.id AS application_id,a.status,a.results_shared,a.created,
                   j.id AS job_id,j.title AS job_title,u.id AS candidate_id,u.name AS candidate_name
@@ -156,21 +186,21 @@ def company_applications(ctx, shared_only=True):
 
 
 def skill_coverage(ctx):
-    _require_role(ctx, "admin")
+    _require_admin_scope(ctx, "questions", "AGENT_QUESTIONS_ENABLED")
     import agent_questions
 
     return agent_questions.coverage()
 
 
 def integrity_summary(ctx, attempt_id):
-    _require_role(ctx, "admin")
+    _require_admin_scope(ctx, "integrity_review", "AGENT_INTEGRITY_ENABLED")
     import agent_integrity
 
     return agent_integrity.summarize_attempt(attempt_id)
 
 
 def question_drafts(ctx):
-    _require_role(ctx, "admin")
+    _require_admin_scope(ctx, "questions", "AGENT_QUESTIONS_ENABLED")
     import agent_questions
 
     return agent_questions.list_drafts("pending_approval")
@@ -268,8 +298,12 @@ def draft_application_answer(ctx, job_id):
 
 
 def draft_job_skills(ctx, description):
-    _require_role(ctx, "company")
+    import enterprise
     import graphrag as G
+
+    _require_role(ctx, "company")
+    company = enterprise.company_for_access(_user(ctx))
+    enterprise.require_company_permission(_user(ctx), company, "owner", "recruiter")
     from content import TAXONOMY
 
     ids = G.canonical_skill_ids(description or "")
@@ -300,34 +334,25 @@ def draft_job_skills(ctx, description):
 
 
 def draft_shortlist(ctx):
-    _require_role(ctx, "company")
-    m = _main()
+    import enterprise
+
     apps = company_applications(ctx, shared_only=True)
     shortlist = []
     for item in apps["items"][:50]:
-        attempt = m.one(
-            "SELECT id,result,finished FROM attempts WHERE user_id=? AND status='done' "
-            "ORDER BY finished DESC LIMIT 1",
-            (item["candidate_id"],),
-        )
-        if not attempt or not attempt["result"]:
-            continue
-        try:
-            result = json.loads(attempt["result"])
-        except (TypeError, ValueError):
+        # Same published-only, trust-free summary the recruiter UI uses: scores
+        # stay hidden until human review publishes them.
+        summary = enterprise.company_assessment_summary(item["candidate_id"])
+        if not summary:
             continue
         shortlist.append(
             {
                 "candidate_id": item["candidate_id"],
                 "application_id": item["application_id"],
                 "job_title": item["job_title"],
-                "overall": result.get("overall"),
-                "level": result.get("level"),
-                "topics": {
-                    key: value.get("score")
-                    for key, value in (result.get("topics") or {}).items()
-                    if isinstance(value, dict)
-                },
+                "overall": summary["overall"],
+                "level": summary["level"],
+                "result_status": summary["result_status"],
+                "topics": {key: value.get("score") for key, value in summary["topics"].items()},
                 "consent": True,
             }
         )
@@ -337,15 +362,14 @@ def draft_shortlist(ctx):
         "body": {
             "shortlist": shortlist,
             "note": (
-                "Only applicants who opted into result sharing. Scores are advisory; "
-                "no candidate is auto-rejected."
+                "Only applicants who opted into result sharing. Scores appear only after "
+                "human review publishes them; they are advisory and no candidate is auto-rejected."
             ),
         },
     }
 
 
 def draft_feedback(ctx, application_id):
-    _require_role(ctx, "company")
     apps = company_applications(ctx, shared_only=False)
     item = next((a for a in apps["items"] if a["application_id"] == application_id), None)
     if not item:
@@ -377,7 +401,6 @@ def draft_feedback(ctx, application_id):
 
 
 def draft_integrity_summary(ctx, attempt_id):
-    _require_role(ctx, "admin")
     summary = integrity_summary(ctx, attempt_id)
     if not summary:
         raise RuntimeError("attempt_not_found")
@@ -389,7 +412,7 @@ def draft_integrity_summary(ctx, attempt_id):
 
 
 def draft_questions(ctx, skill, count=3):
-    _require_role(ctx, "admin")
+    _require_admin_scope(ctx, "questions", "AGENT_QUESTIONS_ENABLED")
     import agent_questions
 
     result = agent_questions.create_drafts(
@@ -411,8 +434,10 @@ def draft_questions(ctx, skill, count=3):
                 for draft in result["drafts"]
             ],
             "note": (
-                "Question drafts live in the question-assist queue; a curator approves "
-                "them there before they become active."
+                "Question drafts live in the question-assist queue. Complete any draft "
+                "marked needs_authoring (PATCH /api/admin/agent/questions/drafts/{id}); "
+                "approving this artifact approves every listed draft through the same "
+                "validated path."
             ),
         },
     }

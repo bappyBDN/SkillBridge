@@ -1,28 +1,48 @@
-import { lazy, Suspense, useEffect, useState, useCallback, useRef, Component } from "react";
-import { api, getToken, setToken } from "./api.js";
+import { lazy, Suspense, useEffect, useId, useState, useCallback, useRef, Component } from "react";
+import { api, getToken, sendExitBeacon, setToken } from "./api.js";
 import { LangCtx, LangSetCtx, useT, useSetLang, useLangValue } from "./i18n.js";
 import CandidateProfileWorkspace from "./CandidateProfileWorkspace.jsx";
 import Avatar, { useAvatar } from "./Avatar.jsx";
-import SecurityPanel from "./SecurityPanel.jsx";
-import { useConsoleT } from "./consoleI18n.js";
-import { CvPreview, WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./WorkspaceUI.jsx";
-import TeamInvitations from "./TeamInvitations.jsx";
+import { WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./WorkspaceUI.jsx";
 import AssessmentStatus from "./AssessmentStatus.jsx";
 import SkillCredential from "./SkillCredential.jsx";
 import CandidateAccountSettings from "./CandidateAccountSettings.jsx";
 import PasswordReset from "./PasswordReset.jsx";
-import { assessmentNotificationItems, notificationTimestamp } from "./notifications.js";
+import { describeError, errorCode } from "./errors.js";
+import { fmt } from "./format.js";
+import { statusTone } from "./status.js";
+import ConfirmDialog from "./ConfirmDialog.jsx";
+import { canRespondToInvite, canWithdrawApplication, humanizeStatus, inviteAwaitingResponse, inviteDeadlinePassed, normalizeInvites } from "./applications.js";
+import {
+  assessmentNotificationItems,
+  isHonestyRejected,
+  loadSeenNotifications,
+  markNotificationsSeen,
+  mergeNotificationFeed,
+  notificationBadgeCount,
+  notificationKey,
+  notificationTimestamp,
+  sectionForNotificationLink,
+  shouldPollForNotifications,
+  unreadNotificationItems,
+  unreadServerIds,
+} from "./notifications.js";
+import { ServerNotificationItem, useServerNotifications } from "./NotificationCenter.jsx";
 import useExamDevices, { trackLive } from "./useExamDevices.js";
 import useExamMonitoring from "./useExamMonitoring.js";
-import McpConsole from "./McpConsole.jsx";
-import AgentConsole from "./AgentConsole.jsx";
-import AiUsagePanel from "./AiUsagePanel.jsx";
 
 // Every exam is proctored (camera, microphone, screen share, full-screen).
 // Only attempts saved before proctoring existed are marked otherwise.
 const isProctored = (policy) => policy?.mode !== "legacy_unproctored";
 import { loadFaceApi, preloadProctorModels, preloadVisionModels, useProctorModelStatus } from "./proctorModels.js";
+// Public support address shown on the landing FAQ. Hidden when not configured.
+const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL || "").trim();
 const CodeWorkspace = lazy(() => import("./CodeWorkspace.jsx"));
+// Role-specific workspaces and AI consoles are split out of the candidate bundle.
+const AdminConsole = lazy(() => import("./AdminConsole.jsx"));
+const HiringWorkspace = lazy(() => import("./HiringWorkspace.jsx"));
+const McpConsole = lazy(() => import("./McpConsole.jsx"));
+const AgentConsole = lazy(() => import("./AgentConsole.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
 House 14, Road 3, Mirpur, Dhaka
@@ -35,22 +55,15 @@ Skills: SQL, Python, Excel, Git. Presentation and report writing for class proje
 
 /* ---------- small helpers ---------- */
 const STEPS = ["profile", "assess", "gap", "learn", "retest", "passport"];
-const fmt = (s) => {
-  const n = Math.max(0, Math.floor(Number(s) || 0));
-  const h = Math.floor(n / 3600);
-  const m = Math.floor((n % 3600) / 60);
-  const sec = n % 60;
-  return h
-    ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-    : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-};
 
 function Err({ e }) {
   const t = useT();
   if (!e) return null;
+  const info = describeError(e, t);
   return (
     <p className="err" role="alert">
-      {t(e.code) !== e.code ? t(e.code) : e.message || t("error")}
+      {info.text}
+      {info.code ? <small className="muted err-code"> ({t("errorReference")}: {info.code})</small> : null}
     </p>
   );
 }
@@ -91,39 +104,6 @@ function TrustChip({ trust }) {
 }
 
 /* ---------- landing + auth ---------- */
-function BridgeRail() {
-  const t = useT();
-  const xs = [80, 230, 380, 530, 680, 830];
-  return (
-    <svg
-      className="rail"
-      viewBox="0 0 910 150"
-      role="img"
-      aria-label="TalentForge loop"
-    >
-      <line x1="30" y1="86" x2="880" y2="86" className="rail-deck" />
-      {xs.slice(0, -1).map((x, i) => (
-        <path
-          key={i}
-          d={`M${x} 86 Q${(x + xs[i + 1]) / 2} 14 ${xs[i + 1]} 86`}
-          className="rail-cable"
-        />
-      ))}
-      {xs.map((x, i) => (
-        <g key={i}>
-          <circle cx={x} cy="86" r="9" className="rail-node" />
-          <text x={x} y="116" textAnchor="middle" className="rail-label">
-            {t("loop")[i]}
-          </text>
-          <text x={x} y="136" textAnchor="middle" className="rail-sub">
-            {t("loopSub")[i]}
-          </text>
-        </g>
-      ))}
-    </svg>
-  );
-}
-
 function passwordScore(pw) {
   if (!pw) return 0;
   let score = 0;
@@ -875,10 +855,12 @@ function Landing({ onAuthed }) {
             <br />
             {H.faqB}
           </h2>
-          <p className="lp-faq-support">
-            {H.faqSupport}{" "}
-            <span className="lp-support-mail">{H.supportEmail}</span>
-          </p>
+          {SUPPORT_EMAIL ? (
+            <p className="lp-faq-support">
+              {H.faqSupport}{" "}
+              <a className="lp-support-mail" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+            </p>
+          ) : null}
         </div>
         <div className="lp-faq-list">
           {H.faqs.map((item, index) => {
@@ -1034,7 +1016,7 @@ function Landing({ onAuthed }) {
                         className={f.role === "candidate" ? "selected" : ""}
                         onClick={() => setF({ ...f, role: "candidate" })}
                       >
-                        <span className="sb-role-icon">↗</span>
+                        <span className="sb-role-icon"><WorkspaceIcon name="profile" size={18} /></span>
                         <span>
                           <b>{L.roleCandidate}</b>
                           <small>{L.roleCandidateSub}</small>
@@ -1046,7 +1028,7 @@ function Landing({ onAuthed }) {
                         className={f.role === "company" ? "selected" : ""}
                         onClick={() => setF({ ...f, role: "company" })}
                       >
-                        <span className="sb-role-icon">⌂</span>
+                        <span className="sb-role-icon"><WorkspaceIcon name="building" size={18} /></span>
                         <span>
                           <b>{L.roleCompany}</b>
                           <small>{L.roleCompanySub}</small>
@@ -1176,7 +1158,7 @@ function Landing({ onAuthed }) {
               <div className="sb-auth-legal">{L.legal}</div>
             </div>
             <div className="sb-auth-note">
-              <span>✦</span> {L.authNote}
+              {L.authNote}
             </div>
           </div>
         </div>
@@ -1461,7 +1443,7 @@ function Profile({ st, onDone, onEditProfile }) {
 }
 
 /* ---------- gap ---------- */
-function Gap({ st, onStart, refreshKey, actionLabel }) {
+function Gap({ onStart, refreshKey, actionLabel }) {
   const t = useT();
   const [d, setD] = useState(null);
   const [journey, setJourney] = useState(null);
@@ -1508,7 +1490,7 @@ function Gap({ st, onStart, refreshKey, actionLabel }) {
         >
           <div>
             <span className="learn-kicker">
-              {journey.approved ? "VERIFIED ASSESSMENT" : "ASSESSMENT COMPLETE"}
+              {journey.approved ? "Verified assessment" : "Assessment complete"}
             </span>
             <h3>
               {journey.approved
@@ -1623,6 +1605,20 @@ function Gap({ st, onStart, refreshKey, actionLabel }) {
 }
 
 /* ---------- exam integrity monitor ---------- */
+/**
+ * Send queued integrity events while the page unloads. Uses the same API base
+ * URL as api.js (VITE_API_BASE_URL on the Vercel + Render split). sendBeacon
+ * cannot carry an Authorization header, so the token goes in the JSON body,
+ * which the backend's /event/beacon endpoint verifies.
+ */
+function flushExamEventsOnExit(aid, events) {
+  const token = getToken();
+  if (!token || !aid) return;
+  for (const item of events || []) {
+    sendExitBeacon(`/attempts/${aid}/event/beacon`, { ...item, authorization: token });
+  }
+}
+
 function useExamIntegrity(initial, screenStream) {
   const t = useT();
   const aid = initial.attempt_id;
@@ -1716,7 +1712,12 @@ function useExamIntegrity(initial, screenStream) {
       }
     };
     const timer = setInterval(heartbeat, 10000);
-    return () => clearInterval(timer);
+    const onExit = () => flushExamEventsOnExit(aid, pendingEvents.current);
+    window.addEventListener("pagehide", onExit);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("pagehide", onExit);
+    };
   }, [aid, flushEvents]);
   useEffect(() => {
     if (!alerts.length) return undefined;
@@ -1934,64 +1935,6 @@ function useExamIntegrity(initial, screenStream) {
     evidenceHandler,
   };
 }
-function ExamIntegrityBanner({ integrity, onRestartShare }) {
-  const t = useT();
-  return (
-    <>
-      <div
-        className={
-          "exam-integrity-banner" +
-          (integrity.shareActive && integrity.fullscreenActive
-            ? " active"
-            : " warning")
-        }
-        role="status"
-      >
-        <strong>
-          {integrity.shareActive ? t("shareActive") : t("shareStopped")}
-        </strong>
-        <span>{t("sharePrivacy")}</span>
-        {!integrity.shareActive && (
-          <button
-            type="button"
-            className="btn sm"
-            onClick={async () => {
-              const stream = await onRestartShare?.();
-              if (!stream) integrity.setNotice(t("shareRequired"));
-            }}
-          >
-            {t("restartShare")}
-          </button>
-        )}
-        <strong>
-          {integrity.fullscreenActive
-            ? t("fullscreenActive")
-            : t("fullscreenWarning")}
-        </strong>
-        {!integrity.fullscreenActive && (
-          <button
-            type="button"
-            className="btn sm"
-            onClick={integrity.restartFullscreen}
-          >
-            {t("restartFullscreen")}
-          </button>
-        )}
-      </div>
-      {integrity.notice && (
-        <p className="exam-integrity-notice" role="status">
-          {integrity.notice}
-        </p>
-      )}
-      {integrity.shareError && (
-        <p className="err" role="alert">
-          {integrity.shareError}
-        </p>
-      )}
-    </>
-  );
-}
-
 /* ---------- exam ---------- */
 function ExamRun({ initial, onFinished, screenStream, cameraStream, micStream, audioContext, devicesReady, onRestartCamera, onRestartMic, onRestartShare }) {
   // An active exam owns the whole viewport: the workspace sidebar/topbar are
@@ -2221,8 +2164,14 @@ function LocalProctor({ cameraStream, report, inline = false, onDetections }) {
 }
 
 /* ---------- adaptive exam (phase 2 integrity) ---------- */
+// Mirrors engine.GRACE: the server accepts writes this long after the timer.
+const EXAM_GRACE_SECONDS = 30;
 function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micStream }) {
   const t = useT();
+  // Long-lived listeners read the current language through a ref so they
+  // are not re-registered on every render.
+  const tRef = useRef(t);
+  tRef.current = t;
   const [v, setV] = useState(initial);
   const [ans, setAns] = useState("");
   const [out, setOut] = useState(null);
@@ -2242,8 +2191,6 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
   const sequence = useRef(initial.last_event_seq || 0);
   const pendingEvents = useRef([]);
   const flushPromise = useRef(null);
-  const nextSeq = useCallback(() => ++sequence.current, []);
-
   const flushEvents = useCallback(async () => {
     if (flushPromise.current) return flushPromise.current;
     flushPromise.current = (async () => {
@@ -2318,18 +2265,7 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
       }
     };
     const timer = setInterval(heartbeat, 10000);
-    const flushOnExit = () => {
-      const token = localStorage.getItem("sb_token");
-      for (const item of pendingEvents.current) {
-        const payload = { ...item, authorization: token || "" };
-        const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-        if (navigator.sendBeacon?.(`/api/attempts/${aid}/event/beacon`, blob)) continue;
-        fetch(`/api/attempts/${aid}/event/beacon`, {
-          method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        }).catch(() => {});
-      }
-    };
+    const flushOnExit = () => flushExamEventsOnExit(aid, pendingEvents.current);
     window.addEventListener("pagehide", flushOnExit);
     return () => { clearInterval(timer); window.removeEventListener("pagehide", flushOnExit); };
   }, [aid, flushEvents]);
@@ -2339,6 +2275,48 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
     const i = setInterval(() => setLeft((x) => Math.max(0, x - 1)), 1000);
     return () => clearInterval(i);
   }, [unlimitedTime]);
+
+  // Time is up: save the answer on screen, then let the server close the
+  // attempt. The legacy exam has no submit endpoint; the server finalises an
+  // expired attempt (after its grace window) on the next answer call.
+  const [timeUp, setTimeUp] = useState(null);
+  const timeUpStarted = useRef(false);
+  const ansRef = useRef(ans);
+  ansRef.current = ans;
+  const qIdRef = useRef(v.question?.id);
+  qIdRef.current = v.question?.id;
+  const finishAfterTimeUp = useCallback(async () => {
+    setTimeUp("submitting");
+    setErr(null);
+    const post = (answer) => api(`/attempts/${aid}/answer`, {
+      method: "POST",
+      body: { question_id: qIdRef.current, answer, session_id: sessionId.current },
+    });
+    try {
+      try { await flushEvents(); } catch { /* best effort */ }
+      if (qIdRef.current && String(ansRef.current ?? "").trim()) {
+        const saved = await post(String(ansRef.current));
+        if (saved?.status === "done") { await onFinished(aid); return; }
+        setV(saved);
+      }
+      await new Promise((resolve) => setTimeout(resolve, (EXAM_GRACE_SECONDS + 2) * 1000));
+      const closed = await post("");
+      if (closed?.status === "done") { await onFinished(aid); return; }
+      setTimeUp("failed");
+    } catch (e) {
+      try {
+        const fresh = await api(`/attempts/${aid}`);
+        if (fresh?.status === "done") { await onFinished(aid); return; }
+      } catch { /* report the original error */ }
+      setErr(e);
+      setTimeUp("failed");
+    }
+  }, [aid, flushEvents, onFinished]);
+  useEffect(() => {
+    if (unlimitedTime || left > 0 || timeUpStarted.current) return;
+    timeUpStarted.current = true;
+    finishAfterTimeUp();
+  }, [left, unlimitedTime, finishAfterTimeUp]);
   useEffect(() => { setAns(""); setOut(null); }, [v.question?.id]);
 
   // Block clipboard actions throughout the exam, not only in the SQL editor.
@@ -2348,7 +2326,7 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
       if (event.type !== "paste" && inCodeEditor(event.target)) return;
       event.preventDefault();
       report(event.type, { editor: inCodeEditor(event.target) });
-      setIntegrityNotice(t("clipboardBlocked"));
+      setIntegrityNotice(tRef.current("clipboardBlocked"));
     };
     const keyboard = (event) => {
       const key = String(event.key || "").toLowerCase();
@@ -2359,19 +2337,19 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
       if (inCodeEditor(event.target) && (event.ctrlKey || event.metaKey) && key === "v") {
         event.preventDefault();
         report("paste", { editor: true });
-        setIntegrityNotice(t("clipboardBlocked"));
+        setIntegrityNotice(tRef.current("clipboardBlocked"));
         return;
       }
       if (inCodeEditor(event.target)) return;
       if ((event.ctrlKey || event.metaKey) && ["c", "v", "x"].includes(key)) {
         event.preventDefault();
         report(key === "c" ? "copy" : key === "x" ? "cut" : "paste");
-        setIntegrityNotice(t("clipboardBlocked"));
+        setIntegrityNotice(tRef.current("clipboardBlocked"));
       }
       if (event.shiftKey && key === "insert") {
         event.preventDefault();
         report("paste");
-        setIntegrityNotice(t("clipboardBlocked"));
+        setIntegrityNotice(tRef.current("clipboardBlocked"));
       }
     };
     const contextMenu = (event) => { event.preventDefault(); };
@@ -2382,7 +2360,7 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
       setFullscreenActive(active);
       if (!active) {
         report("fullscreen_exit");
-        setIntegrityNotice(t("fullscreenWarning"));
+        setIntegrityNotice(tRef.current("fullscreenWarning"));
       } else {
         report("fullscreen_enter");
       }
@@ -2393,7 +2371,7 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      setIntegrityNotice(t("examNavigationLocked"));
+      setIntegrityNotice(tRef.current("examNavigationLocked"));
     };
     document.addEventListener("copy", clipboard, true);
     document.addEventListener("cut", clipboard, true);
@@ -2425,7 +2403,7 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
     const sync = () => setShareActive(track.readyState === "live");
     const ended = () => {
       setShareActive(false);
-      setShareNotice(t("shareStopped"));
+      setShareNotice(tRef.current("shareStopped"));
       report("screen_share_stopped");
     };
     sync();
@@ -2513,8 +2491,9 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
     setQuitting(true);
     setErr(null);
     try {
-      await api(`/attempts/${aid}/quit`, { method: "POST", body: { session_id: sessionId.current } });
-      await onFinished(aid, "quit");
+      // If time had already run out the server grades the attempt instead.
+      const quitResult = await api(`/attempts/${aid}/quit`, { method: "POST", body: { session_id: sessionId.current } });
+      await onFinished(aid, quitResult?.status === "done" ? "done" : "quit");
     } catch (e) {
       setErr(e);
       setQuitting(false);
@@ -2528,6 +2507,23 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
   if (!q) return <p>{t("loading")}</p>;
   return (
     <section className="card exam">
+      {timeUp && (
+        <div className="exam-lock-overlay exam-timeup-overlay" role="alertdialog" aria-modal="true" aria-labelledby="legacy-timeup-title">
+          <div className="exam-lock-card">
+            <span className="exam-lock-icon" aria-hidden="true">◷</span>
+            <h3 id="legacy-timeup-title">{t("timeUpTitle")}</h3>
+            <p aria-live="assertive">{timeUp === "failed" ? t("timeUpFailed") : t("timeUpSubmitting")}</p>
+            {timeUp === "failed" && (
+              <>
+                <Err e={err} />
+                <div className="exam-lock-actions">
+                  <button type="button" className="btn" onClick={finishAfterTimeUp} autoFocus>{t("timeUpRetry")}</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       <IntegrityAlerts alerts={alerts} />
       <MicMonitor stream={micStream} onVoice={onVoice} />
       <div className="examhead">
@@ -2580,19 +2576,39 @@ function AdaptiveExamRun({ initial, onFinished, screenStream, cameraStream, micS
   );
 }
 
-function ExamCountdown({ initial, warnAt = 120 }) {
-  const [left, setLeft] = useState(initial);
+/**
+ * Server-timed countdown. Every attempt response re-syncs `initial` (seconds
+ * left). When it reaches zero `onExpire` runs once so the exam can save the
+ * last answer and submit. Unlimited-time attempts never expire.
+ */
+function ExamCountdown({ initial, warnAt = 120, onExpire, unlimited = false, unlimitedLabel = "Unlimited" }) {
+  const seconds = Math.max(0, Math.floor(Number(initial) || 0));
+  const [left, setLeft] = useState(seconds);
+  const expireRef = useRef(onExpire);
+  const firedRef = useRef(false);
+  expireRef.current = onExpire;
   useEffect(() => {
-    setLeft(initial);
-  }, [initial]);
-  useEffect(() => {
-    const timer = setInterval(() => setLeft((value) => Math.max(0, value - 1)), 1000);
+    if (unlimited) return undefined;
+    if (seconds > 0) firedRef.current = false;
+    const deadline = Date.now() + seconds * 1000;
+    const tick = () => {
+      const next = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      setLeft(next);
+      if (next === 0 && !firedRef.current) {
+        firedRef.current = true;
+        expireRef.current?.();
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, []);
-  return <b className={left < warnAt ? "low" : ""}>{fmt(left)}</b>;
+  }, [seconds, unlimited]);
+  if (unlimited) return <b>{unlimitedLabel}</b>;
+  return <b className={left < warnAt ? "low" : ""} role="timer">{fmt(left)}</b>;
 }
 
 function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStream, onRestartShare, screenStream, audioContext, devicesReady = true, onRestartCamera, onRestartMic }) {
+  const t = useT();
   const proctored = isProctored(initial.proctoring);
   const monitoring = useExamMonitoring({ enabled: proctored, initial, integrity, screenStream, cameraStream, micStream, audioContext });
   const [v, setV] = useState(initial);
@@ -2605,6 +2621,19 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   const [busy, setBusy] = useState(false);
   const [quitting, setQuitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // "Time is up" state: the countdown hit zero and the last answer is being
+  // saved and the attempt submitted. "failed" keeps a retry button visible.
+  const [timeUp, setTimeUp] = useState(null);
+  const finishedRef = useRef(false);
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
+  // The server closed the attempt (submitted, or the timer ran out): stop the
+  // exam UI once and hand over to the results screen.
+  const finishOnce = useCallback((attemptId) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onFinishedRef.current?.(attemptId);
+  }, []);
   const [sqlOut, setSqlOut] = useState(null);
   const [voiceFlags, setVoiceFlags] = useState(0);
   const [voiceActive, setVoiceActive] = useState(false);
@@ -2626,7 +2655,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     });
   };
   const aid = v.attempt_id;
-  const page = v.page || { questions: [], page: 0, page_count: 0, answers: {} };
+
   const allQuestions = v.all_questions || [];
   const q = allQuestions[currentIndex] || v.question;
   const answersMap = v.answers || initialAnswers;
@@ -2717,11 +2746,17 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       body: { question_id: q.id, answer: String(ans) },
     });
     setV(next);
+    if (next?.status === "done") finishOnce(aid);
     return next;
   };
   const queueRef = useRef([]);
   const pumpPromise = useRef(null);
   const mergeView = useCallback((res) => {
+    if (res?.status === "done") {
+      queueRef.current = [];
+      finishOnce(res.attempt_id || initial.attempt_id);
+      return;
+    }
     setV((prev) => ({
       ...prev,
       navigator: res.navigator ?? prev.navigator,
@@ -2730,7 +2765,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       all_questions: res.all_questions ?? prev.all_questions,
       remaining: res.remaining ?? prev.remaining,
     }));
-  }, []);
+  }, [finishOnce, initial.attempt_id]);
   const pumpQueue = useCallback(() => {
     if (pumpPromise.current) return pumpPromise.current;
     pumpPromise.current = (async () => {
@@ -2747,6 +2782,11 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
             // The optimistic position and the server disagree; reload once.
             try {
               const fresh = await api(`/attempts/${aid}`);
+              if (fresh?.status === "done") {
+                queueRef.current = [];
+                finishOnce(aid);
+                return;
+              }
               setV(fresh);
               setCurrentIndex(fresh.question_index || 0);
               setAns((fresh.answers || {})[fresh.question?.id] || "");
@@ -2762,7 +2802,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       }
     })();
     return pumpPromise.current;
-  }, [aid, mergeView, flushIntegrityEvents]);
+  }, [aid, mergeView, flushIntegrityEvents, finishOnce]);
   const flushQueue = async () => {
     while (queueRef.current.length || pumpPromise.current) {
       await pumpQueue();
@@ -2794,17 +2834,6 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     setSqlOut(null);
     queueRef.current.push({ index, question_id: previousId, answer: previousAnswer });
     pumpQueue();
-  };
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await saveAnswer();
-    } catch (e) {
-      setErr(e);
-    } finally {
-      setBusy(false);
-    }
   };
   const runSql = async () => {
     if (!integrity.shareActive || !integrity.fullscreenActive || (proctored && (!devicesReady || !integrity.tabVisible))) {
@@ -2843,10 +2872,49 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
       await saveAnswer();
       await flushIntegrityEvents();
       const r = await api(`/attempts/${aid}/submit`, { method: "POST", headers: { "X-Exam-Session": sessionId.current } });
-      if (r.status === "done") onFinished(aid);
+      if (r.status === "done") finishOnce(aid);
       else setV(r);
     } catch (e) {
       setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Countdown reached zero: flush queued navigation and integrity events, save
+  // the answer currently on screen (never lose the last typed answer), then
+  // submit. The server finalises an expired attempt on any of these calls.
+  const submitAfterTimeUp = async () => {
+    if (finishedRef.current) return;
+    setTimeUp("submitting");
+    setErr(null);
+    setBusy(true);
+    try {
+      try { await flushQueue(); } catch { /* the save below retries the answer */ }
+      if (finishedRef.current) return;
+      const current = qRef.current;
+      const value = String(ansRef.current ?? "");
+      try { await flushIntegrityEvents(); } catch { /* best effort */ }
+      if (current && value.trim()) {
+        const saved = await api(`/attempts/${aid}/answer`, {
+          method: "POST",
+          headers: { "X-Exam-Session": sessionId.current },
+          body: { question_id: current.id, answer: value },
+        });
+        if (saved?.status === "done") { finishOnce(aid); return; }
+      }
+      const r = await api(`/attempts/${aid}/submit`, { method: "POST", headers: { "X-Exam-Session": sessionId.current } });
+      if (r?.status === "done") { finishOnce(aid); return; }
+      setV(r);
+      setTimeUp("failed");
+    } catch (e) {
+      // The attempt may already be closed (expired on the server, or submitted
+      // from another request). Check before reporting a failure.
+      try {
+        const fresh = await api(`/attempts/${aid}`);
+        if (fresh?.status === "done") { finishOnce(aid); return; }
+      } catch { /* report the original error */ }
+      setErr(e);
+      setTimeUp("failed");
     } finally {
       setBusy(false);
     }
@@ -2856,8 +2924,9 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
     setQuitting(true);
     setErr(null);
     try {
-      await api(`/attempts/${aid}/quit`, { method: "POST", body: { session_id: sessionId.current } });
-      await onFinished(aid, "quit");
+      // If time had already run out the server grades the attempt instead.
+      const quitResult = await api(`/attempts/${aid}/quit`, { method: "POST", body: { session_id: sessionId.current } });
+      await onFinished(aid, quitResult?.status === "done" ? "done" : "quit");
     } catch (e) { setErr(e); }
     finally { setQuitting(false); }
   };
@@ -2865,16 +2934,10 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   const isChoice = ["mcq", "multiple choice"].includes(
     String(q.question_type).toLowerCase(),
   );
-  const answered =
-    page.answers?.[q.id] != null && String(page.answers[q.id]).trim() !== "";
   const currentNumber = currentIndex + 1;
   const previousIndex = Math.max(0, currentIndex - 1);
   const nextIndex = Math.min(v.total - 1, currentIndex + 1);
   const progressPct = v.total ? Math.round((v.answered / v.total) * 100) : 0;
-  const perQuestionMinutes = Math.max(
-    1,
-    Math.round(Number(q.time_allocation || 60) / 60),
-  );
   const sqlQuestion = String(q.question_type).toLowerCase().includes("sql");
   const codingQuestion = String(q.question_type).toLowerCase() === "coding";
   const codingLanguage = /javascript|typescript|react|next\.?js|node\.?js|express/i.test(
@@ -2908,7 +2971,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
   ];
   return (
     <section className="tech-exam exam3">
-      {(integrity.away || !integrity.fullscreenActive) && (
+      {!timeUp && (integrity.away || !integrity.fullscreenActive) && (
         <div className="exam-lock-overlay" role="alertdialog" aria-modal="true" aria-labelledby="exam-lock-title">
           <div className="exam-lock-card">
             <span className="exam-lock-icon" aria-hidden="true">!</span>
@@ -2939,6 +3002,23 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
           </div>
         </div>
       )}
+      {timeUp && (
+        <div className="exam-lock-overlay exam-timeup-overlay" role="alertdialog" aria-modal="true" aria-labelledby="exam-timeup-title" aria-describedby="exam-timeup-body">
+          <div className="exam-lock-card">
+            <span className="exam-lock-icon" aria-hidden="true">◷</span>
+            <h3 id="exam-timeup-title">{t("timeUpTitle")}</h3>
+            <p id="exam-timeup-body" aria-live="assertive">{timeUp === "failed" ? t("timeUpFailed") : t("timeUpSubmitting")}</p>
+            {timeUp === "failed" && (
+              <>
+                <Err e={err} />
+                <div className="exam-lock-actions">
+                  <button type="button" className="btn" onClick={submitAfterTimeUp} disabled={busy} autoFocus>{busy ? t("saving") : t("timeUpRetry")}</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       {!proctored && <MicMonitor stream={micStream} onVoice={onVoice} />}
       <header className="exam3-top">
         <div className="exam3-title">
@@ -2952,7 +3032,7 @@ function GraphRAGExamRun({ initial, onFinished, integrity, cameraStream, micStre
         </div>
         <div className="exam3-timer">
           <span>Time left</span>
-          <ExamCountdown initial={v.remaining} />
+          <ExamCountdown initial={v.remaining} unlimited={Boolean(v.unlimited_time)} onExpire={submitAfterTimeUp} />
         </div>
       </header>
 
@@ -3366,7 +3446,14 @@ function Result({ aid, next, nextLabel }) {
             {r.review_reason && <p>{r.review_reason}</p>}
           </div>
         )}
-        {(r.review_decision === "invalidated" || r.appeal) && (
+        <HonestyOutcome attempt={r} />
+        {r.review_decision === "needs_more_info" && (
+          <ReviewResponseForm
+            attempt={{ ...r, id: r.attempt_id || aid }}
+            onSubmitted={() => api(`/attempts/${aid}/result`).then(setR).catch(setErr)}
+          />
+        )}
+        {(canAppealAttempt(r) || r.appeal) && (
           <>
             <h3>{t("appealTitle")}</h3>
             <AttemptAppeal
@@ -3383,6 +3470,12 @@ function Result({ aid, next, nextLabel }) {
       )}
     </section>
   );
+}
+
+/** The backend's `appealable` flag wins; older payloads fall back to the outcome. */
+function canAppealAttempt(attempt) {
+  if (typeof attempt?.appealable === "boolean") return attempt.appealable;
+  return attempt?.review_decision === "invalidated" || isHonestyRejected(attempt);
 }
 
 function AttemptAppeal({ attempt, onSubmitted }) {
@@ -3420,7 +3513,7 @@ function AttemptAppeal({ attempt, onSubmitted }) {
       )}
     </div>
   );
-  if (attempt.review_decision !== "invalidated") return null;
+  if (!canAppealAttempt(attempt)) return null;
   return (
     <form className="attempt-appeal-form" onSubmit={submit}>
       <label>{t("appealHelp")}<textarea value={note} onChange={(event) => setNote(event.target.value)} minLength={3} maxLength={1000} rows={3} required /></label>
@@ -3430,58 +3523,151 @@ function AttemptAppeal({ attempt, onSubmitted }) {
   );
 }
 
-function AssessmentNotifications({ attempts, onRefresh, embedded = false }) {
+/** Candidate-facing status of one finished attempt. */
+function attemptOutcome(attempt) {
+  if (isHonestyRejected(attempt)) return "honesty_rejected";
+  if (attempt?.review_decision === "approved" && !attempt.finalized && attempt.publication?.stage !== "published") return "pending";
+  return attempt?.review_decision || "pending";
+}
+
+const outcomePillClass = (status) =>
+  "status-pill " + (status === "approved" ? "status-valid" : status === "invalidated" || status === "honesty_rejected" ? "status-invalid" : "status-review");
+
+/** Neutral explanation of a human honesty-review rejection. Never automatic. */
+function HonestyOutcome({ attempt }) {
+  const t = useT();
+  if (!isHonestyRejected(attempt)) return null;
+  return (
+    <div className="assessment-review-result honesty-outcome">
+      <strong>{t("honestyRejectedTitle")}</strong>
+      <p>{t("honestyRejectedBody")}</p>
+      {(attempt.honesty_reason || attempt.honesty?.reason) && <p><strong>{t("reviewReason")}:</strong> {attempt.honesty_reason || attempt.honesty.reason}</p>}
+    </div>
+  );
+}
+
+/**
+ * Reply to a reviewer who asked for more information. Posts to
+ * /api/attempts/{id}/review-response; once sent the attempt carries
+ * review_response {note, created}.
+ */
+function ReviewResponseForm({ attempt, onSubmitted }) {
+  const t = useT();
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [sent, setSent] = useState(null);
+  const fieldId = useId();
+  if (attempt?.review_decision !== "needs_more_info") return null;
+  const response = attempt.review_response || sent;
+  // review_response_allowed (when present) tells us the backend accepts a reply.
+  if (!response && attempt.review_response_allowed === false) return null;
+  if (response) {
+    return (
+      <div className="attempt-appeal-status review-response-sent" role="status" aria-live="polite">
+        <strong>{t("reviewResponseSent")}</strong>
+        {response.note && <p>{response.note}</p>}
+        {response.created ? <small>{new Date(Number(response.created) * 1000).toLocaleString()}</small> : null}
+      </div>
+    );
+  }
+  const trimmed = note.trim();
+  const submit = async (event) => {
+    event.preventDefault();
+    if (trimmed.length < 3) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api(`/attempts/${attempt.id || attempt.attempt_id}/review-response`, { method: "POST", body: { note: trimmed } });
+      setSent(res?.review_response || { note: trimmed, created: Date.now() / 1000 });
+      setNote("");
+      if (onSubmitted) await onSubmitted();
+    } catch (error) {
+      setErr(error?.status === 404 || error?.status === 501 ? { code: "review_response_unavailable" } : error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="attempt-appeal-form review-response-form" onSubmit={submit}>
+      <p className="review-response-action"><strong>{t("reviewResponseActionNeeded")}</strong></p>
+      <label htmlFor={fieldId}>{t("reviewResponseLabel")}</label>
+      <textarea id={fieldId} value={note} onChange={(event) => setNote(event.target.value)} minLength={3} maxLength={2000} rows={3} required aria-describedby={fieldId + "-help"} />
+      <small id={fieldId + "-help"} className="muted">{t("reviewResponseHelp")} ({note.length}/2000)</small>
+      <div aria-live="polite"><Err e={err} /></div>
+      <button className="btn ghost sm" disabled={busy || trimmed.length < 3}>{busy ? t("saving") : t("reviewResponseSend")}</button>
+    </form>
+  );
+}
+
+function AssessmentNotifications({ attempts, onRefresh, unreadKeys, server, serverHighlight, onOpenServer }) {
   const t = useT();
   const notifications = assessmentNotificationItems(attempts);
+  const serverItems = server?.items || [];
+  const feed = mergeNotificationFeed(notifications, serverItems);
   const latest = notifications[0];
-  const latestKey = latest
-    ? `${latest.id}:${latest.review_decision || ""}:${latest.reviewed_at || ""}:${latest.appeal_decision || ""}:${latest.appeal_decided_at || ""}`
-    : "";
-  const [open, setOpen] = useState(embedded);
-  const previousKey = useRef(latestKey);
-  useEffect(() => {
-    if (previousKey.current && latestKey && previousKey.current !== latestKey) setOpen(true);
-    previousKey.current = latestKey;
-  }, [latestKey]);
-  if (!notifications.length) {
-    return embedded ? <p className="assessment-notification-empty">{t("noAssessmentNotifications")}</p> : null;
+  const serverState = server && (
+    <div aria-live="polite">
+      {server.status === "loading" && !serverItems.length && <p className="assessment-notification-empty">{t("loading")}</p>}
+      {server.status === "error" && (
+        <p className="err" role="alert">
+          {t("notificationsLoadFailed")}{" "}
+          <button type="button" className="cr-text-btn" onClick={server.load}>{t("retry")}</button>
+        </p>
+      )}
+    </div>
+  );
+  if (!feed.length) {
+    return (
+      <>
+        {serverState}
+        {server?.status !== "loading" && <p className="assessment-notification-empty">{t("noAssessmentNotifications")}</p>}
+      </>
+    );
   }
   const date = (timestamp) => timestamp
     ? new Date(Number(timestamp) * 1000).toLocaleString()
     : "";
   const statusKey = (decision) => `assessmentReview_${decision}`;
-  const statusDecision = latest.review_decision || "pending";
-  const reviewedAt = Math.max(Number(latest.reviewed_at) || 0, Number(latest.appeal_decided_at) || 0);
+  const statusDecision = latest ? attemptOutcome(latest) : "pending";
+  const reviewedAt = latest ? Math.max(Number(latest.reviewed_at) || 0, Number(latest.appeal_decided_at) || 0, Number(latest.honesty?.reviewed_at) || 0) : 0;
   return (
-    <aside className="assessment-notifications" aria-live="polite">
-      <button className="assessment-notification-toggle" onClick={() => setOpen((value) => !value)}>
-        {t("assessmentUpdates")} <span>{notifications.length}</span>
-      </button>
-      {open && <div className="assessment-notification-panel">
-        <div className="assessment-notification-heading">
+    <div className="assessment-notifications" aria-live="polite">
+      {serverState}
+      <div className="assessment-notification-panel">
+        {latest && <div className="assessment-notification-heading">
           <div>
             <small>{typeof latest.overall === "number" ? t("latestReviewed") : t("latestUpdate")}</small>
             <strong>{typeof latest.overall === "number" ? `${latest.overall} / 100` : t(statusKey(statusDecision))}</strong>
             {reviewedAt ? <small>{date(reviewedAt)}</small> : null}
           </div>
-          <button type="button" aria-label={t("close")} onClick={() => setOpen(false)}>×</button>
-        </div>
-        {notifications.slice(0, 3).map((attempt) => (
-          <article className="assessment-notification-item" key={attempt.id}>
+          <span className="assessment-notification-count" aria-label={`${feed.length} ${t("assessmentUpdates")}`}>{feed.length}</span>
+        </div>}
+        {feed.map(({ source, key, item: attempt }) => source === "server" ? (
+          <ServerNotificationItem
+            key={key}
+            item={attempt}
+            unread={Boolean(serverHighlight?.has(attempt.id)) || !attempt.read_at}
+            onOpen={onOpenServer && attempt.link ? onOpenServer : undefined}
+          />
+        ) : (
+          <article className={"assessment-notification-item" + (unreadKeys?.has(notificationKey(attempt)) ? " is-unread" : "")} key={attempt.id}>
             <div className="assessment-notification-meta">
               <strong>{attempt.kind === "post" ? t("attemptRetest") : t("attemptInitial")}</strong>
-              <span className={"status-pill " + (attempt.review_decision === "approved" ? "status-valid" : attempt.review_decision === "invalidated" ? "status-invalid" : "status-review")}>
-                {t(statusKey(attempt.review_decision || "pending"))}
+              <span className={outcomePillClass(attemptOutcome(attempt))}>
+                {t(statusKey(attemptOutcome(attempt)))}
               </span>
               <small>{date(notificationTimestamp(attempt))}</small>
             </div>
             {typeof attempt.overall === "number" && <strong className="assessment-notification-score">{attempt.overall} / 100</strong>}
             {attempt.review_reason && <p>{attempt.review_reason}</p>}
-            {attempt.review_decision === "invalidated" && <AttemptAppeal attempt={attempt} onSubmitted={onRefresh} />}
+            <HonestyOutcome attempt={attempt} />
+            <ReviewResponseForm attempt={attempt} onSubmitted={onRefresh} />
+            {(canAppealAttempt(attempt) || attempt.appeal) && <AttemptAppeal attempt={attempt} onSubmitted={onRefresh} />}
           </article>
         ))}
-      </div>}
-    </aside>
+      </div>
+    </div>
   );
 }
 
@@ -3490,16 +3676,21 @@ function AssessmentRecords({ attempts, onRefresh }) {
   const [filter, setFilter] = useState("all");
   const records = [...attempts].filter((attempt) => attempt.status === "done")
     .sort((a, b) => (b.finished || 0) - (a.finished || 0));
+  // Buckets follow the candidate-facing outcome; an honesty rejection counts
+  // with the other "not verified" outcomes.
+  const bucket = (attempt) => {
+    const status = attemptOutcome(attempt);
+    if (status === "honesty_rejected" || status === "invalidated") return "invalidated";
+    if (status === "approved") return "approved";
+    return "pending";
+  };
   const counts = {
     all: records.length,
-    approved: records.filter((attempt) => attempt.review_decision === "approved").length,
-    pending: records.filter((attempt) => !attempt.review_decision || attempt.review_decision === "needs_more_info").length,
-    invalidated: records.filter((attempt) => attempt.review_decision === "invalidated").length,
+    approved: records.filter((attempt) => bucket(attempt) === "approved").length,
+    pending: records.filter((attempt) => bucket(attempt) === "pending").length,
+    invalidated: records.filter((attempt) => bucket(attempt) === "invalidated").length,
   };
-  const visibleRecords = filter === "all" ? records : records.filter((attempt) =>
-    filter === "pending"
-      ? !attempt.review_decision || attempt.review_decision === "needs_more_info"
-      : attempt.review_decision === filter);
+  const visibleRecords = filter === "all" ? records : records.filter((attempt) => bucket(attempt) === filter);
   const date = (timestamp) => timestamp
     ? new Date(Number(timestamp) * 1000).toLocaleString()
     : "";
@@ -3516,23 +3707,23 @@ function AssessmentRecords({ attempts, onRefresh }) {
         <span className="assessment-total"><strong>{records.length}</strong><small>{t("records")}</small></span>
       </header>
       {!!records.length && <div className="assessment-record-summary">
-        <article className="assessment-summary-card"><span className="assessment-summary-icon">✓</span><div><strong>{counts.approved}</strong><small>{t("assessmentReview_approved")}</small></div></article>
-        <article className="assessment-summary-card"><span className="assessment-summary-icon pending">◷</span><div><strong>{counts.pending}</strong><small>{t("assessmentReview_pending")}</small></div></article>
-        <article className="assessment-summary-card"><span className="assessment-summary-icon rejected">!</span><div><strong>{counts.invalidated}</strong><small>{t("assessmentReview_invalidated")}</small></div></article>
+        <article className="assessment-summary-card"><span className="assessment-summary-icon" aria-hidden="true"><WorkspaceIcon name="check" size={18} /></span><div><strong>{counts.approved}</strong><small>{t("assessmentReview_approved")}</small></div></article>
+        <article className="assessment-summary-card"><span className="assessment-summary-icon pending" aria-hidden="true"><WorkspaceIcon name="clock" size={18} /></span><div><strong>{counts.pending}</strong><small>{t("assessmentReview_pending")}</small></div></article>
+        <article className="assessment-summary-card"><span className="assessment-summary-icon rejected" aria-hidden="true"><WorkspaceIcon name="alert" size={18} /></span><div><strong>{counts.invalidated}</strong><small>{t("assessmentReview_invalidated")}</small></div></article>
       </div>}
       <nav className="assessment-record-filters" aria-label={t("filterAssessments")}>
         {filters.map(([id, label]) => <button key={id} type="button" aria-pressed={filter === id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>
           {label}<span>{counts[id]}</span>
         </button>)}
       </nav>
-      {!visibleRecords.length ? <div className="assessment-record-empty"><span aria-hidden="true">◷</span><h2>{records.length ? t("noMatchingAssessments") : t("noAssessmentRecords")}</h2><p>{records.length ? t("changeAssessmentFilter") : t("assessmentRecordsHelp")}</p></div> : visibleRecords.map((attempt) => {
-        const status = attempt.review_decision === "approved" && !attempt.finalized ? "pending" : attempt.review_decision || "pending";
-        const label = status === "pending" ? t("assessmentReview_pending") : t(`assessmentReview_${status}`);
+      {!visibleRecords.length ? <div className="assessment-record-empty"><span aria-hidden="true"><WorkspaceIcon name="exams" size={20} /></span><h2>{records.length ? t("noMatchingAssessments") : t("noAssessmentRecords")}</h2><p>{records.length ? t("changeAssessmentFilter") : t("assessmentRecordsHelp")}</p></div> : visibleRecords.map((attempt) => {
+        const status = attemptOutcome(attempt);
+        const label = t(`assessmentReview_${status}`);
         return (
           <article className={`assessment-record-card assessment-record-${status}`} key={attempt.id}>
             <header className="assessment-record-header">
-              <div className="assessment-record-title"><span className="assessment-record-icon">{attempt.kind === "post" ? "↻" : "✓"}</span><div><strong>{attempt.kind === "post" ? t("attemptRetest") : t("attemptInitial")}</strong><small>{date(attempt.finished)}</small></div></div>
-              <span className={"status-pill " + (status === "approved" ? "status-valid" : status === "invalidated" ? "status-invalid" : "status-review")}>{label}</span>
+              <div className="assessment-record-title"><span className="assessment-record-icon" aria-hidden="true"><WorkspaceIcon name={attempt.kind === "post" ? "refresh" : "exams"} size={18} /></span><div><strong>{attempt.kind === "post" ? t("attemptRetest") : t("attemptInitial")}</strong><small>{date(attempt.finished)}</small></div></div>
+              <span className={outcomePillClass(status)}>{label}</span>
             </header>
             <div className="assessment-record-score-row">
               <div className="assessment-record-score"><span>{t("score")}</span><strong>{attempt.overall ?? "—"}<small> / 100</small></strong></div>
@@ -3557,6 +3748,8 @@ function AssessmentRecords({ attempts, onRefresh }) {
               </div>
             </details>}
             {attempt.review_reason && <p className="assessment-record-reason"><strong>{t("reviewReason")}:</strong> {attempt.review_reason}</p>}
+            <HonestyOutcome attempt={attempt} />
+            <ReviewResponseForm attempt={attempt} onSubmitted={onRefresh} />
             <AttemptAppeal attempt={attempt} onSubmitted={onRefresh} />
           </article>
         );
@@ -3929,7 +4122,7 @@ function IdentityCheck({ cameraStream, avatarUrl, status, onChange, onAvatarUplo
   return (
     <div className={"identity-check" + (live.state === "match" ? " ok" : live.state === "mismatch" ? " warn" : "")}>
       <header className="identity-check-head">
-        <span className="eyebrow">IDENTITY CHECK</span>
+        <span className="eyebrow">Identity check</span>
         <strong>Match your live face to your profile photo</strong>
         <span>Runs entirely in this browser. No biometric template is stored.</span>
       </header>
@@ -4177,24 +4370,24 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
     setBanner("");
     try {
       // Resume the saved attempt directly; never build or substitute an exam.
-      let blueprintId = null;
-      if (!act && initialMode) {
-        const bp = await api("/assessment/initial-blueprint", {
-          method: "POST",
-          body: { department: jobDept, requested_skill_ids: jobSkills },
-        });
-        if (!bp || bp.status !== "ready") {
-          setBanner(
-            (bp?.message || "The Initial exam needs more approved questions. No questions were fabricated.") +
-              (bp?.shortages?.length ? " Gaps: " + bp.shortages.map((gap) => `${gap.topic || gap.section}: ${gap.available ?? 0}/${gap.required ?? "?"}`).join("; ") + "." : ""),
-          );
-          return;
+      // Returns a ready blueprint id, or null after explaining the shortage.
+      const makeBlueprint = async () => {
+        if (initialMode) {
+          const bp = await api("/assessment/initial-blueprint", {
+            method: "POST",
+            body: { department: jobDept, requested_skill_ids: jobSkills },
+          });
+          if (!bp || bp.status !== "ready") {
+            setBanner(
+              (bp?.message || "The Initial exam needs more approved questions. No questions were fabricated.") +
+                (bp?.shortages?.length ? " Gaps: " + bp.shortages.map((gap) => `${gap.topic || gap.section}: ${gap.available ?? 0}/${gap.required ?? "?"}`).join("; ") + "." : ""),
+            );
+            return null;
+          }
+          return bp.blueprint_id;
         }
-        blueprintId = bp.blueprint_id;
-      } else if (!act) {
         const bp = await api("/assessment/blueprint", { method: "POST" });
         if (bp && bp.status === "ready") {
-          blueprintId = bp.blueprint_id;
           if (bp.uncovered_skills?.length) {
             setBanner(
               "Some confirmed skills have no approved practice questions yet: " +
@@ -4202,24 +4395,40 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
                 ". The assessment will cover the available skills.",
             );
           }
-        } else {
-          setBanner(bp?.message || "The Profile retake needs more approved questions. Ask an admin to complete the bank.");
-          return;
+          return bp.blueprint_id;
         }
+        setBanner(bp?.message || "The Profile retake needs more approved questions. Ask an admin to complete the bank.");
+        return null;
+      };
+      let blueprintId = null;
+      if (!act) {
+        blueprintId = await makeBlueprint();
+        if (!blueprintId) return;
       }
       if (!document.fullscreenElement || !screenStream?.getVideoTracks().some((track) => track.readyState === "live")) {
         resyncPermissions();
         throw new Error("Screen sharing or full-screen stopped during setup. Restore both steps, then start again.");
       }
-      const v = await api("/attempts", {
+      const startAttempt = (id) => api("/attempts", {
         method: "POST",
         body: {
-          ...(act ? { resume_attempt_id: act.id } : { blueprint_id: blueprintId }),
+          ...(act ? { resume_attempt_id: act.id } : { blueprint_id: id }),
           ...(proctored ? { proctoring_consent: proctoringPolicy.consent_version,
             proctoring_ready: { screen: Boolean(sharing), fullscreen, camera: devices.cameraReady, microphone: devices.microphoneReady },
             identity_status: identityResult.status === "verified" ? "verified" : "needs_review" } : {}),
         },
       });
+      let v;
+      try {
+        v = await startAttempt(blueprintId);
+      } catch (startError) {
+        // The saved blueprint includes questions this candidate has already
+        // seen: build a fresh one once and retry.
+        if (act || errorCode(startError) !== "blueprint_contains_seen_questions") throw startError;
+        blueprintId = await makeBlueprint();
+        if (!blueprintId) return;
+        v = await startAttempt(blueprintId);
+      }
       if (v.status === "active") {
         let seq = v.last_event_seq || 0;
         const bootstrap = [{ type: trackLive(screenStream) ? "screen_share_started" : "screen_share_stopped", metadata: { surface: screenStream.getVideoTracks()[0]?.getSettings?.().displaySurface || "unknown" } }];
@@ -4335,7 +4544,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           <div className="ies-card-head">
             <span className="ies-card-icon" aria-hidden="true">📋</span>
             <div>
-              <span className="ies-kicker">SYSTEM CHECK</span>
+              <span className="ies-kicker">System check</span>
               <h2>{title}</h2>
               <p>{intro}</p>
             </div>
@@ -4371,7 +4580,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
         {proctored && (
           <article className={"ies-card ies-consent" + (proctoringConsent ? " done" : " next")} id="ies-step-consent">
             <div className="ies-card-head">
-              <span className="ies-card-icon" aria-hidden="true">🛡️</span>
+              <span className="ies-card-icon" aria-hidden="true"><WorkspaceIcon name="integrity" size={20} /></span>
               <div>
                 <span className="ies-kicker">STEP 1</span>
                 <h3>Monitoring Consent</h3>
@@ -4557,7 +4766,7 @@ function Exam({ kind, st, refresh, afterResult, afterLabel }) {
           </ol>
         </article>
         <article className="ies-card">
-          <div className="ies-tips-head"><span aria-hidden="true">💡</span><b>Quick Tips</b></div>
+          <div className="ies-tips-head"><span aria-hidden="true"><WorkspaceIcon name="info" size={18} /></span><b>Quick tips</b></div>
           <ul className="ies-tips">
             <li><i aria-hidden="true">✓</i>Use a modern desktop browser (Chrome, Edge, or Firefox).</li>
             {proctored && <li><i aria-hidden="true">✓</i>Allow camera, microphone, entire-screen sharing and full-screen.</li>}
@@ -4694,14 +4903,13 @@ function Learn({ onNext }) {
     <section className="learn-workspace">
       <div className="learn-hero">
         <div>
-          <span className="learn-kicker">YOUR PERSONAL DEVELOPMENT PLAN</span>
+          <span className="learn-kicker">Your personal development plan</span>
           <h2>Turn skill gaps into progress.</h2>
           <p>
             Your learning path retrieves reviewed courses from your approved topic scores.
             Academic and honesty approval are both required. Every plan is saved against a result revision.
           </p>
         </div>
-        <div className="learn-hero-mark">↗</div>
       </div>
       <AssessmentStatus publication={data.publication} objective={data.result_summary?.objective_summary} onRefresh={load} />
       {error && (
@@ -4717,7 +4925,7 @@ function Learn({ onNext }) {
         >
           <div>
             <span className="learn-kicker">
-              {data.approved ? "VERIFIED RESULT" : "PROVISIONAL RESULT"}
+              {data.approved ? "Verified result" : "Provisional result"}
             </span>
             <h3>
               {data.approved
@@ -4805,7 +5013,7 @@ function Learn({ onNext }) {
       </div>
       <div className="learn-section-head">
         <div>
-          <span className="learn-kicker">CURATED FOR YOUR GAPS</span>
+          <span className="learn-kicker">Curated for your gaps</span>
           <h3>Recommended learning</h3>
           <p>
             Only approved curated links are shown. If no approved resource exists
@@ -4840,7 +5048,7 @@ function Learn({ onNext }) {
           <section className="learn-topic" key={topic}>
             <header>
               <div>
-                <span>SKILL GAP</span>
+                <span>Skill gap</span>
                 <h4>{data.gap_labels?.[topic] || topic.replaceAll("_", " ")}</h4>
               </div>
               <small>
@@ -4854,7 +5062,7 @@ function Learn({ onNext }) {
                 .map((r) => (
                   <article className="learn-resource" key={r.id}>
                     <div className="learn-resource-top">
-                      <span className="learn-resource-icon">↗</span>
+                      <span className="learn-resource-icon" aria-hidden="true"><WorkspaceIcon name="learning" size={18} /></span>
                       <span className="learn-resource-level">
                         Level {r.level}
                       </span>
@@ -4865,7 +5073,7 @@ function Learn({ onNext }) {
                     </p>
                     {r.reason && <p className="learn-note">{r.reason}</p>}
                     <div className="learn-resource-meta">
-                      <span>◷ {r.estimated_minutes} min</span>
+                      <span>{r.estimated_minutes} min</span>
                       <span>✓ Verified</span>
                     </div>
                     <div className="learn-resource-actions">
@@ -4934,7 +5142,7 @@ function Learn({ onNext }) {
       )}
       <div className="learn-bottom-grid">
         <section className="learn-panel">
-          <span className="learn-kicker">REASSESSMENT</span>
+          <span className="learn-kicker">Reassessment</span>
           <h3>Ready to measure your progress?</h3>
           <p>
             Retakes are separate official attempts. Your previous scores remain
@@ -4983,7 +5191,7 @@ function Learn({ onNext }) {
           )}
         </section>
         <section className="learn-panel">
-          <span className="learn-kicker">YOUR LEARNING ACTIVITY</span>
+          <span className="learn-kicker">Your learning activity</span>
           <h3>Progress overview</h3>
           <div className="learn-progress-track">
             <span
@@ -5012,7 +5220,7 @@ function Learn({ onNext }) {
       <section className="learn-panel learn-history">
         <div className="learn-section-head">
           <div>
-            <span className="learn-kicker">IMMUTABLE RECORD</span>
+            <span className="learn-kicker">Immutable record</span>
             <h3>Assessment attempt history</h3>
             <p>
               Every official attempt is recorded separately, including consumed
@@ -5148,34 +5356,71 @@ function Passport({ st, refresh }) {
 
 function DataRights() {
   const t = useT();
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState(null);
+  const [status, setStatus] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const exp = async () => {
-    const d = await api("/me/export");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(
-      new Blob([JSON.stringify(d, null, 2)], { type: "application/json" }),
-    );
-    a.download = "talentforge-my-data.json";
-    a.click();
+    setBusy("export");
+    setErr(null);
+    setStatus("");
+    try {
+      const d = await api("/me/export");
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(d, null, 2)], { type: "application/json" }),
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "skillbridge-my-data.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatus(t("exportReady"));
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy("");
+    }
   };
   const del = async () => {
-    if (confirm(t("deleteConfirm"))) {
+    setBusy("delete");
+    setErr(null);
+    try {
       await api("/me", { method: "DELETE" });
       setToken(null);
       location.hash = "";
       location.reload();
+    } catch (e) {
+      setErr(e);
+      setBusy("");
+      setConfirming(false);
     }
   };
   return (
     <div className="card quiet">
       <h3>{t("dataRights")}</h3>
       <div className="row">
-        <button className="btn ghost" onClick={exp}>
-          {t("exportData")}
+        <button className="btn ghost" onClick={exp} disabled={Boolean(busy)} aria-busy={busy === "export"}>
+          {busy === "export" ? t("exportBusy") : t("exportData")}
         </button>
-        <button className="btn ghost" onClick={del}>
+        <button className="btn ghost" onClick={() => { setErr(null); setConfirming(true); }} disabled={Boolean(busy)}>
           {t("deleteData")}
         </button>
       </div>
+      <p className="muted" role="status" aria-live="polite">{status}</p>
+      <Err e={err} />
+      <ConfirmDialog
+        open={confirming}
+        title={t("deleteData")}
+        body={t("deleteConfirm")}
+        confirmLabel={busy === "delete" ? t("deleteBusy") : t("deleteConfirmBtn")}
+        cancelLabel={t("cancel")}
+        busy={busy === "delete"}
+        danger
+        onConfirm={del}
+        onCancel={() => setConfirming(false)}
+      />
     </div>
   );
 }
@@ -5221,7 +5466,7 @@ function CandidateAssessmentResults({ attempts }) {
     <section className="portal-panel assessment-history">
       <div className="dashboard-section-heading">
         <div>
-          <span className="eyebrow">VERIFIED ASSESSMENT RESULTS</span>
+          <span className="eyebrow">Verified assessment results</span>
           <h2>Assessment results</h2>
           <p>Academic marks and the honesty report must both be approved before a result is verified.</p>
         </div>
@@ -5229,7 +5474,7 @@ function CandidateAssessmentResults({ attempts }) {
       {latest ? (
         <div className="assessment-featured">
           <div>
-            <span className="eyebrow">LATEST VALID EXAM</span>
+            <span className="eyebrow">Latest valid exam</span>
             <h3>{label(latest)}</h3>
             <p>{date(latest.finished)}</p>
           </div>
@@ -5237,7 +5482,7 @@ function CandidateAssessmentResults({ attempts }) {
             {latest.overall ?? "—"}
             <small>/ 100</small>
           </strong>
-          <span className="status-pill">Valid exam</span>
+          <span className="status-pill" data-tone="success">Valid exam</span>
         </div>
       ) : (
         <div className="assessment-pending-banner">
@@ -5396,13 +5641,13 @@ function CandidateProfileOnboarding({ onSaved, ownerKey }) {
     return (
       <section>
         <div className="portal-panel">
-          <span className="eyebrow">YOUR PROFILE</span>
+          <span className="eyebrow">Your profile</span>
           <h2>Your candidate profile</h2>
           <p>
             Your profile has been created. You can update your information
             whenever you need.
           </p>
-          <span className="status-pill">Confirmed</span>
+          <span className="status-pill" data-tone="success">Confirmed</span>
         </div>
 
         <CandidateProfileWorkspace ownerKey={ownerKey} onSaved={onSaved} />
@@ -5413,7 +5658,7 @@ function CandidateProfileOnboarding({ onSaved, ownerKey }) {
   return (
     <section className="tf-profile">
       <header className="tf-page-head">
-        <span className="tf-chip">CANDIDATE DETAILS</span>
+        <span className="tf-chip">Candidate details</span>
         <h1>My Profile</h1>
         <p>Create, review and manage your professional profile.</p>
         <span className="tf-underline" aria-hidden="true" />
@@ -5507,7 +5752,7 @@ function CandidateProfileOnboarding({ onSaved, ownerKey }) {
           </p>
           <div className="tf-file-row">
             <label className="tf-file-label">
-              <span aria-hidden="true">📄</span>
+              <span aria-hidden="true"><WorkspaceIcon name="file" size={20} /></span>
               <span>
                 <b>{file ? file.name : "Select CV (PDF, DOCX, TXT or MD)"}</b>
                 <small>{file ? "Ready to upload" : "Choose File"}</small>
@@ -5544,12 +5789,12 @@ function CandidateProfileOnboarding({ onSaved, ownerKey }) {
 
       <footer className="tf-trust">
         {[
-          ["🛡", "Secure &amp; Private", "Your data is always safe"],
-          ["⚡", "Fast &amp; Easy", "Complete in minutes"],
-          ["★", "Professional Profile", "Stand out to recruiters"],
+          ["privacy", "Secure &amp; Private", "Your data is always safe"],
+          ["clock", "Fast &amp; Easy", "Complete in minutes"],
+          ["profile", "Professional Profile", "Stand out to recruiters"],
         ].map(([icon, title, sub]) => (
           <div className="tf-trust-item" key={title}>
-            <span className="tf-trust-icon" aria-hidden="true">{icon}</span>
+            <span className="tf-trust-icon" aria-hidden="true"><WorkspaceIcon name={icon} size={18} /></span>
             <span>
               <b>{title}</b>
               <small>{sub}</small>
@@ -5577,7 +5822,7 @@ function CandidateProfileOnboarding({ onSaved, ownerKey }) {
 }
 
 
-function CandidateJobs({ onApply }) {
+function CandidateJobs() {
   const [jobs, setJobs] = useState([]),
     [apps, setApps] = useState([]),
     [search, setSearch] = useState(""),
@@ -5661,7 +5906,7 @@ function CandidateJobs({ onApply }) {
         {filtered.map((j) => (
           <article className="job-card" key={j.id}>
             <div className="job-card-top">
-              <span className="job-icon">↗</span>
+              <span className="job-icon" aria-hidden="true"><WorkspaceIcon name="jobs" size={18} /></span>
               {j.is_mock && <span className="chip chip-mock">MOCK DATA</span>}
             </div>
             <h3>{j.title}</h3>
@@ -5695,24 +5940,138 @@ function CandidateJobs({ onApply }) {
     </section>
   );
 }
+/** Platform-approved next-stage invitations for the candidate's applications. */
+function PhaseTwoInvites({ onChanged }) {
+  const t = useT();
+  const [items, setItems] = useState([]);
+  const [status, setStatus] = useState("loading");
+  const [err, setErr] = useState(null);
+  const [pending, setPending] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState(null);
+  const [notice, setNotice] = useState("");
+  const load = useCallback(async () => {
+    setErr(null);
+    try {
+      const r = await api("/candidate/phase-two-invites");
+      setItems(normalizeInvites(r));
+      setStatus("ready");
+    } catch (e) {
+      if (e?.status === 404 || e?.status === 501) {
+        setItems([]);
+        setStatus("unavailable");
+      } else {
+        setErr(e);
+        setStatus("error");
+      }
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const respond = async () => {
+    if (!pending) return;
+    setBusy(true);
+    setActionErr(null);
+    try {
+      await api(`/candidate/phase-two-invites/${encodeURIComponent(pending.invite.id)}/respond`, {
+        method: "POST",
+        body: { decision: pending.decision },
+      });
+      setNotice(pending.decision === "accept" ? t("inviteAccepted") : t("inviteDeclined"));
+      setPending(null);
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setActionErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (status === "unavailable") return null;
+  return (
+    <section className="phase-two-invites" aria-labelledby="phase-two-invites-title">
+      <div className="section-toolbar">
+        <div>
+          <h3 id="phase-two-invites-title">{t("invitesTitle")}</h3>
+          <p>{t("invitesHelp")}</p>
+        </div>
+      </div>
+      <div aria-live="polite">
+        {status === "loading" && <p className="muted">{t("loading")}</p>}
+        {notice && <p className="success-note" role="status">{notice}</p>}
+      </div>
+      {status === "error" && (
+        <div>
+          <Err e={err} />
+          <button type="button" className="btn ghost sm" onClick={load}>{t("retry")}</button>
+        </div>
+      )}
+      {status === "ready" && !items.length && <p className="muted">{t("invitesEmpty")}</p>}
+      {items.map((invite) => {
+        const open = canRespondToInvite(invite);
+        const expired = inviteAwaitingResponse(invite) && inviteDeadlinePassed(invite);
+        const statusLabel = expired ? t("inviteStatus_expired") : t(`inviteStatus_${invite.status}`) !== `inviteStatus_${invite.status}` ? t(`inviteStatus_${invite.status}`) : humanizeStatus(invite.status);
+        return (
+          <article className="application-row phase-two-invite" key={invite.id} data-invite-id={invite.id}>
+            <div className="application-main">
+              <h3>{invite.title || t("invitesTitle")}</h3>
+              <p>{[invite.job_title, invite.company_name].filter(Boolean).join(" · ")}</p>
+              {invite.requirements && <p className="muted">{invite.requirements}</p>}
+              <span className={"status-pill " + (invite.status === "accepted" ? "status-valid" : invite.status === "declined" || expired ? "status-invalid" : "status-review")}>{statusLabel}</span>
+              {invite.deadline && <small className="muted"> {t("inviteDeadline")}: {invite.deadline}</small>}
+            </div>
+            {open && (
+              <div className="application-actions">
+                <button type="button" className="btn sm" onClick={() => { setActionErr(null); setPending({ invite, decision: "accept" }); }}>{t("inviteAccept")}</button>
+                <button type="button" className="btn ghost sm" onClick={() => { setActionErr(null); setPending({ invite, decision: "decline" }); }}>{t("inviteDecline")}</button>
+              </div>
+            )}
+          </article>
+        );
+      })}
+      <ConfirmDialog
+        open={Boolean(pending)}
+        title={pending?.decision === "accept" ? t("inviteAcceptConfirmTitle") : t("inviteDeclineConfirmTitle")}
+        body={pending ? `${pending.invite.title || ""}${pending.invite.job_title ? " · " + pending.invite.job_title : ""}. ${pending.decision === "accept" ? t("inviteAcceptConfirmBody") : t("inviteDeclineConfirmBody")}` : ""}
+        confirmLabel={busy ? t("saving") : pending?.decision === "accept" ? t("inviteAccept") : t("inviteDecline")}
+        cancelLabel={t("cancel")}
+        busy={busy}
+        danger={pending?.decision === "decline"}
+        onConfirm={respond}
+        onCancel={() => setPending(null)}
+      >
+        <Err e={actionErr} />
+      </ConfirmDialog>
+    </section>
+  );
+}
+
 function CandidateApplications() {
-  const [items, setItems] = useState([]),
-    [loading, setLoading] = useState(true),
-    [error, setError] = useState("");
-  const load = async () => {
+  const t = useT();
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState("");
+  const [sharingId, setSharingId] = useState(null);
+  const [withdrawTarget, setWithdrawTarget] = useState(null);
+  const [withdrawBusy, setWithdrawBusy] = useState(false);
+  const [withdrawErr, setWithdrawErr] = useState(null);
+  const load = useCallback(async () => {
     try {
       const r = await api("/applications/mine");
       setItems(r.items || []);
+      setError(null);
     } catch (e) {
-      setError(e.message || "Could not load applications");
+      setError(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
   const share = async (id, value) => {
+    setSharingId(id);
+    setError(null);
     try {
       await api("/applications/" + id + "/share-results", {
         method: "PUT",
@@ -5720,42 +6079,69 @@ function CandidateApplications() {
       });
       await load();
     } catch (e) {
-      setError(e.message || "Could not update sharing");
+      setError(e);
+    } finally {
+      setSharingId(null);
     }
   };
-  if (loading) return <div className="portal-panel">Loading applications…</div>;
+  const withdraw = async () => {
+    if (!withdrawTarget) return;
+    setWithdrawBusy(true);
+    setWithdrawErr(null);
+    try {
+      await api(`/applications/${encodeURIComponent(withdrawTarget.application_id)}/withdraw`, { method: "POST", body: {} });
+      setNotice(t("withdrawDone"));
+      setWithdrawTarget(null);
+      await load();
+    } catch (e) {
+      setWithdrawErr(e?.status === 404 || e?.status === 501 ? { code: "withdraw_unavailable" } : e);
+    } finally {
+      setWithdrawBusy(false);
+    }
+  };
+  if (loading) return <div className="portal-panel" role="status">{t("applicationsLoading")}</div>;
   return (
     <section className="portal-panel">
       <div className="section-toolbar">
         <div>
-          <span className="eyebrow">YOUR JOB SEARCH</span>
+          <span className="eyebrow">Your job search</span>
           <h2>My applications</h2>
           <p>Track submitted applications and control result sharing.</p>
         </div>
         <span className="count-badge">{items.length} total</span>
       </div>
-      {error && <p className="err">{error}</p>}
-      {!items.length && (
+      <div aria-live="polite">
+        {notice && <p className="success-note" role="status">{notice}</p>}
+      </div>
+      {error && (
+        <div>
+          <Err e={error} />
+          <button type="button" className="btn ghost sm" onClick={load}>{t("retry")}</button>
+        </div>
+      )}
+      <PhaseTwoInvites onChanged={load} />
+      {!items.length && !error && (
         <div className="empty-state">
           <h3>No applications yet</h3>
           <p>Browse jobs and apply to a role that matches your interests.</p>
         </div>
       )}
       {items.map((a) => (
-        <article className="application-row" key={a.application_id}>
+        <article className="application-row" key={a.application_id} data-application-id={a.application_id}>
           <div className="application-logo">SB</div>
           <div className="application-main">
             <h3>{a.title}</h3>
             <p>
               {a.company_name} · {a.location}
             </p>
-            <span className="status-pill">{a.status}</span>
+            <span className="status-pill" data-tone={statusTone(a.status)}>{humanizeStatus(a.status)}</span>
           </div>
           <div className="application-consent">
             <label className="check">
               <input
                 type="checkbox"
                 checked={!!a.results_shared}
+                disabled={sharingId === a.application_id || a.status === "withdrawn"}
                 onChange={(e) => share(a.application_id, e.target.checked)}
               />{" "}
               Share assessment results with this employer
@@ -5763,9 +6149,31 @@ function CandidateApplications() {
             <small className="muted">
               You can change this choice at any time.
             </small>
+            {canWithdrawApplication(a) && (
+              <button
+                type="button"
+                className="btn ghost sm application-withdraw"
+                onClick={() => { setWithdrawErr(null); setWithdrawTarget(a); }}
+              >
+                {t("withdrawApplication")}
+              </button>
+            )}
           </div>
         </article>
       ))}
+      <ConfirmDialog
+        open={Boolean(withdrawTarget)}
+        title={t("withdrawConfirmTitle")}
+        body={withdrawTarget ? `${withdrawTarget.title || ""}${withdrawTarget.company_name ? " · " + withdrawTarget.company_name : ""}. ${t("withdrawConfirmBody")}` : ""}
+        confirmLabel={withdrawBusy ? t("saving") : t("withdrawApplication")}
+        cancelLabel={t("cancel")}
+        busy={withdrawBusy}
+        danger
+        onConfirm={withdraw}
+        onCancel={() => setWithdrawTarget(null)}
+      >
+        <Err e={withdrawErr} />
+      </ConfirmDialog>
     </section>
   );
 }
@@ -5807,34 +6215,106 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   const t = useT();
   const done = (st?.attempts || []).filter((a) => a.status === "done");
   const notificationItems = assessmentNotificationItems(st?.attempts);
+  const notificationOwner = st?.user?.email || "";
+  const [seenNotifications, setSeenNotifications] = useState(() => loadSeenNotifications(notificationOwner));
+  useEffect(() => { setSeenNotifications(loadSeenNotifications(notificationOwner)); }, [notificationOwner]);
+  const unreadItems = unreadNotificationItems(notificationItems, seenNotifications);
+  // Keys of what was unread when the panel opened, so those rows stay highlighted
+  // while the candidate reads them even though the badge clears at once.
+  const [highlightKeys, setHighlightKeys] = useState(() => new Set());
+  const unreadSignature = unreadItems.map(notificationKey).join("|");
+  useEffect(() => {
+    if (!notificationsOpen || !unreadSignature) return;
+    setHighlightKeys((old) => new Set([...old, ...unreadSignature.split("|")]));
+    setSeenNotifications((seen) => markNotificationsSeen(notificationOwner, seen, notificationItems));
+    // notificationItems is derived from the same state as unreadSignature.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationsOpen, unreadSignature, notificationOwner]);
+  // Server notifications (application, job, phase-two events...) share the
+  // bell with assessment events. Opening the panel marks visible ones read.
+  const serverNotifications = useServerNotifications();
+  const { markRead: markServerRead } = serverNotifications;
+  const [serverHighlight, setServerHighlight] = useState(() => new Set());
+  const serverUnreadSignature = unreadServerIds(serverNotifications.items).join("|");
+  useEffect(() => {
+    if (!notificationsOpen || !serverUnreadSignature) return;
+    const ids = serverUnreadSignature.split("|");
+    setServerHighlight((old) => new Set([...old, ...ids]));
+    markServerRead(ids);
+  }, [notificationsOpen, serverUnreadSignature, markServerRead]);
+  const badgeCount = notificationBadgeCount(unreadItems.length, serverNotifications.unread);
+  const closeNotifications = useCallback(() => {
+    setNotificationsOpen(false);
+    setHighlightKeys(new Set());
+    setServerHighlight(new Set());
+  }, []);
+  const toggleNotifications = () => {
+    if (notificationsOpen) { closeNotifications(); return; }
+    setNotificationsOpen(true);
+    serverNotifications.load();
+  };
+  useEffect(() => {
+    if (!notificationsOpen) return undefined;
+    const onKey = (event) => { if (event.key === "Escape") closeNotifications(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [notificationsOpen, closeNotifications]);
   const activeAttempt = (st?.attempts || []).find((a) => a.status === "active");
-  const awaitingPublication = (st?.attempts || []).some((attempt) => attempt.status === "done" && attempt.finalized === false && attempt.review_decision !== "invalidated");
+  const pollNotifications = shouldPollForNotifications(st?.attempts);
   const hasActiveAttempt = Boolean(activeAttempt);
   useEffect(() => {
-    if (!awaitingPublication || hasActiveAttempt) return;
-    const timer = setInterval(() => { if (!document.body.classList.contains("exam-live")) refresh(); }, 20000);
-    return () => clearInterval(timer);
-  }, [awaitingPublication, hasActiveAttempt, refresh]);
+    if (hasActiveAttempt) return undefined;
+    const examLive = () => document.body.classList.contains("exam-live");
+    let last = Date.now();
+    const update = () => {
+      if (examLive() || document.visibilityState === "hidden") return;
+      last = Date.now();
+      refresh();
+    };
+    // Reviews, publications and appeal outcomes happen on another account, so
+    // poll while one is pending and always catch up when the tab is reopened.
+    const timer = pollNotifications ? setInterval(update, 30000) : null;
+    // Catch up only after the candidate really left (tab hidden or window
+    // blurred), not on every stray focus event.
+    let away = false;
+    const onAway = () => { away = true; };
+    const onBack = () => {
+      if (!away || document.visibilityState === "hidden") return;
+      away = false;
+      if (Date.now() - last > 15000) update();
+    };
+    const onVisibility = () => (document.visibilityState === "hidden" ? onAway() : onBack());
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onAway);
+    window.addEventListener("focus", onBack);
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onAway);
+      window.removeEventListener("focus", onBack);
+    };
+  }, [pollNotifications, hasActiveAttempt, refresh]);
   const latest = done[0];
   const hasSkills = Boolean(st.confirmed?.length);
 
   const W = t("ws");
   const nav = [
-    { id: "overview", label: W.overview, icon: "⌂", group: "WORKSPACE" },    { id: "profile", label: W.myProfile, icon: "◉", group: "WORKSPACE" },
-    { id: "jobs", label: W.findJobs, icon: "↗", group: "WORKSPACE" },
+    { id: "overview", label: W.overview, icon: "overview", group: "WORKSPACE" },
+    { id: "profile", label: W.myProfile, icon: "profile", group: "WORKSPACE" },
+    { id: "jobs", label: W.findJobs, icon: "jobs", group: "WORKSPACE" },
     {
       id: "applications",
       label: W.applications,
-      icon: "▤",
+      icon: "applications",
       group: "WORKSPACE",
     },
-    { id: "exams", label: W.exams, icon: "◎", group: "GROWTH" },
-    { id: "journey", label: W.journey, icon: "⌁", group: "GROWTH" },
-    { id: "learning", label: W.learning, icon: "↗", group: "GROWTH" },
+    { id: "exams", label: W.exams, icon: "exams", group: "GROWTH" },
+    { id: "journey", label: W.journey, icon: "journey", group: "GROWTH" },
+    { id: "learning", label: W.learning, icon: "learning", group: "GROWTH" },
     { id: "mcp", label: "MCP tools", icon: "mcp", group: "GROWTH" },
     { id: "agent", label: "AI Copilot", icon: "agent", group: "GROWTH" },
-    { id: "passport", label: W.passport, icon: "◇", group: "GROWTH" },
-    { id: "privacy", label: W.privacy, icon: "▣", group: "ACCOUNT" },
+    { id: "passport", label: W.passport, icon: "passport", group: "GROWTH" },
+    { id: "privacy", label: W.privacy, icon: "settings", group: "ACCOUNT" },
   ];
   const groupLabel = {
     WORKSPACE: W.groupWorkspace,
@@ -5843,6 +6323,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
   };
   const go = (id) => {
     setSection(id);
+    closeNotifications();
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   return (
@@ -5881,7 +6362,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   aria-current={section === n.id ? "page" : undefined}
                   onClick={() => go(n.id)}
                 >
-                  <span><WorkspaceIcon name={n.id} /></span>
+                  <span><WorkspaceIcon name={n.icon || n.id} /></span>
                   {n.label}
                 </button>
               ))}
@@ -5902,10 +6383,11 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
           <div className="ws-location"><small>{W.groupWorkspace}</small><strong>{nav.find((item) => item.id === section)?.label}</strong></div>
           <WorkspaceSearch items={nav} onNavigate={go} lang={lang} />
           <div className="topbar-actions">
-            <button type="button" className="tf-icon-btn" title={W.notifications || "Notifications"} aria-label={W.notifications || "Notifications"} aria-expanded={notificationsOpen} aria-controls="candidate-notifications" onClick={() => setNotificationsOpen((value) => !value)}>
+            <button type="button" className="tf-icon-btn sb-bell-btn" title={badgeCount ? `${W.notifications || "Notifications"} (${badgeCount})` : W.notifications || "Notifications"} aria-label={W.notifications || "Notifications"} aria-describedby={badgeCount ? "candidate-notification-count" : undefined} aria-expanded={notificationsOpen} aria-controls="candidate-notifications" onClick={toggleNotifications}>
               <WorkspaceIcon name="bell" size={19} />
-              {notificationItems.length ? <i className="tf-dot" /> : null}
+              {badgeCount ? <span className="tf-dot sb-bell-badge" data-testid="notification-badge" aria-hidden="true">{badgeCount > 99 ? "99+" : badgeCount}</span> : null}
             </button>
+            <span id="candidate-notification-count" className="sb-sr-only" aria-live="polite">{badgeCount ? `${badgeCount} ${t("notificationsUnread")}` : ""}</span>
             <div className="language-switch tf-lang">
               <select
                 aria-label="Language"
@@ -5947,20 +6429,20 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
               aria-current={section === n.id ? "page" : undefined}
               onClick={() => go(n.id)}
             >
-              <span><WorkspaceIcon name={n.id} size={18} /></span>
+              <span><WorkspaceIcon name={n.icon || n.id} size={18} /></span>
               {n.label}
             </button>
           ))}
         </nav>
         <div className="candidate-page" id="candidate-content" tabIndex={-1}>
-          {notificationsOpen && <section className="portal-panel ws-notifications" id="candidate-notifications" aria-label="Assessment notifications"><div className="panel-heading"><h2>{t("assessmentUpdates")}</h2><button type="button" className="cr-outline-btn" onClick={() => setNotificationsOpen(false)}>{t("close")}</button></div><AssessmentNotifications attempts={st.attempts || []} onRefresh={refresh} embedded /></section>}
+          {notificationsOpen && <section className="portal-panel ws-notifications" id="candidate-notifications" aria-label="Assessment notifications"><div className="panel-heading"><h2>{t("assessmentUpdates")}</h2><button type="button" className="cr-outline-btn" onClick={closeNotifications}>{t("close")}</button></div><AssessmentNotifications attempts={st.attempts || []} onRefresh={refresh} unreadKeys={highlightKeys} server={serverNotifications} serverHighlight={serverHighlight} onOpenServer={(item) => { const target = sectionForNotificationLink(item.link, "candidate", nav.map((entry) => entry.id)); if (target) go(target); }} /></section>}
           {section === "overview" && (
             <>
-              <div className="ws-overview-heading"><div><span className="eyebrow">YOUR PERSONAL WORKSPACE</span><h1>Career overview</h1></div><span className="ws-date">{new Intl.DateTimeFormat(lang === "bn" ? "bn-BD" : "en-GB", { weekday: "short", day: "numeric", month: "long" }).format(new Date())}</span></div>
+              <div className="ws-overview-heading"><div><span className="eyebrow">Your personal workspace</span><h1>Career overview</h1></div><span className="ws-date">{new Intl.DateTimeFormat(lang === "bn" ? "bn-BD" : "en-GB", { weekday: "short", day: "numeric", month: "long" }).format(new Date())}</span></div>
               <section className="welcome-banner">
                 <div>
                   <span className="eyebrow light">
-                    YOUR CAREER, YOUR PROGRESS
+                    Your career, your progress
                   </span>
                   <h1>
                     Welcome back, {(st.user?.name || "Candidate").split(" ")[0]}
@@ -5975,28 +6457,20 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                       className="btn btn-light"
                       onClick={() => go("profile")}
                     >
-                      {st.from_profile ? "View my profile" : "Complete my profile"} →
+                      {st.from_profile ? "View my profile" : "Complete my profile"}
                     </button>
                     <button
                       className="welcome-link"
                       onClick={() => go("journey")}
                     >
-                      Continue skill journey ↗
+                      Continue skill journey
                     </button>
                   </div>
-                </div>
-                <div className="welcome-art" aria-hidden="true">
-                  <div className="art-orbit orbit-one" />
-                  <div className="art-orbit orbit-two" />
-                  <div className="art-center">TF</div>
-                  <span className="art-node node-one">✦</span>
-                  <span className="art-node node-two">✓</span>
-                  <span className="art-node node-three">↗</span>
                 </div>
               </section>
               <div className="dashboard-section-heading">
                 <div>
-                  <span className="eyebrow">YOUR WORKSPACE</span>
+                  <span className="eyebrow">Your workspace</span>
                   <h2>Your career at a glance</h2>
                 </div>
               </div>
@@ -6037,7 +6511,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
               </div>
               <div className="dashboard-lower">
                 <section className="portal-panel">
-                  <span className="eyebrow">RECOMMENDED NEXT STEP</span>
+                  <span className="eyebrow">Recommended next step</span>
                   <h2>
                     {!hasSkills
                       ? "Build your candidate profile"
@@ -6091,7 +6565,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">OPPORTUNITIES</span>
+                  <span className="eyebrow">Opportunities</span>
                   <h1>Find jobs</h1>
                   <p>
                     Search the current marketplace and apply to a suitable role.
@@ -6105,7 +6579,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">YOUR JOB SEARCH</span>
+                  <span className="eyebrow">Your job search</span>
                   <h1>Applications</h1>
                   <p>
                     Track submitted applications and manage assessment result
@@ -6142,7 +6616,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">SKILL DEVELOPMENT</span>
+                  <span className="eyebrow">Skill development</span>
                   <h1>Skill journey</h1>
                   <p>
                     Move from claimed skills to verified evidence, learning and
@@ -6186,7 +6660,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">LEARN · TRACK · REASSESS</span>
+                  <span className="eyebrow">Learn · Track · Reassess</span>
                   <h1>Learning & retakes</h1>
                   <p>
                     Verified resources, visible progress and transparent attempt
@@ -6208,7 +6682,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">VERIFIABLE PROOF</span>
+                  <span className="eyebrow">Verifiable proof</span>
                   <h1>Skill Passport</h1>
                   <p>
                     Choose verified topics to share and revoke public links
@@ -6223,7 +6697,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">AI ACCESS · MODEL CONTEXT PROTOCOL</span>
+                  <span className="eyebrow">AI access · Model Context Protocol</span>
                   <h1>MCP tools</h1>
                   <p>
                     Verify signed Skill Passports and read your learning data through the same
@@ -6231,14 +6705,14 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   </p>
                 </div>
               </div>
-              <McpConsole />
+              <Suspense fallback={<WorkspaceLoading />}><McpConsole /></Suspense>
             </>
           )}
           {section === "agent" && (
             <>
               <div className="page-title">
                 <div>
-                  <span className="eyebrow">AGENT PLATFORM · COPILOT</span>
+                  <span className="eyebrow">Agent platform · Copilot</span>
                   <h1>AI Copilot</h1>
                   <p>
                     Run your career coach, inspect telemetry and review every draft before you
@@ -6246,7 +6720,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   </p>
                 </div>
               </div>
-              <AgentConsole />
+              <Suspense fallback={<WorkspaceLoading />}><AgentConsole /></Suspense>
             </>
           )}
           {section === "privacy" && (
@@ -6284,7 +6758,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
     </div>
   );
 }
-function ProfileJourneyRouter({ st, refresh, onEditProfile, tick, setTick, done, v, setV }) {
+function ProfileJourneyRouter({ st, refresh, onEditProfile, tick, v, setV }) {
   return (
     <>
       {v === "profile" && (
@@ -6329,7380 +6803,6 @@ function ProfileJourneyRouter({ st, refresh, onEditProfile, tick, setTick, done,
   );
 }
 
-/* ---------- platform administration ---------- */
-/** Open an authenticated PDF in a new tab (the API requires the bearer token). */
-async function openAuthedPdf(url) {
-  // Reserve the tab during the user gesture, before fetching authenticated bytes.
-  const tab = window.open("about:blank", "_blank");
-  if (tab) tab.opener = null;
-  try {
-    const blob = await api(url, { responseType: "blob" });
-    const objectUrl = URL.createObjectURL(blob);
-    if (tab) tab.location.replace(objectUrl);
-    else {
-      URL.revokeObjectURL(objectUrl);
-      throw new Error("Your browser blocked the PDF tab. Allow pop-ups for this site, or use the CV preview download.");
-    }
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-  } catch (e) {
-    tab?.close();
-    alert(e.message || "Could not open that file.");
-  }
-}
-
-function CandidateDetailModal({ userId, onClose }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
-  const dialog = useRef(null);
-  useEffect(() => { dialog.current?.showModal(); }, []);
-
-  useEffect(() => {
-    let alive = true;
-    api(`/admin/candidates/${userId}`)
-      .then((result) => alive && setData(result))
-      .catch((e) => alive && setError(e.message || "Could not load this candidate."));
-    return () => {
-      alive = false;
-    };
-  }, [userId]);
-
-  const when = (value) => (value ? new Date(value * 1000).toLocaleString() : "—");
-
-  return (
-    <dialog ref={dialog} className="ws-candidate-dialog" aria-labelledby="candidate-record-title" onCancel={onClose} onClick={(event) => { if (event.target === dialog.current) onClose(); }}>
-      <div className="ad-candidate-modal">
-        <header>
-          <div>
-            <div className="ad-eyebrow">CANDIDATE RECORD</div>
-            <h2 id="candidate-record-title">{data?.user?.name || "Loading…"}</h2>
-            <p>{data?.user?.email}</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close candidate record">×</button>
-        </header>
-        {error && <div className="ad-error" role="alert">{error}</div>}
-        {data && (
-          <div className="ad-candidate-body">
-            <section>
-              <h3>CV on file</h3>
-              {data.cv?.has_pdf ? (
-                <CvPreview url={data.cv.pdf_url} filename={data.cv.filename} />
-              ) : (
-                <p className="muted">No CV uploaded yet.</p>
-              )}
-              {data.cv?.documents?.length > 1 && (
-                <ul className="ad-doc-list">
-                  {data.cv.documents.slice(1).map((doc) => (
-                    <li key={doc.id}>
-                      {doc.filename} · {when(doc.created)}
-                      <button
-                        className="btn ghost sm"
-                        onClick={() =>
-                          openAuthedPdf(`/admin/candidates/${userId}/cv?document_id=${doc.id}`)
-                        }
-                      >
-                        Open
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section>
-              <h3>Profile</h3>
-              {data.profile ? (
-                <dl className="ad-dl">
-                  <dt>Headline</dt><dd>{data.profile.headline || "—"}</dd>
-                  <dt>Location</dt><dd>{data.profile.location || "—"}</dd>
-                  <dt>Phone</dt><dd>{data.profile.phone || "—"}</dd>
-                  <dt>Summary</dt><dd>{data.profile.summary || "—"}</dd>
-                  <dt>Skills</dt>
-                  <dd>
-                    {(data.profile.skills || []).map((s) => (typeof s === "string" ? s : s.name)).join(", ") || "—"}
-                  </dd>
-                </dl>
-              ) : (
-                <p className="muted">
-                  No structured profile yet. CV-extracted skills:{" "}
-                  {(data.journey?.extracted || []).map((s) => s.name).join(", ") || "—"}
-                </p>
-              )}
-            </section>
-
-            <section>
-              <h3>Assessments</h3>
-              {data.attempts.length ? (
-                <table className="ad-table">
-                  <thead>
-                    <tr><th>Kind</th><th>Score</th><th>Level</th><th>Trust</th><th>Finished</th></tr>
-                  </thead>
-                  <tbody>
-                    {data.attempts.map((a) => (
-                      <tr key={a.attempt_id}>
-                        <td>{a.kind}</td>
-                        <td>{a.overall ?? "—"}</td>
-                        <td>{a.level || "—"}</td>
-                        <td>{a.trust || "—"}</td>
-                        <td>{when(a.finished)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p className="muted">No assessment attempts yet.</p>
-              )}
-            </section>
-
-            <section>
-              <h3>Skill Passport</h3>
-              {data.passports.length ? (
-                data.passports.map((passport) => (
-                  <div className="ad-passport" key={passport.pid}>
-                    <strong>{passport.holder || data.user.name}</strong>
-                    <small>
-                      Issued {passport.issued} · expires {passport.expires}
-                      {passport.revoked ? " · revoked" : ""}
-                    </small>
-                    <div className="cr-tags">
-                      {(passport.skills || []).map((s) => (
-                        <span key={s.skill}>
-                          {s.name} · {s.score}%
-                        </span>
-                      ))}
-                    </div>
-                    <a href={passport.public_url} target="_blank" rel="noreferrer">
-                      Open public passport ↗
-                    </a>
-                  </div>
-                ))
-              ) : (
-                <p className="muted">No passport issued yet.</p>
-              )}
-            </section>
-
-            <section>
-              <h3>Applications</h3>
-              {data.applications.length ? (
-                <ul className="ad-doc-list">
-                  {data.applications.map((a) => (
-                    <li key={a.id}>
-                      {a.job_title} · {a.company_name} · {a.status}
-                      {a.results_shared ? " · results shared" : ""}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted">No applications yet.</p>
-              )}
-            </section>
-          </div>
-        )}
-      </div>
-    </dialog>
-  );
-}
-
-function IdentityReviewQueue({ A, onFlash, onError }) {
-  const I = A.identity;
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState("");
-  const [notes, setNotes] = useState({});
-  const [filter, setFilter] = useState("all");
-  const [search, setSearch] = useState("");
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await api("/admin/identity-reviews");
-      setItems(result.items || []);
-    } catch (e) {
-      onError?.(e.message || "Could not load identity reviews.");
-    } finally {
-      setLoading(false);
-    }
-  }, [onError]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const decide = async (id, decision) => {
-    setBusyId(id);
-    try {
-      await api("/admin/identity-reviews/" + encodeURIComponent(id) + "/decision", {
-        method: "POST",
-        body: { decision, note: notes[id] || "" },
-      });
-      onFlash?.(I.decided);
-      await load();
-    } catch (e) {
-      onError?.(e.message || "Could not save that decision.");
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const signalLabel = (value) => I.signals[value] || value || "—";
-  const counts = {
-    all: items.length,
-    open: items.filter((x) => x.status === "open").length,
-    cleared: items.filter((x) => x.status === "cleared").length,
-    needs_review: items.filter((x) => x.status === "needs_review").length,
-    escalated: items.filter((x) => x.status === "escalated").length,
-    superseded: items.filter((x) => x.status === "superseded").length,
-  };
-  const query = search.trim().toLowerCase();
-  const visible = items.filter((item) => {
-    if (filter !== "all" && item.status !== filter) return false;
-    if (!query) return true;
-    const signal = item.signal || {};
-    return [item.account_name, item.account_email, signal.cv_name]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(query));
-  });
-  const filters = [
-    ["all", I.filters.all, counts.all],
-    ["open", I.filters.open, counts.open],
-    ["cleared", I.filters.cleared, counts.cleared],
-    ["needs_review", I.filters.needsReview, counts.needs_review],
-    ["escalated", I.filters.escalated, counts.escalated],
-    ["superseded", I.filters.superseded, counts.superseded],
-  ];
-  const reasonText = (signal) => (signal.reasons || [])
-    .map((reason) => I.reasons[reason] || reason)
-    .join(" · ");
-
-  return (
-    <section className="ad-panel">
-      <div className="ad-panel-head">
-        <div>
-          <h2>{I.title}</h2>
-          <p>{I.subtitle}</p>
-        </div>
-        <span className="ad-count">
-          {counts.open} {I.statuses.open} · {counts.all} {I.total}
-        </span>
-        <button type="button" className="ad-mini-primary" onClick={load} disabled={loading}>
-          ↻ {I.refresh}
-        </button>
-      </div>
-      <div className="ad-toolbar">
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={I.searchPlaceholder}
-          aria-label={I.searchPlaceholder}
-        />
-        <select
-          className="ad-role-select"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          aria-label={I.filterLabel}
-        >
-          {filters.map(([id, label, count]) => (
-            <option key={id} value={id}>{label} ({count})</option>
-          ))}
-        </select>
-      </div>
-      {loading ? (
-        <div className="ad-loading">{A.loading || "Loading…"}</div>
-      ) : (
-        <div className="ad-table-wrap">
-          <table className="ad-table">
-            <thead>
-              <tr>
-                <th>{I.account}</th>
-                <th>{I.cvName}</th>
-                <th>{I.status}</th>
-                <th>{I.submitted}</th>
-                <th>{I.decision}</th>
-                <th>{I.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((item) => {
-                const signal = item.signal || {};
-                const pending = item.status === "open" || item.status === "needs_review";
-                const detected = item.created
-                  ? new Date(item.created * 1000).toLocaleString()
-                  : "—";
-                const decided = item.reviewed_at
-                  ? new Date(item.reviewed_at * 1000).toLocaleString()
-                  : "";
-                return (
-                  <tr key={item.id}>
-                    <td>
-                      <b>{item.account_name}</b>
-                      <small>{item.account_email}</small>
-                      <small>ID {item.user_id}</small>
-                    </td>
-                    <td>
-                      {signal.cv_name || "—"}
-                      <small>{signal.confirmed ? I.candidateConfirmed : I.notConfirmed}</small>
-                    </td>
-                    <td>
-                      <span className={"ad-pill " + (signal.status || "")}>
-                        {signalLabel(signal.status)}
-                      </span>
-                      <small>
-                        {I.emailMatch}: {signal.email_match ? A.yes : A.no} · {I.similarity}:{" "}
-                        {typeof signal.score === "number"
-                          ? Math.round(signal.score * 100) + "%"
-                          : "—"}
-                      </small>
-                      {reasonText(signal) && <small>{reasonText(signal)}</small>}
-                    </td>
-                    <td>{detected}</td>
-                    <td>
-                      <b>{I.statuses[item.status] || item.status}</b>
-                      {item.reviewed_at && (
-                        <small>
-                          {I.decidedBy}: {item.reviewed_by_name || "—"} · {decided}
-                        </small>
-                      )}
-                      {item.note && <small>{item.note}</small>}
-                    </td>
-                    <td>
-                      {pending ? (
-                        <div className="ad-identity-actions">
-                          <input
-                            value={notes[item.id] || ""}
-                            onChange={(event) =>
-                              setNotes((current) => ({ ...current, [item.id]: event.target.value }))
-                            }
-                            placeholder={I.notePlaceholder}
-                          />
-                          <div className="row">
-                            <button
-                              type="button"
-                              className="btn sm"
-                              disabled={busyId === item.id}
-                              onClick={() => decide(item.id, "cleared")}
-                            >
-                              {I.clear}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              disabled={busyId === item.id}
-                              onClick={() => decide(item.id, "needs_review")}
-                            >
-                              {I.review}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              disabled={busyId === item.id}
-                              onClick={() => decide(item.id, "escalated")}
-                            >
-                              {I.escalate}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="muted">{I.noAction}</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {!visible.length && (
-            <div className="ad-empty">{items.length ? I.emptyFiltered : I.empty}</div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AdminConsole({ onLogout }) {
-  const C = useConsoleT();
-  const A = C.admin;
-  const lang = useLangValue();
-  const setLang = useSetLang();
-  const [page, setPage] = useState("overview");
-  const [adminRole, setAdminRole] = useState("super_admin");
-  const [data, setData] = useState({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [toast, setToast] = useState("");
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [action, setAction] = useState(null);
-  const [reason, setReason] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [adminDraft, setAdminDraft] = useState({
-    name: "",
-    email: "",
-    password: "",
-    admin_role: "support_agent",
-  });
-  const [creatingAdmin, setCreatingAdmin] = useState(false);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminId, setAdminId] = useState(null);
-  const [candidateView, setCandidateView] = useState(null);
-  const [integrityDetail, setIntegrityDetail] = useState(null),
-    [integrityLoading, setIntegrityLoading] = useState(false);
-  const [honestyDraft, setHonestyDraft] = useState({ score: "", reason: "" });
-  const [honestyBusy, setHonestyBusy] = useState(false);
-  const [honestyError, setHonestyError] = useState("");
-  const [integrityStatus, setIntegrityStatus] = useState("all"),
-    [integrityKind, setIntegrityKind] = useState("all"),
-    [integrityTrust, setIntegrityTrust] = useState("all");
-  const [selectedReport, setSelectedReport] = useState(null);
-  const [reportEvaluations, setReportEvaluations] = useState({});
-  const [evaluationBusy, setEvaluationBusy] = useState(false);
-  const [evaluationError, setEvaluationError] = useState("");
-  const [questionCategory, setQuestionCategory] = useState("all"),
-    [questionQuery, setQuestionQuery] = useState(""),
-    [questionStatus, setQuestionStatus] = useState("all");
-  const [questionModal, setQuestionModal] = useState(false),
-    [questionEditing, setQuestionEditing] = useState(null),
-    [questionSaving, setQuestionSaving] = useState(false);
-  const [questionDraft, setQuestionDraft] = useState({
-    category_id: "CAT-01",
-    subcategory: "",
-    question_type: "MCQ",
-    difficulty_level: "Medium",
-    question_text: "",
-    options: "",
-    correct_answer: "",
-    explanation: "",
-    reference_answer: "",
-    grading_rubric: "",
-    marks: 2,
-    time_minutes: 2,
-    status: "draft",
-  });
-  const [importFile, setImportFile] = useState(null),
-    [importCategory, setImportCategory] = useState(""),
-    [importPreview, setImportPreview] = useState(null),
-    [importBusy, setImportBusy] = useState(false);
-  const [scrapeUrl, setScrapeUrl] = useState(""),
-    [scrapeHtml, setScrapeHtml] = useState(""),
-    [scrapeMode, setScrapeMode] = useState("url"),
-    [scrapeCategory, setScrapeCategory] = useState(""),
-    [scrapeNewCategory, setScrapeNewCategory] = useState(""),
-    [scrapeSubcategory, setScrapeSubcategory] = useState(""),
-    [scrapeBusy, setScrapeBusy] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState(""),
-    [categoryBusy, setCategoryBusy] = useState(false);
-  const [stagingSelected, setStagingSelected] = useState({}),
-    [stagingBusy, setStagingBusy] = useState(false);
-  const nav = [
-    ["overview", A.nav.overview, "⌂"],
-    ["users", A.nav.users, "♙"],
-    ["staff", A.nav.staff, "♜"],
-    ["companies", A.nav.companies, "▣"],
-    ["jobs", A.nav.jobs, "▤"],
-    ["assessments", A.nav.assessments, "◎"],
-    ["integrity", A.nav.integrity, "◈"],
-    ["identity", A.nav.identity, "⚑"],
-    ["appeals", A.nav.appeals, "⚑"],
-    ["questions", A.nav.questions, "◇"],
-    ["learning", A.nav.learning, "↗"],
-    ["ai", A.nav.ai, "✳"],
-    ["agent", "AI Agents", "agent"],
-    ["billing", A.nav.billing, "৳"],
-    ["privacy", A.nav.privacy, "◈"],
-    ["quality", A.nav.quality, "▥"],
-    ["audit", A.nav.audit, "≋"],
-    ["security", A.nav.security, "◈"],
-  ];
-  const load = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const me = await api("/admin/console/me");
-      setAdminRole(me.admin_role || "super_admin");
-      setAdminId(me.user_id ?? null);
-      if (!adminEmail) {
-        api("/enterprise/me")
-          .then((identity) => setAdminEmail(identity?.user?.email || ""))
-          .catch(() => {});
-      }
-    } catch (x) {
-      setError(x.message || "Admin identity unavailable");
-      setBusy(false);
-      return;
-    }
-    const endpoints = {
-      overview: "/admin/console/overview",
-      users: "/admin/console/users",
-      staff: "/admin/console/staff",
-      companies: "/admin/console/company-verifications",
-      jobs: "/admin/console/job-review-queue",
-      assessments: "/admin/assessment-reviews",
-      integrity: "/admin/integrity/attempts",
-      appeals: "/admin/appeals",
-      questions: "/admin/questions",
-      graphrag: "/admin/assessment/graphrag/status",
-      staging: "/admin/questions/staging",
-      learning: "/admin/learning",
-      ai: "/admin/ai-operations",
-      billing: "/admin/billing",
-      privacy: "/admin/privacy",
-      quality: "/admin/quality",
-      audit: "/admin/audit-logs",
-      phaseTwo: "/admin/phase-two-requests",
-    };
-    const keys = Object.keys(endpoints);
-    const results = await Promise.allSettled(
-      keys.map((k) => api(endpoints[k])),
-    );
-    const next = {};
-    results.forEach((r, i) => {
-      if (r.status === "fulfilled") next[keys[i]] = r.value;
-      else next[keys[i]] = { error: r.reason?.message || "Unavailable" };
-    });
-    setData(next);
-    const failures = results.filter((r) => r.status === "rejected");
-    if (failures.length === keys.length)
-      setError(
-        "Admin services could not be reached. Check your session and backend connection.",
-      );
-    setBusy(false);
-  };
-  useEffect(() => {
-    load();
-  }, []);
-  const flash = (s) => {
-    setToast(s);
-    setError("");
-  };
-  const createAdmin = async (e) => {
-    e.preventDefault();
-    setCreatingAdmin(true);
-    setError("");
-    try {
-      await api("/admin/console/staff", { method: "POST", body: adminDraft });
-      setAdminDraft({
-        name: "",
-        email: "",
-        password: "",
-        admin_role: "support_agent",
-      });
-      await load();
-      flash(
-        "Admin account created. Share the credentials securely with the new admin.",
-      );
-    } catch (x) {
-      setError(x.message || "Could not create admin account.");
-    } finally {
-      setCreatingAdmin(false);
-    }
-  };
-  const revokeAdmin = async (staff) => {
-    if (!window.confirm(
-      `Revoke admin access for ${staff.name} (${staff.email})? ` +
-      "Their account and history stay, but they lose every admin permission and are signed out.",
-    )) return;
-    setError("");
-    try {
-      await api(`/admin/console/staff/${staff.id}/revoke`, { method: "POST" });
-      await load();
-      flash(`Admin access revoked for ${staff.name}.`);
-    } catch (x) {
-      setError(x.message || "Could not revoke this admin.");
-    }
-  };
-  const deleteAdmin = async (staff) => {
-    if (!window.confirm(
-      `Permanently delete ${staff.name} (${staff.email})? ` +
-      "This removes the admin account and its linked data and cannot be undone.",
-    )) return;
-    setError("");
-    try {
-      await api(`/admin/console/staff/${staff.id}`, { method: "DELETE" });
-      await load();
-      flash(`Admin account deleted: ${staff.name}.`);
-    } catch (x) {
-      setError(x.message || "Could not delete this admin.");
-    }
-  };
-  const syncEvaluationEdits = (report) => {
-    const next = {};
-    (report?.answer_evidence || []).forEach((q) => {
-      if (!q.evaluation && !q.objective) return;
-      next[q.question_id] = {
-        marks:
-          !q.evaluation ? (q.awarded_marks ?? 0) : q.evaluation.final_marks != null
-            ? q.evaluation.final_marks
-            : q.evaluation.ai_marks,
-        admin_note: q.evaluation?.admin_note || "",
-        additional_info: q.evaluation?.additional_info || "",
-      };
-    });
-    setReportEvaluations(next);
-  };
-  const runEvaluation = async (report) => {
-    if (!report) return;
-    setEvaluationBusy(true);
-    setEvaluationError("");
-    try {
-      const res = await api(
-        "/admin/attempts/" + encodeURIComponent(report.id) + "/evaluate",
-        { method: "POST", body: {} },
-      );
-      const byId = {};
-      (res.items || []).forEach((item) => {
-        byId[item.question_id] = item;
-      });
-      const merged = {
-        ...report,
-        evaluations: res.items || [],
-        evaluation_summary: {
-          ...(report.evaluation_summary || {}),
-          llm_configured: res.llm_configured,
-        },
-        answer_evidence: (report.answer_evidence || []).map((q) => {
-          const evaluation = byId[q.question_id] || q.evaluation;
-          if (!evaluation) return q;
-          return {
-            ...q,
-            evaluation,
-            max_marks: evaluation.max_marks,
-            ai_marks: evaluation.ai_marks,
-            awarded_marks:
-              evaluation.status === "approved"
-                ? evaluation.final_marks
-                : q.awarded_marks,
-            evaluation_status: evaluation.status,
-          };
-        }),
-      };
-      setSelectedReport(merged);
-      syncEvaluationEdits(merged);
-      await load();
-    } catch (x) {
-      setEvaluationError(x.message || "Could not run the AI evaluation.");
-    } finally {
-      setEvaluationBusy(false);
-    }
-  };
-  const openReport = (report) => {
-    setSelectedReport(report);
-    setEvaluationError("");
-    syncEvaluationEdits(report);
-  };
-  const saveEvaluation = async (report, questionId) => {
-    const edit = reportEvaluations[questionId];
-    if (!edit) return;
-    setEvaluationBusy(true);
-    setEvaluationError("");
-    try {
-      const saved = await api(
-        "/admin/attempts/" +
-          encodeURIComponent(report.id) +
-          "/evaluations/" +
-          encodeURIComponent(questionId),
-        {
-          method: "PATCH",
-          body: {
-            question_id: questionId,
-            marks: edit.marks === "" ? null : Number(edit.marks),
-            admin_note: edit.admin_note || "",
-            additional_info: edit.additional_info || "",
-            status: "approved",
-          },
-        },
-      );
-      const merged = {
-        ...report,
-        answer_evidence: (report.answer_evidence || []).map((q) =>
-          q.question_id === questionId
-            ? {
-                ...q,
-                evaluation: saved,
-                awarded_marks: saved.final_marks,
-                evaluation_status: saved.status,
-                review_status: "human_approved",
-              }
-            : q,
-        ),
-        evaluations: (report.evaluations || []).map((e) =>
-          e.question_id === questionId ? saved : e,
-        ),
-      };
-      const queue = await api("/admin/assessment-reviews");
-      const currentReport = queue.items.find((item) => item.id === report.id) || merged;
-      setSelectedReport(currentReport);
-      syncEvaluationEdits(currentReport);
-      flash("Mark saved. Approve the revised academic result to publish it; previous credentials are withdrawn when marks change.");
-      await load();
-    } catch (x) {
-      setEvaluationError(x.message || "Could not save this evaluation.");
-    } finally {
-      setEvaluationBusy(false);
-    }
-  };
-  const openAction = (kind, id, decision) => {
-    setAction({ kind, id, decision });
-    setReason("");
-  };
-  const openIntegrityDetail = async (id) => {
-    setIntegrityLoading(true);
-    setIntegrityDetail(null);
-    setHonestyError("");
-    try {
-      const detail = await api(
-        "/admin/integrity/attempts/" + encodeURIComponent(id),
-      );
-      setIntegrityDetail(detail);
-      setHonestyDraft({
-        score: String(detail.honesty?.score ?? ""),
-        reason: detail.honesty?.reason || "",
-      });
-    } catch (x) {
-      setError(x.message || "Could not load attempt details.");
-    } finally {
-      setIntegrityLoading(false);
-    }
-  };
-  const saveHonesty = async (decision) => {
-    if (!integrityDetail) return;
-    setHonestyBusy(true);
-    setHonestyError("");
-    try {
-      const next = await api(
-        "/admin/integrity/attempts/" +
-          encodeURIComponent(integrityDetail.id) +
-          "/honesty",
-        {
-          method: "POST",
-          body: {
-            score: honestyDraft.score === "" ? null : Number(honestyDraft.score),
-            decision,
-            reason: honestyDraft.reason.trim(),
-          },
-        },
-      );
-      setIntegrityDetail((current) =>
-        current ? { ...current, honesty: next.honesty, publication: next.publication } : current,
-      );
-      setHonestyDraft({
-        score: String(next.honesty.score),
-        reason: next.honesty.reason || "",
-      });
-      // Refresh only the integrity queue instead of every admin endpoint.
-      const list = await api("/admin/integrity/attempts");
-      setData((prev) => ({ ...prev, integrity: list }));
-    } catch (x) {
-      setHonestyError(x.message || "Could not save the honesty score.");
-    } finally {
-      setHonestyBusy(false);
-    }
-  };
-  const submitAction = async (e) => {
-    e.preventDefault();
-    if (!action || reason.trim().length < 3) return;
-    setSaving(true);
-    try {
-      const body = { reason: reason.trim() };
-      let actionResult = null;
-      if (action.kind === "user") {
-        body.status = action.decision;
-        await api("/admin/users/" + action.id + "/status", {
-          method: "POST",
-          body,
-        });
-      }
-      if (action.kind === "company") {
-        body.decision = action.decision;
-        await api("/admin/companies/" + action.id + "/verification-decision", {
-          method: "POST",
-          body,
-        });
-      }
-      if (action.kind === "job") {
-        body.decision = action.decision;
-        await api("/admin/jobs/" + action.id + "/moderation-decision", {
-          method: "POST",
-          body,
-        });
-      }
-      if (action.kind === "assessment") {
-        body.decision = action.decision;
-        if (action.evaluations) body.evaluations = action.evaluations;
-        if (selectedReport?.id === action.id) {
-          body.evaluations = Object.entries(reportEvaluations).filter(([questionId]) => selectedReport.evaluations?.some((evaluation) => evaluation.question_id === questionId)).map(
-            ([question_id, edit]) => ({
-              question_id,
-              marks: edit.marks === "" ? null : Number(edit.marks),
-              admin_note: edit.admin_note || "",
-              additional_info: edit.additional_info || "",
-              status: "approved",
-            }),
-          );
-        }
-        actionResult = await api("/admin/attempts/" + action.id + "/review", {
-          method: "POST",
-          body,
-        });
-      }
-      if (action.kind === "appeal") {
-        body.decision = action.decision;
-        actionResult = await api("/admin/appeals/" + action.id + "/decision", {
-          method: "POST",
-          body,
-        });
-      }
-      if (action.kind === "phase") {
-        body.decision = action.decision;
-        await api("/admin/phase-two-requests/" + action.id + "/decision", {
-          method: "POST",
-          body,
-        });
-      }
-      if (action.kind === "learning-resource") {
-        body.status = action.decision;
-        await api("/admin/learning/resources/" + action.id, {
-          method: "PATCH",
-          body,
-        });
-      }
-      setAction(null);
-      const appealMessage = action.kind === "appeal"
-        ? (action.decision === "overturned"
-            ? (actionResult?.publication?.ready
-                ? (actionResult?.passport_id
-                    ? "Appeal overturned. The assessment was republished and a new Skill Passport was issued."
-                    : "Appeal overturned. The assessment was republished.")
-                : "Appeal overturned. The academic decision is restored; publication still needs honesty and evaluation approval.")
-            : action.decision === "upheld"
-              ? "Appeal upheld. The original assessment decision stands."
-              : "More information requested. The candidate can add details and the appeal returns to the queue.")
-          + (actionResult?.single_admin_override
-              ? " Single-admin override recorded in the audit trail."
-              : "")
-        : "";
-      flash(
-        appealMessage ||
-        (actionResult?.passport_id
-          ? "Result approved. The learning path is now verified and a Skill Passport was created automatically."
-          : actionResult?.learning_path_updated
-            ? "Result approved. The candidate learning path has been updated."
-             : actionResult?.publication?.stage === "honesty_review" ? "Academic marks approved. Learning and the passport remain locked until honesty approval." : "Decision saved and recorded in the audit trail."),
-      );
-      await load();
-    } catch (x) {
-      setError(x.message || "Action failed.");
-    } finally {
-      setSaving(false);
-    }
-  };
-  const openQuestionEditor = (question = null) => {
-    setQuestionEditing(question);
-    setQuestionDraft(
-      question
-        ? {
-            ...question,
-            options: (question.options || []).join("\n"),
-            time_minutes: Math.round((question.time_allocation || 60) / 60),
-          }
-        : {
-            category_id:
-              questionCategory === "all" ? "CAT-01" : questionCategory,
-            subcategory: "",
-            question_type: "MCQ",
-            difficulty_level: "Medium",
-            question_text: "",
-            options: "",
-            correct_answer: "",
-            explanation: "",
-            reference_answer: "",
-            grading_rubric: "",
-            marks: 2,
-            time_minutes: 2,
-            status: "draft",
-          },
-    );
-    setQuestionModal(true);
-  };
-  const saveQuestion = async (e) => {
-    e.preventDefault();
-    setQuestionSaving(true);
-    setError("");
-    const payload = {
-      ...questionDraft,
-      options: questionDraft.options
-        .split("\n")
-        .map((x) => x.trim())
-        .filter(Boolean),
-      marks: Number(questionDraft.marks),
-      time_allocation: Number(questionDraft.time_minutes) * 60,
-    };
-    delete payload.time_minutes;
-    try {
-      if (questionEditing)
-        await api("/admin/questions/" + questionEditing.id, {
-          method: "PUT",
-          body: payload,
-        });
-      else await api("/admin/questions", { method: "POST", body: payload });
-      setQuestionModal(false);
-      flash(
-        questionEditing
-          ? "Question updated successfully."
-          : "Question added to the bank.",
-      );
-      await load();
-    } catch (x) {
-      setError(x.message || "Could not save question.");
-    } finally {
-      setQuestionSaving(false);
-    }
-  };
-  const previewQuestionImport = async (e) => {
-    e.preventDefault();
-    if (!importFile) return;
-    setImportBusy(true);
-    setError("");
-    setImportPreview(null);
-    try {
-      const form = new FormData();
-      form.append("file", importFile);
-      form.append("category_id", importCategory);
-      setImportPreview(
-        await api("/admin/questions/import/preview", { method: "POST", form }),
-      );
-    } catch (x) {
-      setError(x.message || "Could not preview this file.");
-    } finally {
-      setImportBusy(false);
-    }
-  };
-  const commitQuestionImport = async () => {
-    if (!importPreview) return;
-    setImportBusy(true);
-    setError("");
-    try {
-      const valid = importPreview.items
-        .filter((x) => !x.errors)
-        .map(({ errors, duplicate, ...q }) => q);
-      const result = await api("/admin/questions/import/commit", {
-        method: "POST",
-        body: { questions: valid },
-      });
-      setImportPreview(null);
-      setImportFile(null);
-      flash(
-        "Import complete · " +
-          result.added +
-          " added · " +
-          result.skipped +
-          " duplicates skipped · " +
-          result.rejected +
-          " rejected.",
-      );
-      await load();
-    } catch (x) {
-      setError(x.message || "Import could not be completed.");
-    } finally {
-      setImportBusy(false);
-    }
-  };
-  const createQuestionCategory = async (e) => {
-    e.preventDefault();
-    const name = categoryDraft.trim();
-    if (name.length < 2) {
-      setError("Enter a category name with at least 2 characters.");
-      return;
-    }
-    setCategoryBusy(true);
-    setError("");
-    try {
-      const created = await api("/admin/questions/categories", {
-        method: "POST",
-        body: { name },
-      });
-      setCategoryDraft("");
-      setScrapeCategory(created.id);
-      flash("Category created: " + created.name);
-      await load();
-    } catch (x) {
-      setError(x.message || "Could not create category.");
-    } finally {
-      setCategoryBusy(false);
-    }
-  };
-  const runScrape = async (e) => {
-    e.preventDefault();
-    const html = scrapeMode === "html" ? scrapeHtml.trim() : "";
-    if (scrapeMode !== "html" && !scrapeUrl.trim()) return;
-    if (scrapeMode === "html" && !html) return;
-    setScrapeBusy(true);
-    setError("");
-    setStagingSelected({});
-    try {
-      const result = await api("/admin/questions/scrape", {
-        method: "POST",
-        body: {
-          url: scrapeUrl.trim(),
-          html,
-          category_id: scrapeNewCategory.trim() || scrapeCategory,
-          subcategory: scrapeSubcategory.trim(),
-        },
-      });
-      flash(
-        "Scraped " +
-          result.total +
-          " questions into staging from " +
-          (result.source_url || "pasted HTML") +
-          " · review and select which to import.",
-      );
-      await load();
-    } catch (x) {
-      setError(x.message || "Scraping failed.");
-    } finally {
-      setScrapeBusy(false);
-    }
-  };
-  const toggleStaging = (id, on) => {
-    setStagingSelected((s) => {
-      const n = { ...s };
-      if (on) n[id] = true;
-      else delete n[id];
-      return n;
-    });
-  };
-  const commitStaging = async () => {
-    const ids = Object.keys(stagingSelected).filter((k) => stagingSelected[k]);
-    if (!ids.length) {
-      flash("Select at least one staged question to import.");
-      return;
-    }
-    setStagingBusy(true);
-    setError("");
-    try {
-      const result = await api("/admin/questions/staging/commit", {
-        method: "POST",
-        body: { question_ids: ids },
-      });
-      setStagingSelected({});
-      flash(
-        "Import complete · " +
-          result.added +
-          " added · " +
-          result.skipped +
-          " duplicates skipped · " +
-          result.rejected +
-          " rejected.",
-      );
-      await load();
-    } catch (x) {
-      setError(x.message || "Could not import selected questions.");
-    } finally {
-      setStagingBusy(false);
-    }
-  };
-  const clearStaging = async () => {
-    setStagingBusy(true);
-    setError("");
-    try {
-      await api("/admin/questions/staging", { method: "DELETE" });
-      setStagingSelected({});
-      flash("Staging table cleared.");
-      await load();
-    } catch (x) {
-      setError(x.message || "Could not clear staging.");
-    } finally {
-      setStagingBusy(false);
-    }
-  };
-  const deleteStagingItem = async (id) => {
-    setStagingBusy(true);
-    try {
-      await api("/admin/questions/staging/" + encodeURIComponent(id), {
-        method: "DELETE",
-      });
-      setStagingSelected((s) => {
-        const n = { ...s };
-        delete n[id];
-        return n;
-      });
-      await load();
-    } catch (x) {
-      setError(x.message || "Could not remove that staged question.");
-    } finally {
-      setStagingBusy(false);
-    }
-  };
-  const printAssessmentReport = (report) => {
-    const esc = (v) =>
-      String(v ?? "—").replace(
-        /[&<>"']/g,
-        (c) =>
-          ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;",
-          })[c],
-      );
-    const evidence = report.answer_evidence || [];
-    const questions = evidence
-      .map(
-        (q) =>
-          `<article class="question"><h3>Question ${esc(q.number)} · ${esc(q.topic)} · ${esc(q.type)}</h3><p class="prompt">${esc(q.question)}</p>${q.options?.length ? `<ol>${q.options.map((o) => `<li>${esc(o)}</li>`).join("")}</ol>` : ""}<div class="answer"><b>Candidate response</b><pre>${esc(q.selected_option ?? q.candidate_answer ?? "Not captured in this attempt")}</pre></div><div class="meta">Automated result: ${q.automated_correct === true ? "Correct" : q.automated_correct === false ? "Incorrect" : "Not available"} · Difficulty: ${esc(q.difficulty)} · Response time: ${esc(q.time_seconds)} sec</div>${q.evaluation ? `<div class="meta"><b>AI-assisted draft (${esc(q.evaluation.status)}):</b> ${esc(q.evaluation.ai_marks)}/${esc(q.evaluation.max_marks)} partial marks · ${esc(q.evaluation.rationale)}</div>` : ""}</article>`,
-      )
-      .join("");
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Assessment evaluation report</title><style>body{font:14px/1.55 Arial,sans-serif;color:#18232b;margin:34px}h1{font-size:26px;margin:0}h2{margin-top:28px} .sub{color:#61717b}.summary{display:flex;gap:16px;margin:22px 0}.metric{padding:14px;border:1px solid #dce4e8;border-radius:10px;min-width:120px}.metric b{display:block;font-size:24px}.question{border:1px solid #dce4e8;border-radius:10px;padding:16px;margin:14px 0;break-inside:avoid}.prompt{font-weight:600}.answer{background:#f4f7f8;padding:12px;border-radius:8px}.answer pre{white-space:pre-wrap;font:13px/1.5 monospace;margin:8px 0}.meta{font-size:12px;color:#61717b;margin-top:10px}.notice{background:#fff8e8;border-left:4px solid #d59a35;padding:12px;margin:18px 0} @media print{body{margin:15mm}.question{break-inside:avoid}}</style></head><body><h1>TalentForge · Assessment evaluation report</h1><p class="sub">Candidate: ${esc(report.candidate_name)} · ${esc(report.email)}<br>Attempt: ${esc(report.id)} · Type: ${esc(report.kind)} · Completed: ${esc(stamp(report.finished))}</p><div class="summary"><div class="metric"><b>${esc(report.result?.overall ?? "—")}/100</b>Overall score</div><div class="metric"><b>${esc(report.result?.level ?? "—")}</b>Estimated level</div><div class="metric"><b>${esc(report.result?.trust ?? "—")}</b>Integrity signal</div></div><div class="notice"><b>Evaluation method:</b> ${esc(report.evaluation_method || "Automated grading details unavailable.")} The score is a support signal, not a final hiring decision. Manual review is required.</div><h2>Topic breakdown</h2><ul>${Object.entries(
-      report.result?.topics || {},
-    )
-      .map(
-        ([k, v]) =>
-          `<li>${esc(k)}: ${esc(v.score)}% · ${esc(v.level)} · ${esc(v.n)} questions</li>`,
-      )
-      .join(
-        "",
-      )}</ul><h2>Question-by-question evidence</h2>${questions || "<p>No question-level evidence is available for this attempt.</p>"}<p class="sub">Generated by TalentForge admin review. Save or print this page as PDF using your browser's print dialog.</p><script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`;
-    const win = window.open("", "_blank");
-    if (!win) {
-      setError("Allow pop-ups to generate the printable PDF report.");
-      return;
-    }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-  };
-  const counts = data.overview?.counts || {};
-  const rows = (key) => data[key]?.items || [];
-  const filtered = (items, fields) =>
-    items.filter((x) =>
-      fields.some((f) =>
-        String(x[f] ?? "")
-          .toLowerCase()
-          .includes(search.toLowerCase()),
-      ),
-    );
-  const stamp = (v) => (v ? new Date(Number(v) * 1000).toLocaleString() : "—");
-  const eventLabel = (type) => ({
-    tab_hidden: "Switched away from exam tab",
-    tab_visible: "Returned to exam tab",
-    blur: "Exam window lost focus",
-    focus: "Exam window focused",
-    fullscreen_exit: "Exited full-screen",
-    fullscreen_enter: "Returned to full-screen",
-    screen_share_stopped: "Screen sharing stopped",
-    screen_share_started: "Screen sharing started",
-    screen_share_unavailable: "Screen sharing unavailable",
-    wrong_share_surface: "Wrong surface shared",
-    camera_stopped: "Webcam disconnected",
-    copy: "Copy shortcut blocked",
-    cut: "Cut shortcut blocked",
-    paste: "Paste shortcut blocked",
-    heartbeat_gap: "Monitoring connection gap",
-    network_ip_changed: "Network address changed",
-    ai_no_face: "No face visible to camera",
-    ai_multiple_faces: "Multiple faces detected",
-    ai_gaze_away: "Possible gaze deviation",
-    ai_phone_detected: "Possible phone detected",
-    ai_audio_level: "Sustained microphone sound level",
-    microphone_stopped: "Microphone disconnected",
-    ai_model_unavailable: "On-device AI unavailable",
-    identity_verified: "Identity verified against profile photo",
-    identity_mismatch: "Identity mismatch against profile photo",
-    identity_skipped: "Identity check skipped",
-  })[type] || String(type || "Unknown event").replaceAll("_", " ");
-  const eventSource = (e) =>
-    e.type === "ai_audio_level" ? "On-device sound-level threshold (not speech recognition)" : String(e.type || "").startsWith("ai_")
-      ? "Local AI · MediaPipe"
-      : String(e.type || "").startsWith("identity_")
-        ? "Local face check · face-api"
-        : e.type === "heartbeat_gap"
-          ? "Connection monitoring"
-          : e.type === "camera_stopped"
-            ? "Webcam status"
-            : "Browser event · server timestamp";
-  const renderIntegrityEvents = (title, events, emptyText) => (
-    <>
-      <h3>{title} ({events.length})</h3>
-      {events.length ? (
-        <div className="ad-table-wrap">
-          <table className="ad-table">
-            <thead>
-              <tr>
-                <th>SERVER TIME</th>
-                <th>ELAPSED</th>
-                <th>EVENT</th>
-                <th>QUESTION</th>
-                <th>INTERRUPTION DURATION</th>
-                <th>SOURCE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((e) => (
-                <tr key={e.id}>
-                  <td>{stamp(e.server_ts)}</td>
-                  <td>{e.elapsed_label || fmt(Math.floor(e.elapsed_seconds || 0))}</td>
-                  <td>
-                    <b>{eventLabel(e.type)}</b>
-                    <small>{e.type}</small>
-                    {e.metadata?.review_note && <small>{e.metadata.review_note}</small>}
-                  </td>
-                  <td>
-                    {e.question_id || "Before / between questions"}
-                    {e.question && <small>{e.question}</small>}
-                  </td>
-                  <td>
-                    {e.duration_status === "instant"
-                      ? "Point-in-time event"
-                      : e.duration_seconds != null
-                        ? Number(e.duration_seconds).toFixed(1) + "s" +
-                          (e.duration_status === "ongoing"
-                            ? " (ongoing)"
-                            : e.duration_status === "measured"
-                              ? " (measured)"
-                              : "")
-                        : "Not recorded"}
-                  </td>
-                  <td>
-                    {eventSource(e)}
-                    {e.metadata?.surface ? " · " + e.metadata.surface : ""}
-                    {typeof e.metadata?.similarity === "number"
-                      ? " · similarity " + e.metadata.similarity + "%"
-                      : ""}
-                    {e.seq ? " · seq " + e.seq : ""}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p>{emptyText}</p>
-      )}
-    </>
-  );
-  const pill = (v) => (
-    <span
-      className={
-        "ad-pill ad-" +
-        String(v || "unknown")
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-      }
-    >
-      {String(v || "unknown").replaceAll("_", " ")}
-    </span>
-  );
-  const metric = (label, value, sub, icon) => (
-    <article className="ad-metric">
-      <span>{icon}</span>
-      <div>
-        <small>{label}</small>
-        <strong>{value ?? "—"}</strong>
-        <em>{sub}</em>
-      </div>
-    </article>
-  );
-  const table = (heads, body, empty) => (
-    <div className="ad-table-wrap">
-      <table className="ad-table">
-        <thead>
-          <tr>
-            {heads.map((h) => (
-              <th>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{body}</tbody>
-      </table>
-      {!body.length && (
-        <div className="ad-empty">{empty || "No records to display."}</div>
-      )}
-    </div>
-  );
-  const section = (k) => setPage(k);
-  const scopePages = {
-    super_admin: [
-      "overview",
-      "users",
-      "staff",
-      "companies",
-      "jobs",
-      "assessments",
-      "integrity",
-      "identity",
-      "appeals",
-      "questions",
-      "learning",
-      "ai",
-      "agent",
-      "billing",
-      "privacy",
-      "quality",
-      "audit",
-      "security",
-    ],
-    trust_safety_reviewer: [
-      "users",
-      "assessments",
-      "integrity",
-      "identity",
-      "appeals",
-      "quality",
-      "agent",
-    ],
-    question_content_admin: [
-      "questions",
-      "learning",
-      "assessments",
-      "integrity",
-      "agent",
-    ],
-    company_verification_admin: [
-      "companies",
-      "jobs",
-      "assessments",
-      "integrity",
-    ],
-    support_agent: ["users"],
-    finance_admin: ["billing", "learning"],
-    compliance_officer: ["ai", "agent", "privacy", "quality", "audit"],
-  };
-  const visibleNav = nav.filter(([id]) =>
-    (scopePages[adminRole] || []).includes(id),
-  );
-  useEffect(() => {
-    if (visibleNav.length && !visibleNav.some((x) => x[0] === page))
-      setPage(visibleNav[0][0]);
-  }, [adminRole]);
-  const current = nav.find((x) => x[0] === page);
-  return (
-    <div className="ad-app">
-      <a className="ws-skip-link" href="#admin-content">Skip to content</a>
-      <aside className="ad-sidebar">
-        <div className="ad-brand">
-          <span className="ad-brand-mark">TF</span>
-          <span>
-            TalentForge<small>{A.brand}</small>
-          </span>
-        </div>
-        <div className="ad-admin-label">
-          <span className="ad-online-dot" /> {A.label}
-        </div>
-        <nav className="ad-nav" aria-label={A.navAria}>
-          {visibleNav.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={page === id ? "active" : ""}
-              aria-current={page === id ? "page" : undefined}
-              title={label}
-              onClick={() => {
-                setPage(id);
-                setSearch("");
-              }}
-            >
-              <span><WorkspaceIcon name={id} /></span>
-              {label}
-              {id === "companies" && counts.pending_companies > 0 ? (
-                <b>{counts.pending_companies}</b>
-              ) : id === "jobs" && counts.pending_jobs > 0 ? (
-                <b>{counts.pending_jobs}</b>
-              ) : id === "integrity" &&
-                (data.assessments?.items || []).filter((x) => !x.review_decision).length > 0 ? (
-                <b>
-                  {(data.assessments?.items || []).filter((x) => !x.review_decision).length}
-                </b>
-              ) : id === "appeals" && counts.open_appeals > 0 ? (
-                <b>{counts.open_appeals}</b>
-              ) : null}
-            </button>
-          ))}
-        </nav>
-        <div className="ad-sidebar-bottom">
-          <div className="ad-security-card">
-            <span>◈</span>
-            <strong>{A.privilegedTitle}</strong>
-            <p>{A.privilegedBody}</p>
-          </div>
-          <div className="ad-admin-profile">
-            <div>SA</div>
-            <span>
-              <b>{adminRole.replaceAll("_", " ")}</b>
-              <small>{A.internalAccess}</small>
-            </span>
-            <i>●</i>
-          </div>
-          <button
-            className="ad-sidebar-signout"
-            type="button"
-            onClick={onLogout}
-          >
-            {A.signOutAdmin}
-          </button>
-        </div>
-      </aside>
-      <main className="ad-main">
-        <header className="ad-topbar">
-          <div>
-            <span>{A.platform}</span>
-            <b>/</b>
-            {current?.[1] || A.nav.overview}
-          </div>
-          <div className="ad-top-actions">
-            <WorkspaceSearch items={visibleNav.map(([id, label]) => ({ id, label }))} onNavigate={(id) => { setPage(id); setSearch(""); }} lang={lang} />
-            <span className="ad-secure-label">
-              <i /> {A.secureSession}
-            </span>
-            <button onClick={load} disabled={busy} title={C.common.refresh} aria-label={C.common.refresh}>
-              <WorkspaceIcon name="refresh" size={18} />
-            </button>
-            <select className="ws-language" aria-label="Language" value={lang} onChange={(event) => setLang(event.target.value)}><option value="en">English</option><option value="bn">বাংলা</option></select>
-            <span className="ad-top-avatar">SA</span>
-            <button className="ad-signout" onClick={onLogout} type="button">
-              ↪ {C.common.signOut}
-            </button>
-          </div>
-        </header>
-        <div className="ad-content" id="admin-content" tabIndex={-1} aria-busy={busy}>
-          {toast && (
-            <div className="ad-toast" role="status">
-              ✓ {toast}
-              <button onClick={() => setToast("")}>×</button>
-            </div>
-          )}
-          {error && (
-            <div className="ad-error" role="alert">
-              {error}
-              <button onClick={() => setError("")}>×</button>
-            </div>
-          )}
-          <div className="ad-page-heading">
-            <div>
-              <div className="ad-eyebrow">{A.title}</div>
-              <h1>
-                {page === "overview" ? A.overviewTitle : current?.[1]}
-              </h1>
-              <p>
-                {page === "overview" ? A.overviewDesc : A.desc[page]}
-              </p>
-            </div>
-            <button className="ad-refresh" onClick={load} disabled={busy}>
-              {busy ? C.common.refreshing : C.common.refreshData}
-            </button>
-          </div>
-          {page === "overview" && (
-            <section>
-              <div className="ad-metrics">
-                {metric(
-                  A.metrics.totalAccounts,
-                  counts.users,
-                  A.metrics.registeredUsers,
-                  "♙",
-                )}
-                {metric(
-                  A.metrics.candidates,
-                  counts.candidates,
-                  A.metrics.individualAccounts,
-                  "◎",
-                )}
-                {metric(
-                  A.metrics.companies,
-                  counts.companies,
-                  counts.verified_companies + " " + A.metrics.verifiedCount,
-                  "▣",
-                )}
-                {metric(
-                  A.metrics.publishedJobs,
-                  counts.published_jobs,
-                  counts.pending_jobs + " " + A.metrics.awaitingReview,
-                  "▤",
-                )}
-                {metric(
-                  A.metrics.applications,
-                  counts.applications,
-                  A.metrics.submittedApplications,
-                  "↗",
-                )}
-                {metric(
-                  A.metrics.completed,
-                  counts.completed_attempts,
-                  counts.open_appeals + " " + A.metrics.openAppeals,
-                  "✓",
-                )}
-              </div>
-              <div className="ad-overview-grid">
-                <div className="ad-panel">
-                  <div className="ad-panel-head">
-                    <div>
-                      <h2>{A.needsAttention}</h2>
-                      <p>{A.needsAttentionSub}</p>
-                    </div>
-                    <span className="ad-live-tag">{A.liveData}</span>
-                  </div>
-                  {[
-                    [
-                      A.queues.companyVerification,
-                      counts.pending_companies,
-                      "companies",
-                      "companies",
-                    ],
-                    [A.queues.jobReview, counts.pending_jobs, "posts", "jobs"],
-                    [
-                      A.queues.appeals,
-                      counts.open_appeals,
-                      "appeals",
-                      "appeals",
-                    ],
-                    [
-                      A.queues.assessmentReview,
-                      (data.assessments?.items || []).filter(
-                        (x) => !x.review_decision,
-                      ).length,
-                      "reviews",
-                      "assessments",
-                    ],
-                  ].map(([label, n, unit, target]) => (
-                    <button
-                      className="ad-queue-row"
-                      onClick={() => section(target)}
-                    >
-                      <span className="ad-queue-icon">◇</span>
-                      <span>
-                        <b>{label}</b>
-                        <small>
-                          {n || 0} {unit} pending review
-                        </small>
-                      </span>
-                      <strong>{n || 0}</strong>
-                      <i>→</i>
-                    </button>
-                  ))}
-                </div>
-                <div className="ad-panel">
-                  <div className="ad-panel-head">
-                    <div>
-                      <h2>Platform readiness</h2>
-                      <p>Connected service status</p>
-                    </div>
-                  </div>
-                  <div className="ad-health-row">
-                    <span>
-                      <i className="ad-health-green" /> API / database
-                    </span>
-                    <b>Connected</b>
-                  </div>
-                  <div className="ad-health-row">
-                    <span>
-                      <i
-                        className={
-                          data.ai?.configured
-                            ? "ad-health-green"
-                            : "ad-health-amber"
-                        }
-                      />{" "}
-                      AI provider
-                    </span>
-                    <b>
-                      {data.ai?.status === "configured"
-                        ? "Configured"
-                        : "Fallback mode"}
-                    </b>
-                  </div>
-                  <div className="ad-health-row">
-                    <span>
-                      <i className="ad-health-amber" /> Billing
-                    </span>
-                    <b>Not enabled</b>
-                  </div>
-                  <div className="ad-health-row">
-                    <span>
-                      <i className="ad-health-amber" /> Retention workers
-                    </span>
-                    <b>Not configured</b>
-                  </div>
-                  <p className="ad-footnote">
-                    Health indicators reflect available application
-                    configuration, not external uptime guarantees.
-                  </p>
-                </div>
-              </div>
-              <div className="ad-panel ad-lower-note">
-                <strong>Platform principles</strong>
-                <div>
-                  <span>✓ Human-led hiring decisions</span>
-                  <span>✓ Deterministic assessment scoring</span>
-                  <span>✓ Candidate-controlled sharing</span>
-                  <span>✓ Auditable admin actions</span>
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "users" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Accounts directory</h2>
-                  <p>Search users and manage account availability.</p>
-                </div>
-                <span className="ad-count">{rows("users").length} records</span>
-              </div>
-              <div className="ad-toolbar">
-                <input
-                  placeholder="Search name or email…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                >
-                  <option value="all">All roles</option>
-                  <option value="candidate">Candidates</option>
-                  <option value="company">Company users</option>
-                  <option value="admin">Admins</option>
-                </select>
-              </div>
-              {table(
-                ["USER", "ROLE", "CREATED", "STATUS", "ACTIONS"],
-                filtered(
-                  rows("users").filter(
-                    (x) => filter === "all" || x.role === filter,
-                  ),
-                  ["name", "email"],
-                ).map((u) => (
-                  <tr>
-                    <td>
-                      <b>{u.name}</b>
-                      <small>{u.email}</small>
-                      <small className="ad-id">ID {u.id}</small>
-                    </td>
-                    <td>{pill(u.role)}</td>
-                    <td>{stamp(u.created)}</td>
-                    <td>{pill(u.account_status || "active")}</td>
-                    <td>
-                      {u.role === "candidate" && (
-                        <button
-                          className="ad-action-btn"
-                          onClick={() => setCandidateView(u.id)}
-                        >
-                          View candidate
-                        </button>
-                      )}
-                      {u.role !== "admin" && adminRole !== "support_agent" && (
-                        <button
-                          className="ad-action-btn"
-                          onClick={() =>
-                            openAction(
-                              "user",
-                              u.id,
-                              (u.account_status || "active") === "active"
-                                ? "suspended"
-                                : "active",
-                            )
-                          }
-                        >
-                          {(u.account_status || "active") === "active"
-                            ? "Suspend"
-                            : "Reactivate"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )),
-                "No accounts match your search.",
-              )}
-            </section>
-          )}
-
-          {page === "staff" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Privileged staff access</h2>
-                  <p>
-                    Admin accounts are provisioned internally. Assign each staff
-                    account only the scope required for their duties.
-                  </p>
-                </div>
-                <span className="ad-count">
-                  {rows("staff").length} staff accounts
-                </span>
-              </div>
-              <div className="ad-info-banner">
-                Create internal admin accounts here. Public signup cannot grant
-                admin access. Choose the least-privilege role needed for each
-                person.
-              </div>
-              <form
-                onSubmit={createAdmin}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
-                  gap: 12,
-                  alignItems: "end",
-                  padding: "16px 0",
-                }}
-              >
-                <label>
-                  Full name
-                  <input
-                    className="ad-role-select"
-                    required
-                    minLength={2}
-                    maxLength={80}
-                    value={adminDraft.name}
-                    onChange={(e) =>
-                      setAdminDraft({ ...adminDraft, name: e.target.value })
-                    }
-                    placeholder="Admin name"
-                  />
-                </label>
-                <label>
-                  Admin email
-                  <input
-                    className="ad-role-select"
-                    type="email"
-                    required
-                    value={adminDraft.email}
-                    onChange={(e) =>
-                      setAdminDraft({ ...adminDraft, email: e.target.value })
-                    }
-                    placeholder="admin@example.com"
-                  />
-                </label>
-                <label>
-                  Password
-                  <input
-                    className="ad-role-select"
-                    type="password"
-                    required
-                    minLength={14}
-                    maxLength={128}
-                    autoComplete="new-password"
-                    value={adminDraft.password}
-                    onChange={(e) =>
-                      setAdminDraft({ ...adminDraft, password: e.target.value })
-                    }
-                    placeholder="At least 14 characters"
-                  />
-                </label>
-                <label>
-                  Permission role
-                  <select
-                    className="ad-role-select"
-                    value={adminDraft.admin_role}
-                    onChange={(e) =>
-                      setAdminDraft({
-                        ...adminDraft,
-                        admin_role: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="support_agent">Support Agent</option>
-                    <option value="trust_safety_reviewer">
-                      Trust & Safety Reviewer
-                    </option>
-                    <option value="question_content_admin">
-                      Question / Content Admin
-                    </option>
-                    <option value="company_verification_admin">
-                      Company Verification Admin
-                    </option>
-                    <option value="finance_admin">Finance Admin</option>
-                    <option value="compliance_officer">
-                      Compliance Officer
-                    </option>
-                    <option value="super_admin">Super Admin</option>
-                  </select>
-                </label>
-                <button
-                  className="ad-mini-primary"
-                  disabled={creatingAdmin || adminDraft.password.length < 14}
-                >
-                  {creatingAdmin ? "Creating…" : "＋ Add Admin"}
-                </button>
-              </form>
-              <div className="ad-info-banner">
-                Passwords are stored as secure hashes. Do not reuse or share
-                passwords in public channels; provide each admin their
-                credentials privately.
-              </div>
-              {table(
-                ["STAFF MEMBER", "ADMIN ROLE", "UPDATED", "ACCESS SCOPE", "ACTIONS"],
-                rows("staff").map((s) => (
-                  <tr>
-                    <td>
-                      <b>{s.name}</b>
-                      <small>{s.email}</small>
-                      <small>ID {s.id}</small>
-                    </td>
-                    <td>
-                      <select
-                        className="ad-role-select"
-                        value={s.admin_role}
-                        onChange={async (e) => {
-                          try {
-                            await api("/admin/console/staff/" + s.id, {
-                              method: "PUT",
-                              body: { admin_role: e.target.value },
-                            });
-                            flash("Admin role updated.");
-                            await load();
-                          } catch (x) {
-                            setError(x.message);
-                          }
-                        }}
-                      >
-                        <option value="super_admin">Super Admin</option>
-                        <option value="trust_safety_reviewer">
-                          Trust & Safety Reviewer
-                        </option>
-                        <option value="question_content_admin">
-                          Question / Content Admin
-                        </option>
-                        <option value="company_verification_admin">
-                          Company Verification Admin
-                        </option>
-                        <option value="support_agent">Support Agent</option>
-                        <option value="finance_admin">Finance Admin</option>
-                        <option value="compliance_officer">
-                          Compliance Officer
-                        </option>
-                      </select>
-                    </td>
-                    <td>{stamp(s.updated_at)}</td>
-                    <td>
-                      <small>{s.admin_role.replaceAll("_", " ")}</small>
-                    </td>
-                    <td>
-                      {s.id === adminId ? (
-                        <small>Your account</small>
-                      ) : (
-                        <div className="ad-row-actions">
-                          <button type="button" onClick={() => revokeAdmin(s)}>
-                            Revoke admin
-                          </button>
-                          <button
-                            type="button"
-                            className="ad-danger-link"
-                            onClick={() => deleteAdmin(s)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                )),
-                "No internally provisioned admin staff accounts found.",
-              )}
-            </section>
-          )}
-          {page === "companies" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Organisation verification queue</h2>
-                  <p>Review legal identity details and evidence notes.</p>
-                </div>
-                <span className="ad-count">
-                  {rows("companies").length} requests
-                </span>
-              </div>
-              <div className="ad-toolbar">
-                <input
-                  placeholder="Search company or legal name…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="pending_review">Pending</option>
-                  <option value="verified">Verified</option>
-                  <option value="needs_information">Needs information</option>
-                  <option value="rejected">Rejected</option>
-                </select>
-              </div>
-              {table(
-                [
-                  "ORGANISATION",
-                  "LEGAL DETAILS",
-                  "SUBMITTED",
-                  "STATUS",
-                  "DECISION",
-                ],
-                filtered(
-                  rows("companies").filter(
-                    (x) => filter === "all" || x.status === filter,
-                  ),
-                  ["company_name", "legal_name", "country"],
-                ).map((x) => (
-                  <tr>
-                    <td>
-                      <b>{x.company_name}</b>
-                      <small>{x.website || "Website not provided"}</small>
-                    </td>
-                    <td>
-                      <b>{x.legal_name}</b>
-                      <small>
-                        {x.country} · {x.business_id || "No registration ID"}
-                      </small>
-                      <small>{x.evidence_note}</small>
-                    </td>
-                    <td>{stamp(x.submitted_at)}</td>
-                    <td>{pill(x.status)}</td>
-                    <td>
-                      <div className="ad-row-actions">
-                        {x.status === "pending_review" && (
-                          <>
-                            <button
-                              className="ad-mini-primary"
-                              onClick={() =>
-                                openAction("company", x.company_id, "verified")
-                              }
-                            >
-                              Verify
-                            </button>
-                            <button
-                              onClick={() =>
-                                openAction(
-                                  "company",
-                                  x.company_id,
-                                  "needs_information",
-                                )
-                              }
-                            >
-                              Request info
-                            </button>
-                            <button
-                              className="ad-danger-link"
-                              onClick={() =>
-                                openAction("company", x.company_id, "rejected")
-                              }
-                            >
-                              Reject
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )),
-                "No verification requests found.",
-              )}
-            </section>
-          )}
-          {page === "jobs" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Job moderation</h2>
-                  <p>
-                    Approve compliant listings or return them with a clear
-                    reason.
-                  </p>
-                </div>
-                <span className="ad-count">{rows("jobs").length} records</span>
-              </div>
-              <div className="ad-toolbar">
-                <input
-                  placeholder="Search job title or company…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
-              {table(
-                [
-                  "JOB / COMPANY",
-                  "LOCATION",
-                  "SUBMITTED",
-                  "STATUS",
-                  "MODERATION",
-                ],
-                filtered(rows("jobs"), [
-                  "title",
-                  "company_name",
-                  "description",
-                ]).map((x) => (
-                  <tr>
-                    <td>
-                      <b>{x.title}</b>
-                      <small>{x.company_name}</small>
-                      <small>
-                        {x.description?.slice(0, 130)}
-                        {x.description?.length > 130 ? "…" : ""}
-                      </small>
-                    </td>
-                    <td>
-                      {x.location}
-                      <small>{x.employment_type}</small>
-                    </td>
-                    <td>{stamp(x.created)}</td>
-                    <td>{pill(x.status)}</td>
-                    <td>
-                      <div className="ad-row-actions">
-                        {x.status === "pending_review" && (
-                          <>
-                            <button
-                              className="ad-mini-primary"
-                              disabled={!x.verified}
-                              onClick={() =>
-                                openAction("job", x.id, "published")
-                              }
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() =>
-                                openAction("job", x.id, "needs_changes")
-                              }
-                            >
-                              Request changes
-                            </button>
-                            <button
-                              className="ad-danger-link"
-                              onClick={() =>
-                                openAction("job", x.id, "rejected")
-                              }
-                            >
-                              Reject
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )),
-                "No jobs are awaiting moderation.",
-              )}
-            </section>
-          )}
-          {page === "assessments" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Assessment review</h2>
-                  <p>
-                    Review the automated score alongside every question and the
-                    candidate's submitted response before recording a human
-                    decision.
-                  </p>
-                </div>
-                <span className="ad-count">
-                  {rows("assessments").length} attempts
-                </span>
-              </div>
-              <div className="ad-info-banner">
-                MCQs and reference-answer SQL are graded deterministically.
-                Descriptive, scenario, coding and analytical answers receive an
-                stored-rubric draft (keyword coverage + reference similarity)
-                with partial marks. Every draft waits for
-                your approval and can be edited before it affects the score.
-                Academic and honesty approval together publish the candidate's learning path
-                and Skill Passport. Invalidating or
-                requesting more information revokes that passport. Older attempts
-                may not contain saved raw answers.
-              </div>
-              <div className="ad-toolbar">
-                <input
-                  placeholder="Search candidate or email…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
-              {table(
-                [
-                  "CANDIDATE",
-                  "ASSESSMENT",
-                  "SCORE",
-                  "REVIEW STATUS",
-                  "REPORT / ACTION",
-                ],
-                filtered(rows("assessments"), [
-                  "candidate_name",
-                  "email",
-                  "kind",
-                ]).map((x) => (
-                  <tr>
-                    <td>
-                      <b>{x.candidate_name}</b>
-                      <small>{x.email}</small>
-                    </td>
-                    <td>
-                      {x.kind}
-                      <small>{stamp(x.finished)}</small>
-                    </td>
-                    <td>
-                      <strong>
-                        {x.result?.overall ?? "—"}
-                        <small>/ 100</small>
-                      </strong>
-                    </td>
-                    <td>{pill(x.publication?.stage || x.review_decision || "pending_review")}</td>
-                    <td>
-                      <div className="ad-row-actions">
-                        <button onClick={() => openReport(x)}>
-                          View report
-                        </button>
-                        <button
-                          className="ad-mini-primary"
-                          onClick={() =>
-                            openAction("assessment", x.id, "approved")
-                          }
-                        >
-                          Approve academic marks
-                        </button>
-                        <button
-                          onClick={() =>
-                            openAction("assessment", x.id, "needs_more_info")
-                          }
-                        >
-                          More info
-                        </button>
-                        <button
-                          className="ad-danger-link"
-                          onClick={() =>
-                            openAction("assessment", x.id, "invalidated")
-                          }
-                        >
-                          Invalid
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )),
-                "No completed assessments in the review list.",
-              )}
-              <div className="ad-panel-head ad-subhead">
-                <div>
-                  <h2>Company assessment requests</h2>
-                  <p>
-                    Company-authored phase-two requests require platform
-                    approval.
-                  </p>
-                </div>
-              </div>
-              {table(
-                ["REQUEST", "COMPANY / CANDIDATE", "STATUS", "REVIEW"],
-                rows("phaseTwo").map((x) => (
-                  <tr>
-                    <td>
-                      <b>{x.title}</b>
-                      <small>{x.requirements}</small>
-                    </td>
-                    <td>
-                      {x.company_name}
-                      <small>
-                        {x.candidate_name} · {x.job_title}
-                      </small>
-                    </td>
-                    <td>{pill(x.status)}</td>
-                    <td>
-                      {x.status === "pending_platform_review" && (
-                        <div className="ad-row-actions">
-                          <button
-                            className="ad-mini-primary"
-                            onClick={() =>
-                              openAction("phase", x.id, "approved")
-                            }
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() =>
-                              openAction("phase", x.id, "needs_changes")
-                            }
-                          >
-                            Request changes
-                          </button>
-                          <button
-                            className="ad-danger-link"
-                            onClick={() =>
-                              openAction("phase", x.id, "rejected")
-                            }
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                )),
-                "No company assessment requests.",
-              )}
-            </section>
-          )}
-          {page === "integrity" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Exam integrity monitoring</h2>
-                  <p>
-                    All recorded attempts, including active attempts. Open a row
-                    to inspect event evidence and the explainable trust
-                    assessment.
-                  </p>
-                </div>
-                <span className="ad-count">
-                  {rows("integrity").length} attempts
-                </span>
-              </div>
-              <div className="ad-toolbar">
-                <input
-                  placeholder="Search candidate, email or attempt ID…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <select
-                  value={integrityStatus}
-                  onChange={(e) => setIntegrityStatus(e.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="active">In progress</option>
-                  <option value="done">Completed</option>
-                </select>
-                <select
-                  value={integrityKind}
-                  onChange={(e) => setIntegrityKind(e.target.value)}
-                >
-                  <option value="all">All assessment types</option>
-                  <option value="pre">Initial</option>
-                  <option value="post">Retest</option>
-                </select>
-                <select
-                  value={integrityTrust}
-                  onChange={(e) => setIntegrityTrust(e.target.value)}
-                >
-                  <option value="all">All trust labels</option>
-                  <option value="High trust">High trust</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Needs review">Needs review</option>
-                  <option value="Not scored">Not scored</option>
-                </select>
-              </div>
-              {table(
-                [
-                  "CANDIDATE",
-                  "ATTEMPT",
-                  "STATUS",
-                  "SCORE",
-                  "TRUST",
-                  "HONESTY",
-                  "EVENTS",
-                  "REVIEW",
-                  "DETAILS",
-                ],
-                rows("integrity")
-                  .filter(
-                    (x) =>
-                      (integrityStatus === "all" ||
-                        x.status === integrityStatus) &&
-                      (integrityKind === "all" || x.kind === integrityKind) &&
-                      (integrityTrust === "all" || x.trust === integrityTrust),
-                  )
-                  .filter((x) =>
-                    [x.candidate_name, x.email, x.id].some((v) =>
-                      String(v || "")
-                        .toLowerCase()
-                        .includes(search.toLowerCase()),
-                    ),
-                  )
-                  .map((x) => (
-                    <tr>
-                      <td>
-                        <b>{x.candidate_name}</b>
-                        <small>{x.email}</small>
-                      </td>
-                      <td>
-                        <code>{x.id}</code>
-                        <small>{stamp(x.finished || x.started)}</small>
-                      </td>
-                      <td>{pill(x.status)}</td>
-                      <td>
-                        {x.result?.overall ?? "—"}
-                        {x.result && <small>/ 100</small>}
-                      </td>
-                      <td>
-                        {pill(x.trust || "Not scored")}
-                        <small>{x.result?.trust_points ?? "—"} points</small>
-                      </td>
-                      <td>
-                        <b>{x.honesty_score ?? "—"}</b>
-                        <small>{x.honesty_status || "pending"}</small>
-                      </td>
-                      <td>{x.event_count ?? 0}</td>
-                      <td>{pill(x.review_decision || "not_reviewed")}</td>
-                      <td>
-                        <button
-                          className="ad-action-btn"
-                          onClick={() => openIntegrityDetail(x.id)}
-                        >
-                          Inspect →
-                        </button>
-                      </td>
-                    </tr>
-                  )),
-                "No exam attempts match these filters.",
-              )}
-            </section>
-          )}
-          {page === "appeals" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Candidate appeals</h2>
-                  <p>
-                    Appeals should be reviewed independently where staffing
-                    permits.
-                  </p>
-                </div>
-                <span className="ad-count">
-                  {rows("appeals").length} appeals
-                </span>
-              </div>
-              {table(
-                ["CANDIDATE", "ATTEMPT", "APPEAL NOTE", "STATUS", "OUTCOME"],
-                rows("appeals").map((x) => (
-                  <tr>
-                    <td>
-                      <b>{x.candidate_name}</b>
-                      <small>{x.email}</small>
-                    </td>
-                    <td>
-                      <code>{x.attempt_id}</code>
-                      <small>{stamp(x.finished)}</small>
-                    </td>
-                    <td>{x.appeal}{x.original_reviewer_name && <small>Reviewed by {x.original_reviewer_name}</small>}</td>
-                    <td>
-                      {pill(x.decision || "open")}
-                      {x.decision && x.appeal_reviewer_name && <small>Decided by {x.appeal_reviewer_name} · {stamp(x.decided_at)}</small>}
-                    </td>
-                    <td>
-                      {x.open ? (
-                        x.can_decide ? (
-                          <div className="ad-row-actions">
-                            <button
-                              className="ad-mini-primary"
-                              onClick={() =>
-                                openAction("appeal", x.attempt_id, "upheld")
-                              }
-                            >
-                              Uphold
-                            </button>
-                            <button
-                              onClick={() =>
-                                openAction("appeal", x.attempt_id, "overturned")
-                              }
-                            >
-                              Overturn
-                            </button>
-                            <button
-                              onClick={() =>
-                                openAction(
-                                  "appeal",
-                                  x.attempt_id,
-                                  "needs_more_info",
-                                )
-                              }
-                            >
-                              More info
-                            </button>
-                          </div>
-                        ) : (
-                          <small>{x.blocked_reason || "Another administrator must decide this appeal."}</small>
-                        )
-                      ) : (
-                        <small>Final decision recorded. No further action is required.</small>
-                      )}
-                    </td>
-                  </tr>
-                )),
-                "No candidate appeals have been submitted.",
-              )}
-            </section>
-          )}
-          {page === "questions" &&
-            (() => {
-              const qdata = data.questions || {},
-                cats = qdata.categories || [],
-                allQuestions = qdata.items || [];
-              const stagingItems = data.staging?.items || [],
-                selectedCount = Object.keys(stagingSelected).filter(
-                  (k) => stagingSelected[k],
-                ).length;
-              const visibleQuestions = allQuestions.filter(
-                (q) =>
-                  (questionCategory === "all" ||
-                    q.category_id === questionCategory) &&
-                  (questionStatus === "all" || q.status === questionStatus) &&
-                  [q.question_text, q.subcategory, q.question_type, q.id].some(
-                    (v) =>
-                      String(v || "")
-                        .toLowerCase()
-                        .includes(questionQuery.toLowerCase()),
-                  ),
-              );
-              const activeCategory = cats.find(
-                (c) => c.id === questionCategory,
-              );
-              return (
-                <section className="ad-question-workspace">
-                  <div className="ad-question-hero">
-                    <div>
-                      <div className="ad-eyebrow">
-                        ASSESSMENT CONTENT · GOVERNANCE
-                      </div>
-                      <h2>Build a stronger question bank.</h2>
-                      <p>
-                        Organise questions across built-in and custom skill
-                        domains. New topics are created automatically when
-                        imported content introduces them.
-                      </p>
-                      <div className="ad-question-hero-tags">
-                        <span>✓ Database-backed</span>
-                        <span>◈ Versioned edits</span>
-                        <span>↗ Bulk import</span>
-                      </div>
-                    </div>
-                    <div className="ad-question-hero-icon">
-                      Q<span>+</span>
-                    </div>
-                  </div>
-                  <div className="ad-category-manager">
-                    <div>
-                      <span className="ad-eyebrow">DYNAMIC TOPIC LIBRARY</span>
-                      <h3>Manage question categories</h3>
-                      <p>
-                        Use existing topics or create a new one. Unknown source
-                        topics are added automatically during preview and
-                        import.
-                      </p>
-                    </div>
-                    <form onSubmit={createQuestionCategory}>
-                      <input
-                        value={categoryDraft}
-                        onChange={(e) => setCategoryDraft(e.target.value)}
-                        maxLength={80}
-                        placeholder="New category name (e.g. Cloud Computing)"
-                        aria-label="New category name"
-                      />
-                      <button
-                        className="ad-q-add-btn"
-                        disabled={
-                          categoryBusy || categoryDraft.trim().length < 2
-                        }
-                      >
-                        {categoryBusy ? "Creating…" : "＋ Create category"}
-                      </button>
-                    </form>
-                    <div className="ad-category-chips">
-                      {cats.map((c) => (
-                        <button
-                          type="button"
-                          key={c.id}
-                          className={questionCategory === c.id ? "on" : ""}
-                          onClick={() => setQuestionCategory(c.id)}
-                        >
-                          <b>{c.name}</b>
-                          <span>{c.count || 0}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="ad-graphrag-panel">
-                    <div>
-                      <span className="ad-eyebrow">
-                        OPTIONAL GRAPH RETRIEVAL · EXPERIMENTAL
-                      </span>
-                      <h3>CV + Fundamental GraphRAG</h3>
-                      <p>
-                        {data.graphrag?.active_question_count ?? "—"} active
-                        questions · Fundamental{" "}
-                        {data.graphrag?.fundamental_selected_count ?? 0}/25 ·
-                        CV skills{" "}
-                        {data.graphrag?.covered_skill_count ?? 0} covered /{" "}
-                        {data.graphrag?.uncovered_skill_count ?? 0} pending ·
-                        Meilisearch{" "}
-                        {data.graphrag?.meilisearch_configured
-                          ? "configured"
-                          : "not connected"}{" "}
-                        · Neo4j{" "}
-                        {data.graphrag?.neo4j_configured
-                          ? "configured"
-                          : "not connected"}
-                      </p>
-                      <small>
-                        This 25-question + CV-skill blueprint uses the same skill
-                        catalogue as the candidate profile and skill journey.
-                        Skills without a complete per-difficulty quota are
-                        reported below; no questions are fabricated.
-                      </small>
-                      {!!data.graphrag?.uncovered_skills?.length && (
-                        <small>
-                          Pending bank coverage:{" "}
-                          {data.graphrag.uncovered_skills
-                            .slice(0, 6)
-                            .map((x) => x.label)
-                            .join(" · ")}
-                        </small>
-                      )}
-                      {data.graphrag?.fundamental_shortages?.length > 0 && (
-                        <small>
-                          Missing:{" "}
-                          {data.graphrag.fundamental_shortages
-                            .slice(0, 4)
-                            .map(
-                              (x) => x.format || x.topic + " " + x.difficulty,
-                            )
-                            .join(" · ")}
-                        </small>
-                      )}
-                    </div>
-                    <button
-                      className="ad-q-add-btn"
-                      onClick={async () => {
-                        try {
-                          const result = await api(
-                            "/admin/assessment/graphrag/reindex",
-                            { method: "POST" },
-                          );
-                          flash(
-                            "Graph index updated · " +
-                              result.active_questions +
-                              " approved questions.",
-                          );
-                          await load();
-                        } catch (x) {
-                          setError(x.message || "Graph index update failed.");
-                        }
-                      }}
-                    >
-                      Rebuild search + graph index
-                    </button>
-                  </div>
-                  <div className="ad-question-stats">
-                    <article>
-                      <span className="ad-qstat-icon">▤</span>
-                      <div>
-                        <small>Total questions</small>
-                        <strong>
-                          {qdata.summary?.total ?? allQuestions.length}
-                        </strong>
-                        <em>Across all categories</em>
-                      </div>
-                    </article>
-                    <article>
-                      <span className="ad-qstat-icon ad-qstat-green">✓</span>
-                      <div>
-                        <small>Active</small>
-                        <strong>{qdata.summary?.active ?? 0}</strong>
-                        <em>Ready for use</em>
-                      </div>
-                    </article>
-                    <article>
-                      <span className="ad-qstat-icon ad-qstat-amber">◷</span>
-                      <div>
-                        <small>Draft</small>
-                        <strong>{qdata.summary?.draft ?? 0}</strong>
-                        <em>Awaiting approval</em>
-                      </div>
-                    </article>
-                    <article>
-                      <span className="ad-qstat-icon ad-qstat-grey">▣</span>
-                      <div>
-                        <small>Archived</small>
-                        <strong>{qdata.summary?.archived ?? 0}</strong>
-                        <em>Retained for history</em>
-                      </div>
-                    </article>
-                  </div>
-                  <div className="ad-question-section-head">
-                    <div>
-                      <h3>Explore by category</h3>
-                      <p>Select a domain to view its question inventory.</p>
-                    </div>
-                    <button
-                      className="ad-q-add-btn"
-                      onClick={() => openQuestionEditor()}
-                    >
-                      ＋ Create question
-                    </button>
-                  </div>
-                  <div className="ad-category-grid">
-                    {cats.map((c, i) => (
-                      <button
-                        key={c.id}
-                        className={
-                          "ad-category-card " +
-                          (questionCategory === c.id ? "selected" : "")
-                        }
-                        onClick={() =>
-                          setQuestionCategory(
-                            questionCategory === c.id ? "all" : c.id,
-                          )
-                        }
-                      >
-                        <span className={"ad-category-icon ad-cat-" + (i + 1)}>
-                          {c.icon}
-                        </span>
-                        <span className="ad-category-copy">
-                          <b>{c.name}</b>
-                          <small>{c.description}</small>
-                        </span>
-                        <strong>
-                          {c.count || 0}
-                          <small>questions</small>
-                        </strong>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="ad-question-panel">
-                    <div className="ad-question-section-head">
-                      <div>
-                        <h3>
-                          {activeCategory
-                            ? activeCategory.name + " questions"
-                            : "All questions"}
-                        </h3>
-                        <p>
-                          {activeCategory
-                            ? activeCategory.description
-                            : "Browse the complete question bank and manage its lifecycle."}
-                        </p>
-                      </div>
-                      <span className="ad-count">
-                        {visibleQuestions.length} shown
-                      </span>
-                    </div>
-                    <div className="ad-question-toolbar">
-                      <label className="ad-q-search">
-                        ⌕
-                        <input
-                          value={questionQuery}
-                          onChange={(e) => setQuestionQuery(e.target.value)}
-                          placeholder="Search question, subcategory or ID…"
-                        />
-                      </label>
-                      <select
-                        value={questionStatus}
-                        onChange={(e) => setQuestionStatus(e.target.value)}
-                      >
-                        <option value="all">All statuses</option>
-                        <option value="active">Active</option>
-                        <option value="draft">Draft</option>
-                        <option value="archived">Archived</option>
-                      </select>
-                      <button
-                        className="ad-q-clear"
-                        onClick={() => {
-                          setQuestionCategory("all");
-                          setQuestionStatus("all");
-                          setQuestionQuery("");
-                        }}
-                      >
-                        Reset filters
-                      </button>
-                    </div>
-                    <div className="ad-question-list">
-                      {visibleQuestions.map((q) => (
-                        <article className="ad-question-row" key={q.id}>
-                          <div className="ad-q-type-icon">
-                            {q.question_type === "MCQ"
-                              ? "☷"
-                              : q.question_type.toLowerCase().includes("coding")
-                                ? "</>"
-                                : "✎"}
-                          </div>
-                          <div className="ad-question-main">
-                            <div className="ad-question-meta">
-                              <span>
-                                {cats.find((c) => c.id === q.category_id)
-                                  ?.name || q.category_id}
-                              </span>
-                              <i>·</i>
-                              <span>{q.subcategory}</span>
-                              <i>·</i>
-                              <span>{q.question_type}</span>
-                            </div>
-                            <h4>{q.question_text}</h4>
-                            <div className="ad-question-tags">
-                              <span
-                                className={
-                                  "ad-q-difficulty ad-q-" +
-                                  q.difficulty_level.toLowerCase()
-                                }
-                              >
-                                {q.difficulty_level}
-                              </span>
-                              <span>{q.marks} marks</span>
-                              <span>
-                                {Math.round(q.time_allocation / 60)} min
-                              </span>
-                              <span>v{q.version}</span>
-                            </div>
-                          </div>
-                          <div className="ad-question-actions">
-                            {pill(q.status)}
-                            <button onClick={() => openQuestionEditor(q)}>
-                              Edit ↗
-                            </button>
-                          </div>
-                        </article>
-                      ))}
-                      {!visibleQuestions.length && (
-                        <div className="ad-q-empty">
-                          <span>⌕</span>
-                          <b>No questions found</b>
-                          <p>
-                            Try another category or adjust your search filters.
-                          </p>
-                          <button onClick={() => openQuestionEditor()}>
-                            Create the first question
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="ad-question-import">
-                    <div>
-                      <span className="ad-q-upload-icon">⇧</span>
-                      <div>
-                        <h3>Import questions in bulk</h3>
-                        <p>
-                          Upload CSV, JSON or text-based PDF. Preview and
-                          validate records before saving them to the database.
-                        </p>
-                        <small>
-                          Maximum 5 MB · Up to 1,000 questions per import
-                        </small>
-                      </div>
-                    </div>
-                    <form onSubmit={previewQuestionImport}>
-                      <label className="ad-q-file">
-                        <input
-                          type="file"
-                          accept=".csv,.json,.pdf,application/pdf,text/csv,application/json"
-                          onChange={(e) => {
-                            setImportFile(e.target.files?.[0] || null);
-                            setImportPreview(null);
-                          }}
-                        />
-                        <span>＋ Choose file</span>
-                        <b>{importFile?.name || "No file selected"}</b>
-                      </label>
-                      <select
-                        value={importCategory}
-                        onChange={(e) => setImportCategory(e.target.value)}
-                      >
-                        <option value="">
-                          Choose default category (if file has no category)
-                        </option>
-                        {cats.map((c) => (
-                          <option value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                      <button
-                        className="ad-q-add-btn"
-                        disabled={!importFile || importBusy}
-                      >
-                        {importBusy ? "Preparing preview…" : "Preview import →"}
-                      </button>
-                    </form>
-                    {importPreview && (
-                      <div className="ad-import-preview">
-                        <div className="ad-import-preview-head">
-                          <div>
-                            <b>Import preview</b>
-                            <small>
-                              {importPreview.filename} · Review before
-                              committing
-                            </small>
-                          </div>
-                          <button onClick={() => setImportPreview(null)}>
-                            ×
-                          </button>
-                        </div>
-                        <div className="ad-import-counts">
-                          <span>
-                            <b>{importPreview.total}</b>Total
-                          </span>
-                          <span>
-                            <b>{importPreview.valid}</b>Valid
-                          </span>
-                          <span>
-                            <b>{importPreview.invalid}</b>Invalid / duplicate
-                          </span>
-                        </div>
-                        {importPreview.pdf_note && (
-                          <p className="ad-q-pdf-note">
-                            {importPreview.pdf_note}
-                          </p>
-                        )}
-                        <div className="ad-import-items">
-                          {importPreview.items.slice(0, 8).map((q, i) => (
-                            <div>
-                              <b>
-                                {i + 1}.{" "}
-                                {q.question_text.slice(0, 150) ||
-                                  "Empty question"}
-                              </b>
-                              <small>
-                                {q.category_id} · {q.difficulty_level} ·{" "}
-                                {q.question_type} · {q.time_allocation}s
-                              </small>
-                              {q.errors.length > 0 && (
-                                <em>{q.errors.join(" ")}</em>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        {importPreview.items.length > 8 && (
-                          <small>
-                            Showing first 8 of {importPreview.items.length}{" "}
-                            records.
-                          </small>
-                        )}
-                        <button
-                          className="ad-q-add-btn"
-                          disabled={!importPreview.valid || importBusy}
-                          onClick={commitQuestionImport}
-                        >
-                          {importBusy
-                            ? "Importing…"
-                            : "Import " +
-                              importPreview.valid +
-                              " valid questions"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="ad-question-import ad-scrape-panel">
-                    <div>
-                      <span className="ad-q-upload-icon">⌖</span>
-                      <div>
-                        <h3>Scrape questions from a URL</h3>
-                        <p>
-                          Paste a public page URL (JSON-LD Quiz/FAQ, or a
-                          numbered MCQ list). Questions are extracted,
-                          preprocessed into the question-bank format and staged
-                          for your review before saving.
-                        </p>
-                        <small>
-                          If a site blocks automated requests (403 / Cloudflare),
-                          open it in your browser and use “Paste HTML” instead.
-                        </small>
-                      </div>
-                    </div>
-                    <form onSubmit={runScrape}>
-                      <div className="ad-scrape-tabs">
-                        <button
-                          type="button"
-                          className={scrapeMode === "url" ? "on" : ""}
-                          onClick={() => setScrapeMode("url")}
-                        >
-                          From URL
-                        </button>
-                        <button
-                          type="button"
-                          className={scrapeMode === "html" ? "on" : ""}
-                          onClick={() => setScrapeMode("html")}
-                        >
-                          Paste HTML
-                        </button>
-                      </div>
-                      {scrapeMode === "url" ? (
-                        <input
-                          className="ad-scrape-input"
-                          type="url"
-                          placeholder="https://…"
-                          value={scrapeUrl}
-                          onChange={(e) => setScrapeUrl(e.target.value)}
-                        />
-                      ) : (
-                        <textarea
-                          className="ad-scrape-textarea"
-                          placeholder="Paste the page's HTML here. In your browser: right-click → View Page Source (or Ctrl+U), copy everything, and paste it here."
-                          value={scrapeHtml}
-                          onChange={(e) => setScrapeHtml(e.target.value)}
-                        />
-                      )}
-                      <select
-                        value={scrapeCategory}
-                        onChange={(e) => {
-                          setScrapeCategory(e.target.value);
-                          setScrapeNewCategory("");
-                        }}
-                      >
-                        <option value="">Auto-detect topic from question</option>
-                        {cats.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        className="ad-scrape-input ad-scrape-sub"
-                        type="text"
-                        placeholder="Or enter a new category (optional)"
-                        value={scrapeNewCategory}
-                        onChange={(e) => setScrapeNewCategory(e.target.value)}
-                      />
-                      <input
-                        className="ad-scrape-input ad-scrape-sub"
-                        type="text"
-                        placeholder="Subcategory (optional)"
-                        value={scrapeSubcategory}
-                        onChange={(e) => setScrapeSubcategory(e.target.value)}
-                      />
-                      <button
-                        className="ad-q-add-btn"
-                        disabled={
-                          (scrapeMode === "url"
-                            ? !scrapeUrl.trim()
-                            : !scrapeHtml.trim()) || scrapeBusy
-                        }
-                      >
-                        {scrapeBusy
-                          ? "Scraping…"
-                          : scrapeMode === "url"
-                            ? "Scrape URL →"
-                            : "Extract from HTML →"}
-                      </button>
-                    </form>
-                    <div className="ad-staging">
-                      <div className="ad-staging-head">
-                        <div>
-                          <b>Staging review</b>
-                          <small>
-                            {stagingItems.length} staged ·{" "}
-                            {
-                              stagingItems.filter(
-                                (q) => !q.errors?.length && !q.duplicate,
-                              ).length
-                            }{" "}
-                            ready to import · {selectedCount} selected
-                          </small>
-                        </div>
-                        <div className="ad-staging-actions">
-                          {stagingItems.some(
-                            (q) => !q.errors?.length && !q.duplicate,
-                          ) && (
-                            <button
-                              className="ad-q-clear"
-                              onClick={() =>
-                                setStagingSelected(
-                                  Object.fromEntries(
-                                    stagingItems
-                                      .filter(
-                                        (q) => !q.errors?.length && !q.duplicate,
-                                      )
-                                      .map((q) => [q.id, true]),
-                                  ),
-                                )
-                              }
-                              disabled={stagingBusy}
-                            >
-                              Select all valid
-                            </button>
-                          )}
-                          {selectedCount > 0 && (
-                            <button
-                              className="ad-q-clear"
-                              onClick={() => setStagingSelected({})}
-                              disabled={stagingBusy}
-                            >
-                              Clear selection
-                            </button>
-                          )}
-                          {selectedCount > 0 && (
-                            <button
-                              className="ad-q-add-btn"
-                              onClick={commitStaging}
-                              disabled={stagingBusy}
-                            >
-                              {stagingBusy
-                                ? "Importing…"
-                                : "Import " + selectedCount + " selected"}
-                            </button>
-                          )}
-                          {stagingItems.length > 0 && (
-                            <button
-                              className="ad-q-clear"
-                              onClick={clearStaging}
-                              disabled={stagingBusy}
-                            >
-                              Clear staging
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {!stagingItems.length && (
-                        <div className="ad-q-empty">
-                          <span>⌖</span>
-                          <b>No staged questions</b>
-                          <p>Scrape a URL above to populate the staging table.</p>
-                        </div>
-                      )}
-                      {stagingItems.length > 0 && (
-                        <div className="ad-staging-list">
-                          {stagingItems.map((q) => {
-                            const sel = !!stagingSelected[q.id],
-                              invalid = q.errors?.length > 0,
-                              dup = q.duplicate;
-                            return (
-                              <article
-                                className={
-                                  "ad-staging-row" +
-                                  (sel ? " selected" : "") +
-                                  (invalid || dup ? " locked" : "")
-                                }
-                                key={q.id}
-                              >
-                                <label className="ad-staging-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={sel}
-                                    disabled={invalid || dup}
-                                    onChange={(e) =>
-                                      toggleStaging(q.id, e.target.checked)
-                                    }
-                                  />
-                                  <span />
-                                </label>
-                                <div className="ad-staging-main">
-                                  <div className="ad-question-meta">
-                                    <span>
-                                      {cats.find((c) => c.id === q.category_id)
-                                        ?.name ||
-                                        q.category_id ||
-                                        "—"}
-                                    </span>
-                                    <i>·</i>
-                                    <span>{q.subcategory}</span>
-                                    <i>·</i>
-                                    <span>{q.question_type}</span>
-                                    <i>·</i>
-                                    <span>{q.difficulty_level}</span>
-                                  </div>
-                                  <h4>{q.question_text}</h4>
-                                  {q.options?.length > 0 && (
-                                    <div className="ad-staging-options">
-                                      {q.options.map((o, i) => (
-                                        <span
-                                          key={i}
-                                          className={
-                                            q.correct_answer &&
-                                            o === q.correct_answer
-                                              ? "ad-staging-answer"
-                                              : ""
-                                          }
-                                        >
-                                          {String.fromCharCode(65 + i)}. {o}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {!q.options?.length && q.correct_answer && (
-                                    <small className="ad-staging-answer-line">
-                                      Answer: {q.correct_answer}
-                                    </small>
-                                  )}
-                                  {q.explanation && (
-                                    <small>Explanation: {q.explanation}</small>
-                                  )}
-                                  {dup && (
-                                    <em className="ad-staging-warn">
-                                      Duplicate of an existing question — remove
-                                      or edit the source before importing.
-                                    </em>
-                                  )}
-                                  {!invalid && !dup && (
-                                    <small className="ad-staging-ready">
-                                      Ready for review · imports as Draft
-                                    </small>
-                                  )}
-                                  {q.marks && (
-                                    <small>
-                                      {q.marks} mark(s) · {q.time_allocation}s ·
-                                      {q.status || "draft"} · Added by{" "}
-                                      {q.created_by || "Admin"}
-                                    </small>
-                                  )}
-                                  {invalid && (
-                                    <em className="ad-staging-warn">
-                                      {q.errors.join(" ")}
-                                    </em>
-                                  )}
-                                  <small className="ad-staging-src">
-                                    Source: {q.source_url}
-                                  </small>
-                                </div>
-                                <button
-                                  className="ad-staging-del"
-                                  onClick={() => deleteStagingItem(q.id)}
-                                  title="Remove from staging"
-                                >
-                                  ×
-                                </button>
-                              </article>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </section>
-              );
-            })()}
-          {page === "ai" && (
-            <section className="ad-two-col">
-              <div className="ad-panel">
-                <div className="ad-panel-head">
-                  <div>
-                    <h2>AI provider</h2>
-                    <p>Current extraction provider configuration</p>
-                  </div>
-                  {pill(data.ai?.status || "unknown")}
-                </div>
-                <div className="ad-detail-list">
-                  <div>
-                    <span>Provider</span>
-                    <b>{data.ai?.provider || "—"}</b>
-                  </div>
-                  <div>
-                    <span>Model</span>
-                    <b>{data.ai?.model || "—"}</b>
-                  </div>
-                  <div>
-                    <span>API configured</span>
-                    <b>{data.ai?.configured ? "Yes" : "No"}</b>
-                  </div>
-                  <div>
-                    <span>Fallback</span>
-                    <b>{data.ai?.fallback || "—"}</b>
-                  </div>
-                  <div>
-                    <span>Usage telemetry</span>
-                    <b>
-                      {data.ai?.metrics_available
-                        ? "Available"
-                        : "Not instrumented"}
-                    </b>
-                  </div>
-                </div>
-              </div>
-              <div className="ad-panel">
-                <h2>Operations notes</h2>
-                <p>
-                  {data.ai?.note || "AI operations telemetry is not connected."}
-                </p>
-                <div className="ad-info-banner">
-                  No AI-generated score or hiring decision is authorised. AI
-                  output must be validated and grounded in source data.
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "agent" && <AgentConsole />}
-          {page === "billing" && (
-            <section className="ad-billing">
-              <div className="ad-billing-hero">
-                <div>
-                  <span className="ad-eyebrow">FINANCE OPERATIONS</span>
-                  <h2>Billing & payments</h2>
-                  <p>
-                    Manage plans, review payment records, refunds and retake
-                    credits.
-                  </p>
-                </div>
-                <div className="ad-billing-provider">
-                  <span className="ad-provider-mark">৳</span>
-                  <div>
-                    <b>{data.billing?.provider || "SSLCommerz"}</b>
-                    <small>
-                      {data.billing?.live_enabled
-                        ? "Live mode"
-                        : data.billing?.provider_configured
-                          ? "Credentials detected · live disabled"
-                          : "Gateway not connected"}
-                    </small>
-                  </div>
-                  <span
-                    className={
-                      data.billing?.live_enabled
-                        ? "ad-status-live"
-                        : "ad-status-pending"
-                    }
-                  >
-                    {data.billing?.live_enabled ? "LIVE" : "NOT LIVE"}
-                  </span>
-                </div>
-              </div>
-              <div className="ad-billing-notice">
-                <b>Checkout is safely disabled.</b>
-                <span>
-                  {data.billing?.note ||
-                    "Merchant approval, credentials and verified callbacks are required before accepting payments."}
-                </span>
-              </div>
-              <div className="ad-billing-metrics">
-                <article>
-                  <small>Confirmed paid invoices</small>
-                  <strong>{data.billing?.summary?.paid_invoices ?? 0}</strong>
-                  <span>Verified records only</span>
-                </article>
-                <article>
-                  <small>Gross confirmed payments</small>
-                  <strong>
-                    ৳
-                    {(
-                      (data.billing?.summary?.gross_paid_minor || 0) / 100
-                    ).toLocaleString("en-BD", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </strong>
-                  <span>BDT minor units converted</span>
-                </article>
-                <article>
-                  <small>Awaiting payment</small>
-                  <strong>
-                    {data.billing?.summary?.pending_invoices ?? 0}
-                  </strong>
-                  <span>Not counted as revenue</span>
-                </article>
-                <article>
-                  <small>Refund requests</small>
-                  <strong>{data.billing?.summary?.refund_requests ?? 0}</strong>
-                  <span>Awaiting Finance review</span>
-                </article>
-              </div>
-              <AiUsagePanel />
-              <div className="ad-panel">
-                <div className="ad-panel-head">
-                  <div>
-                    <h3>Pricing plans</h3>
-                    <p>
-                      New plans are saved inactive. Configure final pricing
-                      before launch.
-                    </p>
-                  </div>
-                  <span className="ad-count">
-                    {data.billing?.plans?.length || 0} plans
-                  </span>
-                </div>
-                <div className="ad-table-wrap">
-                  <table className="ad-table">
-                    <thead>
-                      <tr>
-                        <th>Plan</th>
-                        <th>Price</th>
-                        <th>Billing cycle</th>
-                        <th>Retake credits</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(data.billing?.plans || []).map((p) => (
-                        <tr key={p.id}>
-                          <td>
-                            <b>{p.name}</b>
-                            <small>{p.description || "—"}</small>
-                          </td>
-                          <td>
-                            ৳
-                            {(p.amount_minor / 100).toLocaleString("en-BD", {
-                              minimumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td>{p.interval}</td>
-                          <td>{p.retake_credits}</td>
-                          <td>{pill(p.active ? "active" : "inactive")}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {!(data.billing?.plans || []).length && (
-                  <div className="ad-billing-empty">
-                    No pricing plans have been configured yet. Final prices
-                    remain intentionally unset.
-                  </div>
-                )}
-              </div>
-              <div className="ad-two-col ad-billing-lists">
-                <div className="ad-panel">
-                  <div className="ad-panel-head">
-                    <div>
-                      <h3>Recent invoices</h3>
-                      <p>Only verified successful payments count as paid.</p>
-                    </div>
-                    <span className="ad-count">
-                      {data.billing?.invoices?.length || 0}
-                    </span>
-                  </div>
-                  {(data.billing?.invoices || []).length ? (
-                    <div className="ad-table-wrap">
-                      <table className="ad-table">
-                        <thead>
-                          <tr>
-                            <th>Invoice</th>
-                            <th>Customer</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.billing.invoices.slice(0, 8).map((x) => (
-                            <tr key={x.id}>
-                              <td>{x.id.slice(0, 10)}</td>
-                              <td>{x.customer_email || "—"}</td>
-                              <td>৳{(x.amount_minor / 100).toFixed(2)}</td>
-                              <td>{pill(x.status)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="ad-billing-empty">
-                      No invoices recorded.
-                    </div>
-                  )}
-                </div>
-                <div className="ad-panel">
-                  <div className="ad-panel-head">
-                    <div>
-                      <h3>Refund queue</h3>
-                      <p>Approval is not a completed refund.</p>
-                    </div>
-                    <span className="ad-count">
-                      {data.billing?.refunds?.length || 0}
-                    </span>
-                  </div>
-                  {(data.billing?.refunds || []).length ? (
-                    <div className="ad-table-wrap">
-                      <table className="ad-table">
-                        <thead>
-                          <tr>
-                            <th>Request</th>
-                            <th>Customer</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.billing.refunds.slice(0, 8).map((x) => (
-                            <tr key={x.id}>
-                              <td>{x.id.slice(0, 10)}</td>
-                              <td>{x.customer_email || "—"}</td>
-                              <td>৳{(x.amount_minor / 100).toFixed(2)}</td>
-                              <td>{pill(x.status)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="ad-billing-empty">No refund requests.</div>
-                  )}
-                </div>
-              </div>
-              <div className="ad-panel">
-                <div className="ad-panel-head">
-                  <div>
-                    <h3>Retake credit ledger</h3>
-                    <p>
-                      Append-only entries; balance changes are traceable to an
-                      actor and reason.
-                    </p>
-                  </div>
-                  <span className="ad-count">
-                    {data.billing?.ledger?.length || 0} entries
-                  </span>
-                </div>
-                {(data.billing?.ledger || []).length ? (
-                  <div className="ad-table-wrap">
-                    <table className="ad-table">
-                      <thead>
-                        <tr>
-                          <th>Customer</th>
-                          <th>Change</th>
-                          <th>Entry</th>
-                          <th>Reason</th>
-                          <th>Date</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.billing.ledger.slice(0, 12).map((x) => (
-                          <tr key={x.id}>
-                            <td>{x.customer_email || x.user_id}</td>
-                            <td>
-                              {x.delta > 0 ? "+" : ""}
-                              {x.delta}
-                            </td>
-                            <td>{x.entry_type}</td>
-                            <td>{x.reason}</td>
-                            <td>
-                              {new Date(x.created * 1000).toLocaleDateString()}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="ad-billing-empty">
-                    No credit adjustments recorded.
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-          {page === "learning" && (
-            <section className="ad-learning">
-              <div className="ad-learning-hero">
-                <div>
-                  <span className="ad-eyebrow">
-                    LEARNING QUALITY & RETAKE GOVERNANCE
-                  </span>
-                  <h2>Build a learning system candidates can trust.</h2>
-                  <p>
-                    Verify every resource, understand real learning progress and
-                    keep retake entitlements transparent and auditable.
-                  </p>
-                </div>
-                <div className="ad-learning-mark">↗</div>
-              </div>
-              <div className="ad-billing-metrics">
-                <article>
-                  <small>Catalogue resources</small>
-                  <strong>{data.learning?.summary?.resources ?? 0}</strong>
-                  <span>All catalogue statuses</span>
-                </article>
-                <article>
-                  <small>Verified resources</small>
-                  <strong>{data.learning?.summary?.verified ?? 0}</strong>
-                  <span>Visible to candidates</span>
-                </article>
-                <article>
-                  <small>Pending review</small>
-                  <strong>{data.learning?.summary?.pending ?? 0}</strong>
-                  <span>Awaiting curator</span>
-                </article>
-                <article>
-                  <small>Retakes consumed</small>
-                  <strong>
-                    {data.learning?.summary?.retakes_consumed ?? 0}
-                  </strong>
-                  <span>Ledger-confirmed attempts</span>
-                </article>
-              </div>
-              <div className="ad-panel">
-                <div className="ad-panel-head">
-                  <div>
-                    <h3>Resource governance</h3>
-                    <p>
-                      New resources remain hidden from candidates until a human
-                      verifies them.
-                    </p>
-                  </div>
-                  <span className="ad-count">
-                    {data.learning?.resources?.length || 0} resources
-                  </span>
-                </div>
-                {(adminRole === "super_admin" ||
-                  adminRole === "question_content_admin") && (
-                  <form
-                    className="ad-learning-form"
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      try {
-                        const f = e.currentTarget;
-                        await api("/admin/learning/resources", {
-                          method: "POST",
-                          body: {
-                            topic: f.topic.value,
-                            title: f.title.value,
-                            provider: f.provider.value,
-                            url: f.url.value,
-                            language: f.language.value,
-                            level: Number(f.level.value),
-                            licence: f.licence.value,
-                            estimated_minutes: Number(f.minutes.value),
-                          },
-                        });
-                        f.reset();
-                        flash("Resource added to the pending review queue.");
-                        await load();
-                      } catch (x) {
-                        setError(x.message || "Could not add resource.");
-                      }
-                    }}
-                  >
-                    <label>
-                      Topic
-                      <input name="topic" required placeholder="e.g. python" />
-                    </label>
-                    <label>
-                      Resource title
-                      <input
-                        name="title"
-                        required
-                        placeholder="Official Python tutorial"
-                      />
-                    </label>
-                    <label>
-                      Provider
-                      <input
-                        name="provider"
-                        required
-                        placeholder="Python Software Foundation"
-                      />
-                    </label>
-                    <label>
-                      HTTPS URL
-                      <input
-                        name="url"
-                        type="url"
-                        required
-                        placeholder="https://…"
-                      />
-                    </label>
-                    <label>
-                      Language
-                      <input name="language" defaultValue="en" required />
-                    </label>
-                    <label>
-                      Level
-                      <select name="level">
-                        <option value="1">Beginner</option>
-                        <option value="2">Intermediate</option>
-                        <option value="3">Advanced</option>
-                        <option value="4">Expert</option>
-                        <option value="5">Specialist</option>
-                      </select>
-                    </label>
-                    <label>
-                      Licence / usage
-                      <input
-                        name="licence"
-                        placeholder="Licence or usage note"
-                      />
-                    </label>
-                    <label>
-                      Estimated minutes
-                      <input
-                        name="minutes"
-                        type="number"
-                        min="1"
-                        defaultValue="30"
-                      />
-                    </label>
-                    <button className="ad-q-add-btn" type="submit">
-                      + Add for review
-                    </button>
-                  </form>
-                )}
-                <div className="ad-table-wrap">
-                  <table className="ad-table">
-                    <thead>
-                      <tr>
-                        <th>Resource</th>
-                        <th>Topic</th>
-                        <th>Provider / language</th>
-                        <th>Status</th>
-                        <th>Last checked</th>
-                        <th>Review action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(data.learning?.resources || []).map((r) => (
-                        <tr key={r.id}>
-                          <td>
-                            <b>{r.title}</b>
-                            <small>
-                              <a href={r.url} target="_blank" rel="noreferrer">
-                                {r.url}
-                              </a>
-                            </small>
-                          </td>
-                          <td>{r.topic}</td>
-                          <td>
-                            {r.provider}
-                            <small>{r.language}</small>
-                          </td>
-                          <td>{pill(r.verification_status)}</td>
-                          <td>{stamp(r.last_checked_at)}</td>
-                          <td>
-                            {(adminRole === "super_admin" ||
-                              adminRole === "question_content_admin") && (
-                              <div className="ad-learning-actions">
-                                {r.verification_status !== "verified" && (
-                                  <button
-                                    className="ad-action-btn"
-                                    onClick={() =>
-                                      openAction(
-                                        "learning-resource",
-                                        r.id,
-                                        "verified",
-                                      )
-                                    }
-                                  >
-                                    Verify
-                                  </button>
-                                )}
-                                {r.verification_status !== "quarantined" && (
-                                  <button
-                                    className="ad-action-btn"
-                                    onClick={() =>
-                                      openAction(
-                                        "learning-resource",
-                                        r.id,
-                                        "quarantined",
-                                      )
-                                    }
-                                  >
-                                    Quarantine
-                                  </button>
-                                )}
-                                {r.verification_status !== "retired" && (
-                                  <button
-                                    className="ad-action-btn"
-                                    onClick={() =>
-                                      openAction(
-                                        "learning-resource",
-                                        r.id,
-                                        "retired",
-                                      )
-                                    }
-                                  >
-                                    Retire
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!(data.learning?.resources || []).length && (
-                    <div className="ad-billing-empty">
-                      No resources in the catalogue.
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="ad-panel">
-                <div className="ad-panel-head">
-                  <div>
-                    <h3>Retake policy</h3>
-                    <p>
-                      Configurable limits are applied by the backend when an
-                      attempt is created.
-                    </p>
-                  </div>
-                </div>
-                {(adminRole === "super_admin" ||
-                  adminRole === "finance_admin") && (
-                  <form
-                    className="ad-learning-policy"
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      try {
-                        await api("/admin/learning/policy", {
-                          method: "PUT",
-                          body: {
-                            cooldown_hours: Number(
-                              e.currentTarget.cooldown.value,
-                            ),
-                            max_attempts_90d: Number(e.currentTarget.cap.value),
-                            credits_per_attempt: Number(
-                              e.currentTarget.cost.value,
-                            ),
-                          },
-                        });
-                        flash("Retake policy updated.");
-                        await load();
-                      } catch (x) {
-                        setError(x.message || "Could not update policy.");
-                      }
-                    }}
-                  >
-                    <label>
-                      Cooldown hours
-                      <input
-                        name="cooldown"
-                        type="number"
-                        min="0"
-                        max="2160"
-                        defaultValue={
-                          data.learning?.policy?.cooldown_hours ?? 24
-                        }
-                      />
-                    </label>
-                    <label>
-                      Maximum attempts / 90 days
-                      <input
-                        name="cap"
-                        type="number"
-                        min="1"
-                        max="20"
-                        defaultValue={
-                          data.learning?.policy?.max_attempts_90d ?? 3
-                        }
-                      />
-                    </label>
-                    <label>
-                      Credits per retake
-                      <input
-                        name="cost"
-                        type="number"
-                        min="1"
-                        max="20"
-                        defaultValue={
-                          data.learning?.policy?.credits_per_attempt ?? 1
-                        }
-                      />
-                    </label>
-                    <button className="ad-q-add-btn">Save policy</button>
-                  </form>
-                )}
-              </div>
-              <div className="ad-two-col">
-                <div className="ad-panel">
-                  <div className="ad-panel-head">
-                    <div>
-                      <h3>Candidate learning progress</h3>
-                      <p>Progress events from the verified catalogue.</p>
-                    </div>
-                  </div>
-                  <div className="ad-table-wrap">
-                    <table className="ad-table">
-                      <thead>
-                        <tr>
-                          <th>Candidate</th>
-                          <th>Resource</th>
-                          <th>Topic</th>
-                          <th>Status</th>
-                          <th>Updated</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(data.learning?.progress || []).map((p, i) => (
-                          <tr key={i}>
-                            <td>
-                              {p.candidate_name}
-                              <small>{p.candidate_email}</small>
-                            </td>
-                            <td>{p.resource_title}</td>
-                            <td>{p.topic}</td>
-                            <td>{pill(p.status)}</td>
-                            <td>{stamp(p.updated_at)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!(data.learning?.progress || []).length && (
-                      <div className="ad-billing-empty">
-                        No learning progress has been recorded.
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="ad-panel">
-                  <div className="ad-panel-head">
-                    <div>
-                      <h3>Credit consumption & adjustments</h3>
-                      <p>
-                        Grant credits only with a clear operational reason. All
-                        entries remain traceable.
-                      </p>
-                    </div>
-                  </div>
-                  {(adminRole === "super_admin" ||
-                    adminRole === "finance_admin") && (
-                    <form
-                      className="ad-learning-credit-form"
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        try {
-                          const f = e.currentTarget;
-                          await api("/admin/learning/credits", {
-                            method: "POST",
-                            body: {
-                              user_id: Number(f.user_id.value),
-                              delta: Number(f.delta.value),
-                              reason: f.reason.value,
-                            },
-                          });
-                          f.reset();
-                          flash("Retake credits granted and logged.");
-                          await load();
-                        } catch (x) {
-                          setError(x.message || "Could not grant credits.");
-                        }
-                      }}
-                    >
-                      <label>
-                        Candidate user ID
-                        <input name="user_id" type="number" min="1" required />
-                      </label>
-                      <label>
-                        Credits to grant
-                        <input
-                          name="delta"
-                          type="number"
-                          min="1"
-                          max="100"
-                          defaultValue="1"
-                          required
-                        />
-                      </label>
-                      <label>
-                        Reason
-                        <input
-                          name="reason"
-                          minLength="8"
-                          required
-                          placeholder="e.g. verified platform interruption"
-                        />
-                      </label>
-                      <button className="ad-q-add-btn">Grant credits</button>
-                    </form>
-                  )}
-                  {(adminRole === "super_admin" ||
-                    adminRole === "finance_admin") && (
-                    <div className="ad-table-wrap">
-                      <table className="ad-table">
-                        <thead>
-                          <tr>
-                            <th>Candidate</th>
-                            <th>Change</th>
-                            <th>Entry</th>
-                            <th>Reason</th>
-                            <th>Date</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(data.learning?.ledger || []).map((l) => (
-                            <tr key={l.id}>
-                              <td>
-                                {l.candidate_name ||
-                                  l.candidate_email ||
-                                  l.user_id}
-                                <small>{l.candidate_email}</small>
-                              </td>
-                              <td>
-                                {l.delta > 0 ? "+" : ""}
-                                {l.delta}
-                              </td>
-                              <td>{l.entry_type}</td>
-                              <td>{l.reason}</td>
-                              <td>{stamp(l.created)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {!(data.learning?.ledger || []).length && (
-                        <div className="ad-billing-empty">
-                          No retake ledger entries.
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "privacy" && (
-            <section className="ad-two-col">
-              <div className="ad-panel">
-                <h2>Privacy & data rights</h2>
-                <p>
-                  Available candidate rights capabilities and consent coverage.
-                </p>
-                <div className="ad-metrics ad-metrics-compact">
-                  {metric(
-                    "Consented users",
-                    data.privacy?.consented_users,
-                    "Distinct accounts",
-                    "✓",
-                  )}
-                  {metric(
-                    "Consent records",
-                    data.privacy?.consent_records,
-                    "Versioned records",
-                    "◈",
-                  )}
-                </div>
-                <div className="ad-health-row">
-                  <span>Candidate data export</span>
-                  {pill(
-                    data.privacy?.export_capability
-                      ? "available"
-                      : "unavailable",
-                  )}
-                </div>
-                <div className="ad-health-row">
-                  <span>Self-service deletion</span>
-                  {pill(
-                    data.privacy?.self_service_deletion
-                      ? "available"
-                      : "unavailable",
-                  )}
-                </div>
-                <div className="ad-health-row">
-                  <span>Scheduled retention jobs</span>
-                  {pill(
-                    data.privacy?.retention_jobs_configured
-                      ? "configured"
-                      : "not_configured",
-                  )}
-                </div>
-              </div>
-              <div className="ad-panel">
-                <h2>Implementation notes</h2>
-                <p>{data.privacy?.note || "Privacy controls not available."}</p>
-                <div className="ad-info-banner">
-                  Admin access to sensitive candidate evidence must remain
-                  purpose-limited, reason-coded and audited. Raw media access is
-                  not provided by this console.
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "quality" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Fairness & quality signals</h2>
-                  <p>
-                    Descriptive operational metrics; not candidate ranking or
-                    protected-trait profiling.
-                  </p>
-                </div>
-              </div>
-              <div className="ad-metrics">
-                {metric(
-                  "Completed attempts",
-                  data.quality?.completed_attempts,
-                  "Scored attempts",
-                  "◎",
-                )}
-                {metric(
-                  "Appeals",
-                  data.quality?.appeals,
-                  "Candidate-raised",
-                  "⚑",
-                )}
-                {metric(
-                  "Reviewed attempts",
-                  data.quality?.reviewed_attempts,
-                  "Human review records",
-                  "✓",
-                )}
-                {metric(
-                  "Appeal overturns",
-                  data.quality?.appeal_overturns,
-                  "Outcomes",
-                  "↺",
-                )}
-              </div>
-              <div className="ad-health-row">
-                <span>Appeal overturn rate</span>
-                <b>
-                  {data.quality?.appeal_overturn_rate == null
-                    ? "Not enough data"
-                    : (data.quality.appeal_overturn_rate * 100).toFixed(1) +
-                      "%"}
-                </b>
-              </div>
-              <div className="ad-info-banner">
-                {data.quality?.note ||
-                  "Quality metrics are limited by available data."}{" "}
-                Protected demographic data is not collected for this analysis.
-              </div>
-            </section>
-          )}
-          {page === "audit" && (
-            <section className="ad-panel">
-              <div className="ad-panel-head">
-                <div>
-                  <h2>Audit event history</h2>
-                  <p>Recent account, moderation and review events.</p>
-                </div>
-                <span className="ad-count">{rows("audit").length} events</span>
-              </div>
-              <div className="ad-toolbar">
-                <input
-                  placeholder="Filter by action…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
-              {table(
-                ["TIME", "ACTOR", "ACTION", "TARGET"],
-                filtered(rows("audit"), [
-                  "action",
-                  "target",
-                  "actor_name",
-                  "actor_email",
-                ]).map((x) => (
-                  <tr>
-                    <td>{stamp(x.ts)}</td>
-                    <td>
-                      <b>{x.actor_name || "System"}</b>
-                      <small>{x.actor_email || "ID " + x.actor}</small>
-                    </td>
-                    <td>
-                      <code>{x.action}</code>
-                    </td>
-                    <td className="ad-audit-target">{x.target}</td>
-                  </tr>
-                )),
-                "No audit events found.",
-              )}
-            </section>
-          )}
-          {page === "identity" && (
-            <IdentityReviewQueue A={{ ...A, loading: C.common.loading }} onFlash={flash} onError={setError} />
-          )}
-          {page === "security" && (
-            <SecurityPanel S={A.security} email={adminEmail} />
-          )}
-          {busy && <div className="ad-loading">Syncing platform data…</div>}
-          <footer className="ad-footer">
-            <span>TalentForge Global · Admin Console</span>
-            <span>
-              Least privilege · Human review · Evidence-led operations
-            </span>
-          </footer>
-        </div>
-      </main>
-      {candidateView && (
-        <CandidateDetailModal
-          userId={candidateView}
-          onClose={() => setCandidateView(null)}
-        />
-      )}
-      {questionModal && (
-        <div
-          className="ad-modal-backdrop"
-          onClick={() => !questionSaving && setQuestionModal(false)}
-        >
-          <form
-            className="ad-question-modal"
-            onSubmit={saveQuestion}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header>
-              <div>
-                <div className="ad-eyebrow">QUESTION AUTHORING</div>
-                <h2>
-                  {questionEditing ? "Edit question" : "Create a question"}
-                </h2>
-                <p>
-                  Define the question, answer key and fair assessment timing.
-                </p>
-              </div>
-              <button type="button" onClick={() => setQuestionModal(false)}>
-                ×
-              </button>
-            </header>
-            <div className="ad-q-form-grid">
-              <label>
-                Category
-                <select
-                  required
-                  value={questionDraft.category_id}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      category_id: e.target.value,
-                    }))
-                  }
-                >
-                  {(data.questions?.categories || []).map((c) => (
-                    <option value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Subcategory
-                <input
-                  required
-                  value={questionDraft.subcategory}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      subcategory: e.target.value,
-                    }))
-                  }
-                  placeholder="e.g. Joins"
-                />
-              </label>
-              <label>
-                Question type
-                <select
-                  value={questionDraft.question_type}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      question_type: e.target.value,
-                    }))
-                  }
-                >
-                  {[
-                    "MCQ",
-                    "Coding",
-                    "SQL",
-                    "Explanation",
-                    "Short Answer",
-                    "Scenario-Based",
-                    "System Design",
-                    "True/False",
-                  ].map((x) => (
-                    <option>{x}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Difficulty
-                <select
-                  value={questionDraft.difficulty_level}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      difficulty_level: e.target.value,
-                    }))
-                  }
-                >
-                  {["Easy", "Medium", "Hard"].map((x) => (
-                    <option>{x}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="ad-q-full">
-                Question text
-                <textarea
-                  required
-                  rows="4"
-                  value={questionDraft.question_text}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      question_text: e.target.value,
-                    }))
-                  }
-                  placeholder="Write a clear, unambiguous question…"
-                />
-              </label>
-              {questionDraft.question_type === "MCQ" && (
-                <label className="ad-q-full">
-                  Options <small>One option per line</small>
-                  <textarea
-                    rows="4"
-                    value={questionDraft.options}
-                    onChange={(e) =>
-                      setQuestionDraft((v) => ({
-                        ...v,
-                        options: e.target.value,
-                      }))
-                    }
-                    placeholder={"Option A\nOption B\nOption C\nOption D"}
-                  />
-                </label>
-              )}
-              <label>
-                Correct answer
-                <input
-                  value={questionDraft.correct_answer}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      correct_answer: e.target.value,
-                    }))
-                  }
-                  placeholder="Exact answer or option"
-                />
-              </label>
-              <label>
-                Marks
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={questionDraft.marks}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({ ...v, marks: e.target.value }))
-                  }
-                />
-              </label>
-              <label>
-                Time allocation (minutes)
-                <input
-                  type="number"
-                  min="0.25"
-                  max="120"
-                  step="0.25"
-                  value={questionDraft.time_minutes}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      time_minutes: e.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Status
-                <select
-                  value={questionDraft.status}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({ ...v, status: e.target.value }))
-                  }
-                >
-                  <option value="draft">Draft</option>
-                  <option value="active">Active</option>
-                  <option value="archived">Archived</option>
-                </select>
-              </label>
-              <label className="ad-q-full">
-                Explanation
-                <textarea
-                  rows="2"
-                  value={questionDraft.explanation}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      explanation: e.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="ad-q-full">
-                Reference answer
-                <textarea
-                  rows="2"
-                  value={questionDraft.reference_answer}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      reference_answer: e.target.value,
-                    }))
-                  }
-                  placeholder={
-                    questionDraft.question_type === "SQL"
-                      ? "Canonical SQL query used for automatic grading against hidden datasets."
-                      : "Expected answer, reference implementation or guidance for human review."
-                  }
-                />
-              </label>
-              <label className="ad-q-full">
-                Grading rubric
-                <textarea
-                  rows="2"
-                  value={questionDraft.grading_rubric}
-                  onChange={(e) =>
-                    setQuestionDraft((v) => ({
-                      ...v,
-                      grading_rubric: e.target.value,
-                    }))
-                  }
-                />
-              </label>
-            </div>
-            <div className="ad-q-system-meta">
-              <span>
-                Created by: {questionEditing?.created_by || "Current admin"}
-              </span>
-              <span>
-                Version:{" "}
-                {questionEditing
-                  ? "v" +
-                    questionEditing.version +
-                    " → v" +
-                    (Number(questionEditing.version) + 1)
-                  : "v1 on save"}
-              </span>
-              <span>
-                Created date:{" "}
-                {questionEditing
-                  ? stamp(questionEditing.created_date)
-                  : "Generated on save"}
-              </span>
-            </div>
-            <footer>
-              <button
-                type="button"
-                onClick={() => setQuestionModal(false)}
-                disabled={questionSaving}
-              >
-                Cancel
-              </button>
-              <button className="ad-q-add-btn" disabled={questionSaving}>
-                {questionSaving
-                  ? "Saving…"
-                  : questionEditing
-                    ? "Save new version"
-                    : "Create question"}
-              </button>
-            </footer>
-          </form>
-        </div>
-      )}
-      {selectedReport && (
-        <div
-          className="ad-modal-backdrop"
-          onClick={() => setSelectedReport(null)}
-        >
-          <section
-            className="ad-report-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header>
-              <div>
-                <div className="ad-eyebrow">
-                  CANDIDATE EVIDENCE · MANUAL REVIEW
-                </div>
-                <h2>Assessment evaluation report</h2>
-                <p>
-                  {selectedReport.candidate_name} · {selectedReport.email} ·{" "}
-                  {selectedReport.kind} assessment
-                </p>
-              </div>
-              <button type="button" onClick={() => setSelectedReport(null)}>
-                ×
-              </button>
-            </header>
-            <div className="ad-report-summary">
-              <div>
-                <small>Current academic score · provisional until release</small>
-                <strong>
-                  {selectedReport.result?.overall ?? "—"}
-                  <small>/100</small>
-                </strong>
-              </div>
-              <div>
-                <small>Level</small>
-                <strong>{selectedReport.result?.level ?? "—"}</strong>
-              </div>
-              <div>
-                <small>Integrity signal</small>
-                <strong>{selectedReport.result?.trust ?? "—"}</strong>
-              </div>
-            </div>
-            <AssessmentStatus publication={selectedReport.publication} objective={selectedReport.result?.objective_summary} />
-            <button type="button" className="btn ghost sm" onClick={() => { const id = selectedReport.id; setSelectedReport(null); openIntegrityDetail(id); }}>Review honesty report and score →</button>
-            <div className="ad-info-banner">
-              {selectedReport.evaluation_method ||
-                "Automated evaluation method unavailable."}{" "}
-              Stored-rubric drafts are advisory evidence. The score changes only
-              after you approve or edit each mark.
-              {" External AI scoring is disabled by project policy."}
-            </div>
-            <div className="ad-eval-toolbar">
-              <button
-                type="button"
-                className="ad-mini-primary"
-                onClick={() => runEvaluation(selectedReport)}
-                disabled={evaluationBusy}
-              >
-                {evaluationBusy
-                  ? "Preparing stored-rubric drafts…"
-                  : "Re-run stored-rubric evaluation"}
-              </button>
-              <span>
-                {selectedReport.evaluation_summary?.pending_admin_approval ?? 0}{" "}
-                draft(s) pending approval
-              </span>
-            </div>
-            {evaluationError && (
-              <div className="ad-warning-banner">{evaluationError}</div>
-            )}
-            {!selectedReport.answer_evidence_complete && (
-              <div className="ad-warning-banner">
-                Some or all candidate responses were not captured for this older
-                attempt. The original question list may be visible, but missing
-                answers cannot be reconstructed.
-              </div>
-            )}
-            <h3>Topic performance</h3>
-            <div className="ad-report-topics">
-              {Object.entries(selectedReport.result?.topics || {}).map(
-                ([topic, v]) => (
-                  <div>
-                    <b>{topic}</b>
-                    <span>
-                      {v.score}% · {v.level} · {v.n} questions
-                    </span>
-                  </div>
-                ),
-              )}
-            </div>
-            <h3>
-              Questions and candidate answers (
-              {selectedReport.answer_evidence?.length || 0})
-            </h3>
-            <div className="ad-report-questions">
-              {(selectedReport.answer_evidence || []).map((q) => (
-                <article>
-                  <div className="ad-report-qmeta">
-                    Q{q.number} · {q.topic} · {q.type} · Difficulty{" "}
-                    {q.difficulty}
-                  </div>
-                  <h4>{q.question}</h4>
-                  {q.options?.length > 0 && (
-                    <ol>
-                      {q.options.map((o) => (
-                        <li>{o}</li>
-                      ))}
-                    </ol>
-                  )}
-                  <div className="ad-report-answer">
-                    <b>Candidate answer</b>
-                    <pre>
-                      {q.selected_option ??
-                        q.candidate_answer ??
-                        "Not captured in this attempt"}
-                    </pre>
-                  </div>
-                  {q.expected_answer && (
-                    <div className="ad-report-answer">
-                      <b>Expected / reference answer</b>
-                      <pre>{q.expected_answer}</pre>
-                    </div>
-                  )}
-                  {q.explanation && (
-                    <p className="ad-report-qmeta">
-                      Explanation: {q.explanation}
-                    </p>
-                  )}
-                  {q.grading_rubric && (
-                    <p className="ad-report-qmeta">
-                      Rubric: {q.grading_rubric}
-                    </p>
-                  )}
-                  {q.evaluation ? (
-                    <div className="ad-eval-card">
-                      <div className="ad-eval-head">
-                        <b>Stored-rubric evaluation draft</b>
-                        <span
-                          className={
-                            "ad-eval-status " +
-                            (q.evaluation.status === "approved"
-                              ? "approved"
-                              : "pending")
-                          }
-                        >
-                          {q.evaluation.status === "approved"
-                            ? "Administrator approved"
-                            : "Awaiting administrator approval"}
-                        </span>
-                      </div>
-                      <div className="ad-eval-score">
-                        <strong>
-                          {q.evaluation.ai_marks}
-                          <small> / {q.evaluation.max_marks}</small>
-                        </strong>
-                        <span>
-                          Suggested partial marks ·{" "}
-                          {Math.round((q.evaluation.confidence || 0) * 100)}%
-                          confidence · {q.evaluation.method}
-                          {q.evaluation.llm_model
-                            ? ` · ${q.evaluation.llm_provider}/${q.evaluation.llm_model}`
-                            : " · deterministic draft"}
-                        </span>
-                      </div>
-                      <div className="ad-eval-bars">
-                        {[
-                          ["Keyword coverage", q.evaluation.components?.keyword],
-                          ["Reference similarity", q.evaluation.components?.similarity],
-                        ].map(([label, component]) => (
-                          <div key={label}>
-                            <span>{label}</span>
-                            <div>
-                              <i
-                                style={{
-                                  width:
-                                    Math.round((component?.score || 0) * 100) +
-                                    "%",
-                                }}
-                              />
-                            </div>
-                            <b>
-                              {Math.round((component?.score || 0) * 100)}%
-                            </b>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="ad-eval-keywords">
-                        {(q.evaluation.keywords?.matched || []).map((k) => (
-                          <span className="hit" key={"m-" + k}>
-                            ✓ {k}
-                          </span>
-                        ))}
-                        {(q.evaluation.keywords?.missing || []).map((k) => (
-                          <span className="miss" key={"x-" + k}>
-                            ✕ {k}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="ad-eval-rationale">
-                        {q.evaluation.rationale}
-                      </p>
-                      {q.evaluation.flags?.length > 0 && (
-                        <p className="ad-eval-flags">
-                          Flags: {q.evaluation.flags.join(", ")}
-                        </p>
-                      )}
-                      <div className="ad-eval-edit">
-                        <label>
-                          <span>Approved marks (0–{q.evaluation.max_marks})</span>
-                          <input
-                            type="number"
-                            min="0"
-                            max={q.evaluation.max_marks}
-                            step="0.25"
-                            value={
-                              reportEvaluations[q.question_id]?.marks ?? ""
-                            }
-                            onChange={(e) =>
-                              setReportEvaluations((prev) => ({
-                                ...prev,
-                                [q.question_id]: {
-                                  ...(prev[q.question_id] || {}),
-                                  marks: e.target.value,
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Administrator note (reason for the mark)</span>
-                          <textarea
-                            rows="2"
-                            value={
-                              reportEvaluations[q.question_id]?.admin_note || ""
-                            }
-                            onChange={(e) =>
-                              setReportEvaluations((prev) => ({
-                                ...prev,
-                                [q.question_id]: {
-                                  ...(prev[q.question_id] || {}),
-                                  admin_note: e.target.value,
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Additional information for the audit trail</span>
-                          <textarea
-                            rows="2"
-                            value={
-                              reportEvaluations[q.question_id]
-                                ?.additional_info || ""
-                            }
-                            onChange={(e) =>
-                              setReportEvaluations((prev) => ({
-                                ...prev,
-                                [q.question_id]: {
-                                  ...(prev[q.question_id] || {}),
-                                  additional_info: e.target.value,
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="ad-mini-primary"
-                          disabled={evaluationBusy}
-                          onClick={() =>
-                            saveEvaluation(selectedReport, q.question_id)
-                          }
-                        >
-                          Save & approve this mark
-                        </button>
-                      </div>
-                    </div>
-                  ) : q.objective ? (
-                    <div className="ad-eval-card"><p>Objective answer-key result: <strong>{q.awarded_marks ?? 0}/{q.max_marks ?? q.marks ?? 1}</strong>. An administrator may adjust marks within the allowed range with a recorded reason.</p><div className="ad-eval-edit"><label>Adjusted marks<input type="number" min="0" max={q.max_marks ?? q.marks ?? 1} step="0.25" value={reportEvaluations[q.question_id]?.marks ?? ""} onChange={(event) => setReportEvaluations((previous) => ({ ...previous, [q.question_id]: { ...previous[q.question_id], marks: event.target.value } }))} /></label><label>Reason for adjustment<textarea rows="2" value={reportEvaluations[q.question_id]?.admin_note || ""} onChange={(event) => setReportEvaluations((previous) => ({ ...previous, [q.question_id]: { ...previous[q.question_id], admin_note: event.target.value } }))} /></label><button type="button" className="ad-mini-primary" disabled={evaluationBusy} onClick={() => saveEvaluation(selectedReport, q.question_id)}>Save adjusted mark</button></div></div>
-                  ) : (
-                    <div className="ad-report-qmeta">
-                      Evaluation:{" "}
-                      {q.review_status ||
-                        (q.automated_correct === true
-                          ? "Correct"
-                          : q.automated_correct === false
-                            ? "Incorrect"
-                            : "Unavailable")}{" "}
-                      · Response time: {q.time_seconds ?? "—"} sec
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
-            <footer>
-              <span>
-                Use browser print dialog and choose “Save as PDF” for a
-                downloadable report.
-              </span>
-              <button type="button" className="ad-mini-primary" disabled={evaluationBusy} onClick={() => {
-                const evaluations = Object.entries(reportEvaluations).filter(([questionId]) => selectedReport.evaluations?.some((evaluation) => evaluation.question_id === questionId)).map(([question_id, edit]) => ({ question_id, marks: edit.marks === "" ? null : Number(edit.marks), admin_note: edit.admin_note || "", additional_info: edit.additional_info || "", status: "approved" }));
-                setAction({ kind: "assessment", id: selectedReport.id, decision: "approved", evaluations });
-                setReason("");
-                setSelectedReport(null);
-              }}>Approve academic marks</button>
-              <button
-                className="ad-mini-primary"
-                onClick={() => printAssessmentReport(selectedReport)}
-              >
-                Print / Save PDF
-              </button>
-              <button onClick={() => setSelectedReport(null)}>Close</button>
-            </footer>
-          </section>
-        </div>
-      )}
-      {(integrityDetail || integrityLoading) && (
-        <div
-          className="ad-modal-backdrop"
-          onClick={() => setIntegrityDetail(null)}
-        >
-          <section
-            className="ad-modal"
-            style={{
-              width: "min(920px,96vw)",
-              maxHeight: "88vh",
-              overflowY: "auto",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="ad-modal-close"
-              onClick={() => setIntegrityDetail(null)}
-            >
-              ×
-            </button>
-            {integrityLoading ? (
-              <p>Loading attempt evidence…</p>
-            ) : (
-              <>
-                <div className="ad-eyebrow">EXAM INTEGRITY REPORT</div>
-                <h2>{integrityDetail.candidate_name}</h2>
-                <p>
-                  {integrityDetail.email} · {integrityDetail.kind} ·{" "}
-                  {integrityDetail.id}
-                </p>
-                <div className="ad-info-banner">
-                  AI and identity alerts are probabilistic review signals, not
-                  proof of misconduct. Webcam frames are analysed locally; only
-                  limited JPEG snapshots linked to triggered alerts may be stored
-                  temporarily. No continuous video or audio is recorded.
-                </div>
-                <div className="ad-detail-list">
-                  <div>
-                    <span>Attempt status</span>
-                    <b>{integrityDetail.status}</b>
-                  </div>
-                  <div>
-                    <span>Started</span>
-                    <b>{stamp(integrityDetail.started)}</b>
-                  </div>
-                  <div>
-                    <span>Finished</span>
-                    <b>{stamp(integrityDetail.finished)}</b>
-                  </div>
-                  <div>
-                    <span>Technical score</span>
-                    <b>{integrityDetail.integrity?.overall ?? "Not scored"}</b>
-                  </div>
-                  <div>
-                    <span>Trust label</span>
-                    <b>{integrityDetail.integrity?.trust || "Not scored"}</b>
-                  </div>
-                  <div>
-                    <span>Trust points</span>
-                    <b>{integrityDetail.integrity?.trust_points ?? "—"}</b>
-                  </div>
-                  <div>
-                    <span>Rule version</span>
-                    <b>
-                      {integrityDetail.integrity?.trust_rule_version ||
-                        "Not available"}
-                    </b>
-                  </div>
-                  <div>
-                    <span>Review decision</span>
-                    <b>{integrityDetail.review_decision || "Not reviewed"}</b>
-                  </div>
-                </div>
-                <h3>Honesty score</h3>
-                <div className="honesty-review">
-                  <div className="honesty-summary">
-                    <div>
-                      <span>System default</span>
-                      <b>{integrityDetail.honesty?.auto_score ?? "—"}</b>
-                    </div>
-                    <div>
-                      <span>Current score</span>
-                      <b>{integrityDetail.honesty?.score ?? "—"}</b>
-                    </div>
-                    <div>
-                      <span>Status</span>
-                      <b>{pill(integrityDetail.honesty?.status || "pending")}</b>
-                    </div>
-                    <div>
-                      <span>Reviewed</span>
-                      <b>
-                        {integrityDetail.honesty?.reviewed_at
-                          ? stamp(integrityDetail.honesty.reviewed_at)
-                          : "Not reviewed"}
-                      </b>
-                    </div>
-                  </div>
-                  <div className="honesty-form">
-                    <label>
-                      Score (0–100)
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={honestyDraft.score}
-                        onChange={(e) =>
-                          setHonestyDraft((d) => ({ ...d, score: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Review note
-                      <textarea
-                        rows="2"
-                        maxLength="2000"
-                        placeholder="Why did you adjust or accept this score?"
-                        value={honestyDraft.reason}
-                        onChange={(e) =>
-                          setHonestyDraft((d) => ({ ...d, reason: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <div className="honesty-actions">
-                      <button
-                        type="button"
-                        className="ad-action-btn"
-                        disabled={honestyBusy}
-                        onClick={() => saveHonesty("pending")}
-                      >
-                        {honestyBusy ? "Saving…" : "Save score"}
-                      </button>
-                      <button
-                        type="button"
-                        className="ad-action-btn"
-                        disabled={honestyBusy}
-                        onClick={() => saveHonesty("approved")}
-                      >
-                        Approve honesty
-                      </button>
-                      <button
-                        type="button"
-                        className="ad-action-btn danger"
-                        disabled={honestyBusy}
-                        onClick={() => saveHonesty("rejected")}
-                      >
-                        Reject honesty
-                      </button>
-                    </div>
-                    {honestyError && <p className="err">{honestyError}</p>}
-                    <p className="ad-footnote">
-                      Default score = 100 − (integrity points × 10), capped at 40
-                      when a hard flag exists. Editing or deciding this score never
-                      changes the technical assessment score; use assessment review
-                      for that.
-                    </p>
-                  </div>
-                </div>
-                <h3>Flags detected</h3>
-                {integrityDetail.flags?.length ? (
-                  <div className="honesty-flags">
-                    {integrityDetail.flags.map((f) => (
-                      <span key={f.type} className="honesty-flag">
-                        {eventLabel(f.type)} <b>×{f.count}</b>
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No integrity flags recorded for this attempt.</p>
-                )}
-                <h3>Trust reasons</h3>
-                {integrityDetail.integrity?.trust_reasons?.length ? (
-                  <ul>
-                    {integrityDetail.integrity.trust_reasons.map((r, i) => (
-                      <li key={i}>
-                        {r.key}: {r.n ?? 0} event(s), {r.points ?? 0} point(s)
-                        {r.duration_seconds != null
-                          ? ", " + r.duration_seconds + "s"
-                          : ""}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>No trust reasons recorded.</p>
-                )}
-                <h3>Hard flags</h3>
-                <p>
-                  {integrityDetail.integrity?.trust_hard_flags?.join(", ") ||
-                    "None recorded"}
-                </p>
-                <h3>Integrity activity summary</h3>
-                <div className="ad-detail-list">
-                  <div>
-                    <span>Suspicious-activity signals</span>
-                    <b>
-                      {integrityDetail.events?.filter(
-                        (e) =>
-                          [
-                            "tab_hidden",
-                            "tab_visible",
-                            "blur",
-                            "focus",
-                            "fullscreen_exit",
-                            "fullscreen_enter",
-                            "screen_share_stopped",
-                            "screen_share_started",
-                            "screen_share_unavailable",
-                            "wrong_share_surface",
-                            "copy",
-                            "cut",
-                            "paste",
-                            "identity_mismatch",
-                          ].includes(e.type) ||
-                          String(e.type || "").startsWith("ai_"),
-                      ).length || 0}
-                    </b>
-                  </div>
-                  <div>
-                    <span>AI evidence snapshots</span>
-                    <b>{integrityDetail.evidence?.length || 0}</b>
-                  </div>
-                  <div>
-                    <span>Technical issues</span>
-                    <b>
-                      {integrityDetail.events?.filter((e) =>
-                        e.type !== "heartbeat" &&
-                        ["heartbeat_gap", "camera_stopped", "microphone_stopped", "ai_model_unavailable", "network_ip_changed"].includes(e.type),
-                      ).length || 0}
-                    </b>
-                  </div>
-                </div>
-                {renderIntegrityEvents(
-                  "Suspicious activity signals",
-                  (integrityDetail.events || []).filter(
-                    (e) =>
-                      [
-                        "tab_hidden",
-                        "tab_visible",
-                        "blur",
-                        "focus",
-                        "fullscreen_exit",
-                        "fullscreen_enter",
-                        "screen_share_stopped",
-                        "screen_share_started",
-                        "screen_share_unavailable",
-                        "wrong_share_surface",
-                        "copy",
-                        "cut",
-                        "paste",
-                        "identity_mismatch",
-                      ].includes(e.type) ||
-                      String(e.type || "").startsWith("ai_"),
-                  ),
-                  "No suspicious-activity signals were recorded. These are review signals, not findings of misconduct.",
-                )}
-                {renderIntegrityEvents(
-                  "Technical issues",
-                  (integrityDetail.events || []).filter(
-                    (e) =>
-                      e.type !== "heartbeat" &&
-                      (["heartbeat_gap", "camera_stopped", "microphone_stopped", "ai_model_unavailable", "network_ip_changed"].includes(e.type) ||
-                      ![
-                        "tab_hidden",
-                        "tab_visible",
-                        "blur",
-                        "focus",
-                        "fullscreen_exit",
-                        "fullscreen_enter",
-                        "screen_share_stopped",
-                        "screen_share_started",
-                        "screen_share_unavailable",
-                        "wrong_share_surface",
-                        "copy",
-                        "cut",
-                        "paste",
-                        "identity_mismatch",
-                        "identity_verified",
-                        "identity_skipped",
-                      ].includes(e.type) &&
-                        !String(e.type || "").startsWith("ai_")),
-                  ),
-                  "No technical interruptions were recorded.",
-                )}
-                <h3>AI evidence snapshots ({integrityDetail.evidence?.length || 0})</h3>
-                <p className="ad-footnote">
-                  Snapshots are limited still images captured when an eligible AI
-                  alert fires. They are not continuous video. A missing snapshot
-                  does not mean the alert did not occur: capture or upload may
-                  fail, the image may exceed the size limit, the per-attempt cap
-                  may be reached, or the retention period may have expired.
-                  Confidence is a detector score, not the probability that the
-                  candidate cheated.
-                </p>
-                {integrityDetail.evidence?.length ? (
-                  <div className="ai-evidence-grid">
-                    {integrityDetail.evidence.map((ev) => (
-                      <figure key={ev.id}>
-                        <img src={ev.data_url} alt="AI alert evidence snapshot" />
-                        <figcaption>
-                          {stamp(ev.captured_at)} ·{" "}
-                          {Math.round(ev.size_bytes / 1024)} KB
-                          {ev.vision && (
-                            <span className="evidence-vision">
-                              {ev.vision.source ? `${ev.vision.source} snapshot · ` : "Legacy snapshot · "}
-                              {ev.vision.summary || "Model details unavailable; inspect the frame manually."}
-                              {ev.vision.advisory && " · Advisory, client-reported observation—not a misconduct finding."}
-                            </span>
-                          )}
-                        </figcaption>
-                      </figure>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No retained AI snapshots are available for this attempt.</p>
-                )}
-                <p className="ad-footnote">
-                  Routine heartbeat pings run every 10 seconds and are not
-                  displayed. A gap over 30 seconds is listed under Technical
-                  issues as a monitoring interruption, not misconduct. Duration
-                  is shown only when a matching return/restoration event exists;
-                  clipboard actions are point-in-time events. AI detections,
-                  including possible gaze deviation, are imperfect signals and
-                  require human review.
-                </p>
-                <h3>Answer timing &amp; responses</h3>
-                {integrityDetail.answers?.length ? (
-                  <div className="ad-table-wrap">
-                    <table className="ad-table">
-                      <thead>
-                        <tr>
-                          <th># / QUESTION</th>
-                          <th>CANDIDATE ANSWER</th>
-                          <th>TOPIC / TYPE</th>
-                          <th>STARTED</th>
-                          <th>SUBMITTED</th>
-                          <th>TIME TAKEN</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {integrityDetail.answers.map((a, i) => (
-                          <tr key={i}>
-                            <td>
-                              <b>Q{a.question_index ?? i + 1}: {a.question_id || "—"}</b>
-                              <small>{a.question}</small>
-                            </td>
-                            <td style={{ whiteSpace: "pre-wrap", maxWidth: 260 }}>
-                              {a.answer || "No answer text recorded"}
-                            </td>
-                            <td>
-                              {a.topic || "—"}
-                              <small>{a.type || "—"}</small>
-                            </td>
-                            <td>{a.started_at ? stamp(a.started_at) : "—"}</td>
-                            <td>{a.submitted_at ? stamp(a.submitted_at) : "—"}</td>
-                            <td>
-                              {a.seconds == null ? "—" : Number(a.seconds).toFixed(1) + "s"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p>No answer timing records.</p>
-                )}
-                <h3>Candidate appeal</h3>
-                <p>{integrityDetail.appeal || "No appeal submitted."}</p>
-                <h3>Human review</h3>
-                <div className="ad-detail-list">
-                  <div>
-                    <span>Decision</span>
-                    <b>{integrityDetail.review_decision || "Pending review"}</b>
-                  </div>
-                  <div>
-                    <span>Reviewer account ID</span>
-                    <b>{integrityDetail.reviewer_id ?? "—"}</b>
-                  </div>
-                  <div>
-                    <span>Reviewed at</span>
-                    <b>{stamp(integrityDetail.reviewed_at)}</b>
-                  </div>
-                  <div>
-                    <span>Review note</span>
-                    <b>{integrityDetail.review_reason || "No review note recorded"}</b>
-                  </div>
-                </div>
-                <p className="ad-footnote">
-                  Answer records and technical score remain unchanged by
-                  integrity review.
-                </p>
-              </>
-            )}
-          </section>
-        </div>
-      )}
-      {action && (
-        <div
-          className="ad-modal-backdrop"
-          onClick={() => !saving && setAction(null)}
-        >
-          <form
-            className="ad-modal"
-            onSubmit={submitAction}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="ad-modal-close"
-              onClick={() => setAction(null)}
-            >
-              ×
-            </button>
-            <div className="ad-eyebrow">REASON-CODED ADMIN ACTION</div>
-            <h2>Confirm {action.decision.replaceAll("_", " ")}</h2>
-            <p>
-              This decision will be recorded with your administrator identity
-              and timestamp. Add a clear reason for the audit trail.
-            </p>
-            <label>
-              Decision reason
-              <textarea
-                required
-                minLength={action.kind === "learning-resource" ? 8 : 3}
-                rows="4"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Explain the evidence reviewed and why this action is appropriate…"
-              />
-            </label>
-            <div className="ad-modal-actions">
-              <button
-                type="button"
-                onClick={() => setAction(null)}
-                disabled={saving}
-              >
-                Cancel
-              </button>
-              <button
-                className="ad-modal-confirm"
-                disabled={
-                  saving ||
-                  reason.trim().length <
-                    (action.kind === "learning-resource" ? 8 : 3)
-                }
-              >
-                {saving ? "Saving…" : "Confirm decision"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function HiringWorkspace({ role, onLogout }) {
-  const C = useConsoleT();
-  const CO = C.company;
-  const lang = useLangValue();
-  const setLang = useSetLang();
-  const [page, setPage] = useState("overview");
-  const [companyEmail, setCompanyEmail] = useState("");
-  const [workspace, setWorkspace] = useState(null);
-  const [needsOrganisation, setNeedsOrganisation] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [applications, setApplications] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
-  const [team, setTeam] = useState([]);
-  const [phaseTwo, setPhaseTwo] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [detail, setDetail] = useState(null);
-  const applicationDialog = useRef(null);
-  useEffect(() => { if (detail) applicationDialog.current?.showModal(); }, [detail]);
-  const [toast, setToast] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [memberBusy, setMemberBusy] = useState(false);
-  const [secondaryErrors, setSecondaryErrors] = useState([]);
-  const [copyStatus, setCopyStatus] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [website, setWebsite] = useState("");
-  const [verification, setVerification] = useState({
-    legal_name: "",
-    country: "Bangladesh",
-    business_id: "",
-    evidence_note: "",
-  });
-  const [jobForm, setJobForm] = useState({
-    title: "",
-    description: "",
-    location: "Dhaka, Bangladesh",
-    employment_type: "Full-time",
-    work_mode: "Hybrid",
-    experience_level: "Mid-level",
-    salary_min: "",
-    salary_max: "",
-    salary_currency: "BDT",
-    deadline: "",
-    required_skills: "",
-    preferred_skills: "",
-    eligibility: "",
-    hard_requirements: "",
-  });
-  const [jobEditId, setJobEditId] = useState(null);
-  const [search, setSearch] = useState("");
-  const [filterJob, setFilterJob] = useState("all");
-  const [note, setNote] = useState("");
-  const [stageReason, setStageReason] = useState("");
-  const [teamForm, setTeamForm] = useState({ email: "", role: "recruiter" });
-  const [inviteToken, setInviteToken] = useState("");
-  const [phaseForm, setPhaseForm] = useState({
-    title: "Role-specific practical assessment",
-    requirements: "Assess practical skills relevant to this role.",
-    syllabus: "",
-    question_types: ["scenario", "short_answer"],
-    duration_minutes: 60,
-    deadline: "",
-    attempt_count: 1,
-    integrity_mode: "light",
-    accommodations: "",
-    credit_cost: 0,
-    allowed_resources: "",
-    rubric: "",
-    difficulty_easy: 30,
-    difficulty_medium: 50,
-    difficulty_hard: 20,
-  });
-  const [selectedApp, setSelectedApp] = useState("");
-  const [verificationForm, setVerificationForm] = useState(false);
-  const isOwner = workspace?.company?.role === "owner";
-  const canManageJobs = workspace?.permissions?.manage_jobs;
-  const jobEligibility = workspace?.job_eligibility || {
-    registered: false,
-    verified: false,
-    verification_status: "not_submitted",
-    can_create_draft: false,
-    can_publish: false,
-    reason: "Create and save your company profile before creating jobs.",
-  };
-  const canCreateJob = Boolean(canManageJobs && jobEligibility.can_create_draft);
-  const canPublishJob = Boolean(canManageJobs && jobEligibility.can_publish);
-  const canManagePipeline = workspace?.permissions?.manage_pipeline;
-  const canManageTeam = workspace?.permissions?.manage_team;
-  const money = (n) =>
-    n == null || n === ""
-      ? "Not disclosed"
-      : new Intl.NumberFormat("en-BD", {
-          style: "currency",
-          currency: "BDT",
-          maximumFractionDigits: 0,
-        }).format(Number(n));
-  const date = (v) =>
-    v
-      ? new Date(Number(v) * 1000).toLocaleDateString("en-GB", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        })
-      : "—";
-  const initials = (s = "") =>
-    s
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((x) => x[0])
-      .join("")
-      .toUpperCase() || "SB";
-  const flash = (message) => {
-    setToast(message);
-    setError("");
-  };
-  const fail = (e) => {
-    setError(e.message || "Something went wrong");
-    setToast("");
-  };
-  const load = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      // Core workspace data must load; secondary panels are independent so one
-      // unavailable report endpoint cannot blank the rest of the company page.
-      const w = await api("/company/workspace");
-      setWorkspace(w);
-      setNeedsOrganisation(false);
-      setCompanyName(w.company.name);
-      setWebsite(w.company.website || "");
-      if (!companyEmail) {
-        api("/enterprise/me")
-          .then((identity) => setCompanyEmail(identity?.user?.email || ""))
-          .catch(() => {});
-      }
-      const j = await api("/company/jobs");
-      setJobs(j.items || []);
-      const optional = [];
-      const failures = [];
-      if (w.company.verified && w.permissions.manage_pipeline) {
-        optional.push(
-          api("/company/applications")
-            .then((a) => setApplications(a.items || []))
-            .catch((e) => { failures.push("Applicants: " + e.message); }),
-        );
-      } else {
-        setApplications([]);
-      }
-      if (w.permissions.view_reports) {
-        optional.push(
-          api("/company/analytics")
-            .then((x) => setAnalytics(x))
-            .catch((e) => { failures.push("Analytics: " + e.message); }),
-        );
-        optional.push(
-          api("/company/phase-two")
-            .then((p) => setPhaseTwo(p.items || []))
-            .catch((e) => { failures.push("Assessment requests: " + e.message); }),
-        );
-      }
-      if (w.permissions.manage_team) {
-        optional.push(
-          api("/company/team")
-            .then((t) => setTeam(t.items || []))
-            .catch((e) => { failures.push("Team: " + e.message); }),
-        );
-      }
-      await Promise.allSettled(optional);
-      setSecondaryErrors(failures);
-    } catch (e) {
-      if (e.status === 409 && e.message.toLowerCase().includes("organisation")) setNeedsOrganisation(true);
-      fail(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-  useEffect(() => {
-    if (role !== "admin") load();
-  }, [role]);
-  const openApplication = async (id) => {
-    try {
-      const d = await api("/company/applications/" + id);
-      setSelected(id);
-      setDetail(d);
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const saveCompany = async (e) => {
-    e.preventDefault();
-    try {
-      await api("/company/profile", {
-        method: "POST",
-        body: { name: companyName, website },
-      });
-      flash("Company profile saved. Next, submit verification.");
-      await load();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const submitVerification = async (e) => {
-    e.preventDefault();
-    try {
-      const r = await api("/company/verification", {
-        method: "POST",
-        body: verification,
-      });
-      flash(r.message);
-      setVerificationForm(false);
-      await load();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const setJob = (key, value) => setJobForm((v) => ({ ...v, [key]: value }));
-  const editJob = (j) => {
-    const d = j.details || {};
-    setJobForm({
-      title: j.title,
-      description: j.description,
-      location: j.location,
-      employment_type: j.employment_type,
-      work_mode: d.work_mode || "Remote",
-      experience_level: d.experience_level || "Any",
-      salary_min: d.salary_min ?? "",
-      salary_max: d.salary_max ?? "",
-      salary_currency: d.salary_currency || "BDT",
-      deadline: d.deadline || "",
-      required_skills: (d.required_skills || j.skills || []).join(", "),
-      preferred_skills: (d.preferred_skills || []).join(", "),
-      eligibility: d.eligibility || "",
-      hard_requirements: (d.hard_requirements || []).join("\n"),
-    });
-    setJobEditId(j.id);
-    setPage("jobs");
-  };
-  const submitJob = async (e) => {
-    e.preventDefault();
-    const payload = {
-      ...jobForm,
-      salary_min: jobForm.salary_min === "" ? null : Number(jobForm.salary_min),
-      salary_max: jobForm.salary_max === "" ? null : Number(jobForm.salary_max),
-      required_skills: jobForm.required_skills
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean),
-      preferred_skills: jobForm.preferred_skills
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean),
-      hard_requirements: jobForm.hard_requirements
-        .split("\n")
-        .map((x) => x.trim())
-        .filter(Boolean),
-    };
-    try {
-      if (jobEditId && jobEditId !== "new")
-        await api("/company/jobs/" + jobEditId, {
-          method: "PATCH",
-          body: payload,
-        });
-      else await api("/company/jobs", { method: "POST", body: payload });
-      setJobEditId(null);
-      setJobForm({
-        title: "",
-        description: "",
-        location: "Dhaka, Bangladesh",
-        employment_type: "Full-time",
-        work_mode: "Hybrid",
-        experience_level: "Mid-level",
-        salary_min: "",
-        salary_max: "",
-        salary_currency: "BDT",
-        deadline: "",
-        required_skills: "",
-        preferred_skills: "",
-        eligibility: "",
-        hard_requirements: "",
-      });
-      flash(jobEditId ? "Job changes saved." : "Job draft created.");
-      await load();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const publishJob = async (id) => {
-    try {
-      const r = await api("/company/jobs/" + id + "/publish", {
-        method: "POST",
-      });
-      flash(
-        r.status === "published"
-          ? "Job published."
-          : "Job submitted for platform review.",
-      );
-      await load();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const jobStatus = async (id, status) => {
-    try {
-      await api("/company/jobs/" + id + "/status", {
-        method: "POST",
-        body: { status, reason: "Company requested status change" },
-      });
-      flash("Job status updated.");
-      await load();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const moveStage = async (id, stage) => {
-    try {
-      await api("/company/applications/" + id + "/stage", {
-        method: "PATCH",
-        body: { stage, reason: stageReason },
-      });
-      setStageReason("");
-      await openApplication(id);
-      flash("Candidate pipeline updated.");
-      await load();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const addNote = async (e) => {
-    e.preventDefault();
-    try {
-      await api("/company/applications/" + selected + "/notes", {
-        method: "POST",
-        body: { body: note },
-      });
-      setNote("");
-      await openApplication(selected);
-      flash("Private recruiter note added.");
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const sendInvite = async (invitation) => {
-    if (memberBusy) return;
-    setMemberBusy(true);
-    try {
-      const r = await api("/company/team/invitations", {
-        method: "POST",
-        body: invitation,
-      });
-      setInviteToken(r.invite_token);
-      setCopyStatus("");
-      setTeamForm({ email: "", role: "recruiter" });
-      flash(r.message);
-      const t = await api("/company/team");
-      setTeam(t.items || []);
-    } catch (e) {
-      fail(e);
-    } finally { setMemberBusy(false); }
-  };
-  const inviteMember = (e) => {
-    e.preventDefault();
-    sendInvite(teamForm);
-  };
-  const changeMemberRole = async (member, newRole) => {
-    if (newRole === "revoked" && !window.confirm(`Revoke workspace access for ${member.email}?`)) return;
-    setMemberBusy(true);
-    try {
-      await api("/company/team/" + member.id, { method: "PATCH", body: { role: newRole } });
-      const result = await api("/company/team");
-      setTeam(result.items || []);
-      flash(newRole === "revoked" ? "Workspace access revoked." : "Team permissions updated.");
-    } catch (e) { fail(e); }
-    finally { setMemberBusy(false); }
-  };
-  const acceptInvite = async (e) => {
-    e.preventDefault();
-    if (memberBusy) return;
-    setMemberBusy(true);
-    try {
-      await api("/company/team/accept/" + encodeURIComponent(inviteToken.trim()), { method: "POST" });
-      setInviteToken("");
-      flash("Organisation invitation accepted. Refreshing workspace.");
-      await load();
-    } catch (e) {
-      fail(e);
-    } finally { setMemberBusy(false); }
-  };
-  const createPhase = async (e) => {
-    e.preventDefault();
-    if (!selectedApp) {
-      fail(new Error("Choose an applicant first."));
-      return;
-    }
-    try {
-      const topics = phaseForm.syllabus
-        .split("\n")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const rubricLines = phaseForm.rubric
-        .split("\n")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const difficulty = {
-        easy: Number(phaseForm.difficulty_easy),
-        medium: Number(phaseForm.difficulty_medium),
-        hard: Number(phaseForm.difficulty_hard),
-      };
-      if (
-        topics.length === 0 ||
-        rubricLines.length === 0 ||
-        phaseForm.question_types.length === 0 ||
-        Object.values(difficulty).reduce((x, y) => x + y, 0) !== 100
-      ) {
-        fail(
-          new Error(
-            "Add syllabus and rubric criteria; difficulty percentages must total 100.",
-          ),
-        );
-        return;
-      }
-      const payload = {
-        ...phaseForm,
-        syllabus: topics,
-        rubric: rubricLines.map((criterion, index) => ({
-          criterion,
-          weight: 100 / rubricLines.length,
-        })),
-        allowed_resources: phaseForm.allowed_resources
-          .split("\n")
-          .map((x) => x.trim())
-          .filter(Boolean),
-        difficulty,
-      };
-      await api(
-        "/company/applications/" + selectedApp + "/phase-two-invitations",
-        { method: "POST", body: payload },
-      );
-      flash(
-        "Second-phase assessment configuration submitted for platform review. Candidate delivery is not active yet.",
-      );
-      await load();
-      setPage("assessments");
-    } catch (e) {
-      fail(e);
-    }
-  };
-  const nav = [
-    ["overview", CO.nav.overview, "⌂"],
-    ["jobs", CO.nav.jobs, "▤"],
-    ...(canManagePipeline ? [["applicants", CO.nav.applicants, "♙"]] : []),
-    ["assessments", CO.nav.assessments, "◎"],
-    ["analytics", CO.nav.analytics, "▥"],
-    ["agent", "AI Copilot", "agent"],
-    ...(canManageTeam ? [["team", CO.nav.team, "♧"]] : []),
-    ["settings", CO.nav.settings, "⚙"],
-    ["security", CO.nav.security, "◈"],
-  ];
-  const stages = [
-    ["submitted"],
-    ["preliminary_assessment"],
-    ["in_review"],
-    ["phase_two_invited"],
-    ["further_review"],
-    ["human_interview"],
-    ["on_hold"],
-    ["offer"],
-    ["offer_declined"],
-    ["offer_withdrawn"],
-    ["hired"],
-    ["rejected"],
-    ["withdrawn"],
-    ["closed"],
-  ].map(([id]) => [id, CO.stages[id] || id]);
-  const stageTransitions = {
-    submitted: ["preliminary_assessment", "in_review", "withdrawn"],
-    applied: ["preliminary_assessment", "in_review", "withdrawn"],
-    preliminary_assessment: [
-      "in_review",
-      "phase_two_invited",
-      "human_interview",
-      "withdrawn",
-    ],
-    in_review: [
-      "preliminary_assessment",
-      "phase_two_invited",
-      "human_interview",
-      "withdrawn",
-    ],
-    phase_two_invited: ["human_interview", "further_review", "withdrawn"],
-    further_review: ["human_interview", "withdrawn"],
-    human_interview: ["offer", "rejected", "on_hold"],
-    on_hold: ["human_interview", "rejected"],
-    offer: ["hired", "offer_declined", "offer_withdrawn"],
-    offer_withdrawn: ["human_interview", "closed"],
-    hired: ["closed"],
-    rejected: ["closed"],
-    withdrawn: ["closed"],
-  };
-  const filteredApps = applications.filter(
-    (a) =>
-      (filterJob === "all" || a.job_id === filterJob) &&
-      ((a.candidate_name || "").toLowerCase().includes(search.toLowerCase()) ||
-        (a.job_title || "").toLowerCase().includes(search.toLowerCase())),
-  );
-  const pipelineCounts = analytics?.stages
-    ? Object.fromEntries(analytics.stages.map((stage) => [stage.status, stage.n]))
-    : workspace?.applications || {};
-  const pipelineTotal = Object.values(pipelineCounts).reduce((sum, count) => sum + Number(count), 0);
-  const metric = (label, value, sub, icon) => (
-    <div className="cr-metric">
-      <span className="cr-metric-icon"><WorkspaceIcon name={{ "▤": "jobs", "♙": "team", "◷": "exams", "✓": "privacy", "↗": "journey" }[icon] || "analytics"} /></span>
-      <div>
-        <small>{label}</small>
-        <strong>{value}</strong>
-        <span>{sub}</span>
-      </div>
-    </div>
-  );
-  if (role === "admin") return <AdminConsole onLogout={onLogout} />;
-  if (!workspace && needsOrganisation)
-    return (
-      <main className="cr-onboard">
-        <div className="cr-onboard-brand">
-          TalentForge<span>.</span>
-        </div>
-        <section className="cr-onboard-card">
-          <div className="cr-kicker">{CO.onboarding.kicker}</div>
-          <h1>{CO.onboarding.title}</h1>
-          <p>{CO.onboarding.body}</p>
-          <TeamInvitations onJoined={load} />
-          <form onSubmit={saveCompany}>
-            <label>
-              {CO.onboarding.companyName}
-              <input
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                required
-                minLength={2}
-                placeholder="e.g. Northstar Technologies"
-              />
-            </label>
-            <label>
-              {CO.onboarding.website}
-              <input
-                value={website}
-                onChange={(e) => setWebsite(e.target.value)}
-                placeholder="https://company.com"
-              />
-            </label>
-            <button className="cr-primary" disabled={busy}>
-              {CO.onboarding.create} <span>→</span>
-            </button>
-          </form>
-          <div className="cr-onboard-divider">
-            <span>OR</span>
-          </div>
-          <form onSubmit={acceptInvite}>
-            <label>
-              Have a team invitation? Enter its token
-              <input
-                value={inviteToken}
-                onChange={(e) => setInviteToken(e.target.value)}
-                required
-                placeholder="Paste invitation token"
-              />
-            </label>
-            <button className="cr-outline-btn" disabled={memberBusy}>{memberBusy ? "Joining…" : "Accept team invitation"}</button>
-          </form>
-          {error && !error.toLowerCase().includes("organisation") && <p className="cr-error" role="alert">{error}</p>}
-          <button type="button" className="cr-text-btn" onClick={onLogout}>Sign out</button>
-        </section>
-      </main>
-    );
-  return (
-    <div className="cr-app">
-      <a className="ws-skip-link" href="#company-content">Skip to content</a>
-      <aside className="cr-sidebar">
-        <div className="cr-brand">
-          <span className="cr-brand-mark">TF</span>
-          <span>
-            TalentForge<span className="cr-brand-dot">.</span>
-            <small>{CO.brand}</small>
-          </span>
-        </div>
-        <div className="cr-org">
-          <div className="cr-org-avatar">
-            {initials(workspace?.company?.name)}
-          </div>
-          <div>
-            <strong>{workspace?.company?.name || "Your organisation"}</strong>
-            <small>
-              {workspace?.company?.role === "owner"
-                ? CO.owner
-                : workspace?.company?.role?.replace("_", " ")}
-            </small>
-          </div>
-          <span className="cr-chevron">⌄</span>
-        </div>
-        <div className="cr-nav-label">{CO.workspace}</div>
-        <nav className="cr-nav" aria-label={CO.navAria}>
-          {nav.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={page === id ? "active" : ""}
-              aria-current={page === id ? "page" : undefined}
-              title={label}
-              onClick={() => {
-                setPage(id);
-                setSelected(null);
-                setDetail(null);
-              }}
-            >
-              <span><WorkspaceIcon name={id} /></span>
-              {label}
-              {id === "applicants" && applications.length > 0 ? (
-                <b>{applications.length}</b>
-              ) : null}
-            </button>
-          ))}
-        </nav>
-        <div className="cr-sidebar-bottom">
-          <div className="cr-help-card">
-            <span>✦</span>
-            <strong>{CO.helpTitle}</strong>
-            <p>{CO.helpBody}</p>
-          </div>
-          <div className="cr-user">
-            <div className="cr-user-avatar">
-              {initials(workspace?.company?.name)}
-            </div>
-            <div>
-              <strong>{workspace?.company?.role || CO.teamMember}</strong>
-              <small>{CO.companyAccount}</small>
-            </div>
-            <button title={C.common.refresh} onClick={load}>
-              ↻
-            </button>
-          </div>
-        </div>
-      </aside>
-      <main className="cr-main">
-        <header className="cr-topbar">
-          <div className="cr-breadcrumb">
-            {CO.breadcrumb} <span>/</span>{" "}
-            {nav.find((x) => x[0] === page)?.[1] || CO.nav.overview}
-          </div>
-          <WorkspaceSearch items={nav.map(([id, label]) => ({ id, label }))} onNavigate={(id) => { setPage(id); setSelected(null); setDetail(null); }} lang={lang} />
-          <div className="cr-top-actions">
-            <span className="cr-secure">
-              <i /> {CO.privateWorkspace}
-            </span>
-            <button
-              className="cr-icon-btn"
-              onClick={load}
-              title={C.common.refresh}
-              aria-label={C.common.refresh}
-            >
-              <WorkspaceIcon name="refresh" size={18} />
-            </button>
-            <select className="ws-language" aria-label="Language" value={lang} onChange={(event) => setLang(event.target.value)}><option value="en">English</option><option value="bn">বাংলা</option></select>
-            <div className="cr-top-avatar">
-              {initials(workspace?.company?.name)}
-            </div>
-            <button type="button" className="cr-logout-btn" onClick={onLogout}>
-              <span aria-hidden="true">↪</span> {CO.logOut}
-            </button>
-          </div>
-        </header>
-        <div className="cr-content" id="company-content" tabIndex={-1} aria-busy={busy}>
-          {!workspace && busy && <WorkspaceLoading />}
-          {toast && (
-            <div className="cr-toast" role="status">
-              <span>✓</span>
-              {toast}
-              <button onClick={() => setToast("")}>×</button>
-            </div>
-          )}
-          {error &&
-            !needsOrganisation && (
-              <div className="cr-error-banner" role="alert">
-                {error}
-                <button onClick={() => setError("")}>×</button>
-              </div>
-            )}
-          {secondaryErrors.length > 0 && <div className="cr-error-banner" role="alert"><div><strong>Some workspace data could not be refreshed.</strong>{secondaryErrors.map((message) => <p key={message}>{message}</p>)}</div><button type="button" className="cr-outline-btn" onClick={load} disabled={busy}>Retry</button></div>}
-          {workspace && workspace.verification?.status !== "verified" && (
-            <div className="cr-verification-banner">
-              <div>
-                <strong>{CO.verification.title}</strong>
-                <span>
-                  {workspace?.verification?.status === "pending_review"
-                    ? CO.verification.pending
-                    : CO.verification.required}
-                </span>
-              </div>
-              <button
-                onClick={() => {
-                  setPage("settings");
-                  setVerificationForm(true);
-                }}
-              >
-                {CO.verification.review}
-              </button>
-            </div>
-          )}
-          {page === "overview" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">{CO.overviewKicker}</div>
-                  <h1>{CO.overviewTitle}</h1>
-                  <p>{CO.overviewSub}</p>
-                </div>
-                <button
-                  className="cr-primary"
-                  onClick={() => {
-                    setJobEditId(canCreateJob ? "new" : null);
-                    setPage("jobs");
-                  }}
-                  disabled={!canCreateJob}
-                  title={jobEligibility.reason || "Create a job"}
-                >
-                  ＋ Create a job
-                </button>
-              </div>
-              <div className="cr-metrics">
-                {metric(
-                  "Open roles",
-                  analytics?.totals?.published_jobs ??
-                    jobs.filter((j) => j.status === "published").length,
-                  "Published opportunities",
-                  "▤",
-                )}
-                {metric(
-                  "Total applicants",
-                  analytics?.totals?.applicants ?? applications.length,
-                  "Across all roles",
-                  "♙",
-                )}
-                {metric(
-                  "In review",
-                  applications.filter((a) =>
-                    ["in_review", "preliminary_assessment"].includes(a.status),
-                  ).length,
-                  "Needs recruiter attention",
-                  "◷",
-                )}
-                {metric(
-                  "Shared assessments",
-                  analytics?.totals?.shared_results ??
-                    applications.filter((a) => a.results_shared).length,
-                  "Candidate-consented evidence",
-                  "✓",
-                )}
-              </div>
-              <div className="cr-overview-grid">
-                <div className="cr-panel">
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>Recent applicants</h2>
-                      <p>Latest applications across your roles</p>
-                    </div>
-                    <button
-                      className="cr-text-btn"
-                      onClick={() => setPage("applicants")}
-                      disabled={!canManagePipeline}
-                    >
-                      View all →
-                    </button>
-                  </div>
-                  {applications.slice(0, 5).length ? (
-                    applications.slice(0, 5).map((a) => (
-                      <button
-                        className="cr-applicant-row"
-                        key={a.application_id}
-                        onClick={() => openApplication(a.application_id)}
-                      >
-                        <div className="cr-person-avatar">
-                          {initials(a.candidate_name)}
-                        </div>
-                        <div className="cr-person-copy">
-                          <strong>{a.candidate_name}</strong>
-                          <span>{a.job_title}</span>
-                        </div>
-                        <span className={"cr-stage cr-stage-" + a.status}>
-                          {a.status.replaceAll("_", " ")}
-                        </span>
-                        <span className="cr-row-arrow">→</span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="cr-empty">
-                      <span>♙</span>
-                      <strong>No applicants yet</strong>
-                      <p>
-                        Published roles will appear here as candidates apply.
-                      </p>
-                    </div>
-                  )}
-                </div>
-                <div className="cr-panel">
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>Hiring activity</h2>
-                      <p>Application stages</p>
-                    </div>
-                  </div>
-                  {stages.slice(0, 7).map(([key, label]) => (
-                    <div className="cr-stage-line" key={key}>
-                      <span>{label}</span>
-                      <strong>
-                        {pipelineCounts[key] || 0}
-                      </strong>
-                      <div>
-                        <i
-                          style={{
-                            width:
-                              (pipelineTotal ? ((pipelineCounts[key] || 0) / pipelineTotal) * 100 : 0) + "%",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                  <p className="cr-footnote">
-                    Pipeline counts reflect applications in this organisation
-                    only.
-                  </p>
-                </div>
-              </div>
-              <div className="cr-panel cr-jobs-panel">
-                <div className="cr-panel-head">
-                  <div>
-                    <h2>Your jobs</h2>
-                    <p>Manage drafts, published roles and review status</p>
-                  </div>
-                  <button
-                    className="cr-text-btn"
-                    onClick={() => setPage("jobs")}
-                  >
-                    Manage jobs →
-                  </button>
-                </div>
-                <div className="cr-table-wrap">
-                  <table className="cr-table">
-                    <thead>
-                      <tr>
-                        <th>ROLE</th>
-                        <th>STATUS</th>
-                        <th>APPLICANTS</th>
-                        <th>POSTED</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {jobs.slice(0, 5).map((j) => (
-                        <tr key={j.id}>
-                          <td>
-                            <strong>{j.title}</strong>
-                            <small>
-                              {j.location} · {j.employment_type}
-                            </small>
-                          </td>
-                          <td>
-                            <span className={"cr-status cr-status-" + j.status}>
-                              {j.status.replaceAll("_", " ")}
-                            </span>
-                          </td>
-                          <td>
-                            {
-                              applications.filter((a) => a.job_id === j.id)
-                                .length
-                            }
-                          </td>
-                          <td>{date(j.created)}</td>
-                          <td>
-                            <button
-                              className="cr-text-btn"
-                              onClick={() => editJob(j)}
-                            >
-                              Edit
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!jobs.length && (
-                    <div className="cr-empty">
-                      <strong>Your first role starts here</strong>
-                      <p>
-                        Create a structured job description to begin attracting
-                        applicants.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "jobs" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">JOB MANAGEMENT</div>
-                  <h1>{jobEditId ? "Edit job" : "Your jobs"}</h1>
-                  <p>
-                    Create, review and manage every opportunity from one place.
-                  </p>
-                </div>
-                {!jobEditId && (
-                  <button
-                    className="cr-primary"
-                    onClick={() => {
-                      if (!canCreateJob) {
-                        setPage("settings");
-                        return;
-                      }
-                      setJobEditId("new");
-                    }}
-                    disabled={!canCreateJob}
-                    title={jobEligibility.reason || "Create a job"}
-                  >
-                    ＋ New job
-                  </button>
-                )}
-              </div>
-              {!jobEligibility.can_create_draft && (
-                <div className="cr-verification-banner">
-                  <div>
-                    <strong>Company eligibility required</strong>
-                    <span>{jobEligibility.reason}</span>
-                  </div>
-                  <button onClick={() => setPage("settings")}>
-                    Review status →
-                  </button>
-                </div>
-              )}
-              {jobEditId !== null && (
-                <form className="cr-panel cr-form-panel" onSubmit={submitJob}>
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>
-                        {jobEditId === "new"
-                          ? "Create a job"
-                          : "Edit job details"}
-                      </h2>
-                      <p>
-                        Complete the required details before submitting for
-                        publication.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="cr-text-btn"
-                      onClick={() => setJobEditId(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  <div className="cr-form-grid">
-                    <label className="cr-span-2">
-                      Job title
-                      <input
-                        required
-                        minLength={3}
-                        value={jobForm.title}
-                        onChange={(e) => setJob("title", e.target.value)}
-                        placeholder="e.g. Senior Product Designer"
-                      />
-                    </label>
-                    <label>
-                      Location
-                      <input
-                        value={jobForm.location}
-                        onChange={(e) => setJob("location", e.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Employment type
-                      <select
-                        value={jobForm.employment_type}
-                        onChange={(e) =>
-                          setJob("employment_type", e.target.value)
-                        }
-                      >
-                        {[
-                          "Full-time",
-                          "Part-time",
-                          "Contract",
-                          "Internship",
-                          "Temporary",
-                        ].map((x) => (
-                          <option>{x}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Work arrangement
-                      <select
-                        value={jobForm.work_mode}
-                        onChange={(e) => setJob("work_mode", e.target.value)}
-                      >
-                        {["Remote", "Hybrid", "On-site"].map((x) => (
-                          <option>{x}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Experience level
-                      <select
-                        value={jobForm.experience_level}
-                        onChange={(e) =>
-                          setJob("experience_level", e.target.value)
-                        }
-                      >
-                        {[
-                          "Any",
-                          "Entry-level",
-                          "Junior",
-                          "Mid-level",
-                          "Senior",
-                          "Lead",
-                        ].map((x) => (
-                          <option>{x}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Minimum salary
-                      <input
-                        type="number"
-                        min="0"
-                        value={jobForm.salary_min}
-                        onChange={(e) => setJob("salary_min", e.target.value)}
-                        placeholder="Optional"
-                      />
-                    </label>
-                    <label>
-                      Maximum salary
-                      <input
-                        type="number"
-                        min="0"
-                        value={jobForm.salary_max}
-                        onChange={(e) => setJob("salary_max", e.target.value)}
-                        placeholder="Optional"
-                      />
-                    </label>
-                    <label>
-                      Salary currency
-                      <select
-                        value={jobForm.salary_currency}
-                        onChange={(e) =>
-                          setJob("salary_currency", e.target.value)
-                        }
-                      >
-                        <option>BDT</option>
-                        <option>USD</option>
-                        <option>INR</option>
-                      </select>
-                    </label>
-                    <label>
-                      Application deadline
-                      <input
-                        type="date"
-                        value={jobForm.deadline}
-                        onChange={(e) => setJob("deadline", e.target.value)}
-                      />
-                    </label>
-                    <label className="cr-span-2">
-                      Job description
-                      <textarea
-                        required
-                        minLength={20}
-                        rows="6"
-                        value={jobForm.description}
-                        onChange={(e) => setJob("description", e.target.value)}
-                        placeholder="Describe the role, responsibilities and what success looks like..."
-                      />
-                    </label>
-                    <label className="cr-span-2">
-                      Required skills <small>Comma-separated</small>
-                      <input
-                        value={jobForm.required_skills}
-                        onChange={(e) =>
-                          setJob("required_skills", e.target.value)
-                        }
-                        placeholder="React, TypeScript, UX research"
-                      />
-                    </label>
-                    <label className="cr-span-2">
-                      Preferred skills <small>Comma-separated</small>
-                      <input
-                        value={jobForm.preferred_skills}
-                        onChange={(e) =>
-                          setJob("preferred_skills", e.target.value)
-                        }
-                        placeholder="Figma, accessibility, design systems"
-                      />
-                    </label>
-                    <label className="cr-span-2">
-                      Eligibility criteria
-                      <textarea
-                        rows="2"
-                        value={jobForm.eligibility}
-                        onChange={(e) => setJob("eligibility", e.target.value)}
-                      />
-                    </label>
-                    <label className="cr-span-2">
-                      Hard requirements <small>One per line</small>
-                      <textarea
-                        rows="3"
-                        value={jobForm.hard_requirements}
-                        onChange={(e) =>
-                          setJob("hard_requirements", e.target.value)
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="cr-form-footer">
-                    <span>
-                      {jobEligibility.can_publish
-                        ? "Jobs are saved as drafts and can be submitted for platform review."
-                        : jobEligibility.reason ||
-                          "Jobs are saved as drafts. Verified organisations can submit them for review."}
-                    </span>
-                    <button
-                      className="cr-primary"
-                      disabled={
-                        busy || (jobEditId === "new" && !canCreateJob)
-                      }
-                    >
-                      Save job draft
-                    </button>
-                  </div>
-                </form>
-              )}
-              <div className="cr-job-list">
-                {jobs.map((j) => (
-                  <article className="cr-job-card" key={j.id}>
-                    <div className="cr-job-icon">▤</div>
-                    <div className="cr-job-main">
-                      <div className="cr-job-title">
-                        <h3>{j.title}</h3>
-                        <span className={"cr-status cr-status-" + j.status}>
-                          {j.status.replaceAll("_", " ")}
-                        </span>
-                      </div>
-                      <p>
-                        {j.location} · {j.employment_type} ·{" "}
-                        {applications.filter((a) => a.job_id === j.id).length}{" "}
-                        applicants
-                      </p>
-                      <div className="cr-tags">
-                        {(j.skills || []).slice(0, 5).map((s) => (
-                          <span>{s}</span>
-                        ))}
-                      </div>
-                      <small>
-                        Created {date(j.created)} · Revision {j.revision || 1}
-                      </small>
-                    </div>
-                    <div className="cr-job-actions">
-                      {canManageJobs &&
-                        ["draft", "needs_changes", "paused"].includes(
-                          j.status,
-                        ) && (
-                          <button
-                            className="cr-outline-btn"
-                            onClick={() => editJob(j)}
-                          >
-                            Edit
-                          </button>
-                        )}
-                      {j.status === "draft" ||
-                      j.status === "needs_changes" ||
-                      j.status === "paused" ? (
-                        <button
-                          className="cr-primary cr-small"
-                          onClick={() => publishJob(j.id)}
-                          disabled={!canPublishJob}
-                          title={
-                            canPublishJob
-                              ? "Submit this job for platform review"
-                              : jobEligibility.reason
-                          }
-                        >
-                          Submit for review
-                        </button>
-                      ) : null}
-                      {j.status === "published" ? (
-                        <button
-                          className="cr-outline-btn"
-                          onClick={() => jobStatus(j.id, "paused")}
-                        >
-                          Pause
-                        </button>
-                      ) : null}
-                      {j.status === "paused" ? (
-                        <button
-                          className="cr-outline-btn"
-                          onClick={() => jobStatus(j.id, "closed")}
-                        >
-                          Close
-                        </button>
-                      ) : null}
-                      <button
-                        className="cr-text-btn"
-                        onClick={async () => {
-                          try {
-                            const r = await api(
-                              "/company/jobs/" + j.id + "/revisions",
-                            );
-                            flash(r.items.length + " saved revisions");
-                          } catch (e) {
-                            fail(e);
-                          }
-                        }}
-                      >
-                        History
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                {!jobs.length && (
-                  <div className="cr-empty">
-                    <strong>No jobs created yet</strong>
-                    <p>Start with one clear, structured job description.</p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-          {page === "applicants" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">TALENT PIPELINE</div>
-                  <h1>Applicants</h1>
-                  <p>
-                    Review applications with candidate-consented evidence and
-                    human-led decisions.
-                  </p>
-                </div>
-              </div>
-              <div className="cr-toolbar">
-                <div className="cr-search">
-                  ⌕
-                  <input
-                    placeholder="Search candidates or roles..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
-                <select
-                  value={filterJob}
-                  onChange={(e) => setFilterJob(e.target.value)}
-                >
-                  <option value="all">All jobs</option>
-                  {jobs.map((j) => (
-                    <option key={j.id} value={j.id}>
-                      {j.title}
-                    </option>
-                  ))}
-                </select>
-                <span>{filteredApps.length} applicants</span>
-              </div>
-              <div className="cr-pipeline">
-                {stages.slice(0, 6).map(([key, label]) => (
-                  <div className="cr-pipeline-col" key={key}>
-                    <div className="cr-pipeline-head">
-                      <strong>{label}</strong>
-                      <span>
-                        {filteredApps.filter((a) => a.status === key).length}
-                      </span>
-                    </div>
-                    {filteredApps
-                      .filter((a) => a.status === key)
-                      .map((a) => (
-                        <button
-                          className="cr-candidate-card"
-                          key={a.application_id}
-                          onClick={() => openApplication(a.application_id)}
-                        >
-                          <div className="cr-person-avatar">
-                            {initials(a.candidate_name)}
-                          </div>
-                          <strong>{a.candidate_name}</strong>
-                          <small>{a.job_title}</small>
-                          <span className="cr-candidate-meta">
-                            {a.results_shared
-                              ? "✓ Assessment shared"
-                              : "Assessment not shared"}
-                          </span>
-                        </button>
-                      ))}
-                    {!filteredApps.some((a) => a.status === key) && (
-                      <div className="cr-pipeline-empty">No candidates</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="cr-panel cr-applicant-table">
-                <div className="cr-panel-head">
-                  <div>
-                    <h2>All applications</h2>
-                    <p>Detailed list across your organisation</p>
-                  </div>
-                </div>
-                <div className="cr-table-wrap">
-                  <table className="cr-table">
-                    <thead>
-                      <tr>
-                        <th>CANDIDATE</th>
-                        <th>ROLE</th>
-                        <th>STAGE</th>
-                        <th>ASSESSMENT</th>
-                        <th>APPLIED</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredApps.map((a) => (
-                        <tr key={a.application_id}>
-                          <td>
-                            <strong>{a.candidate_name}</strong>
-                          </td>
-                          <td>{a.job_title}</td>
-                          <td>
-                            <span className={"cr-stage cr-stage-" + a.status}>
-                              {a.status.replaceAll("_", " ")}
-                            </span>
-                          </td>
-                          <td>
-                            {a.results_shared
-                              ? "Shared by candidate"
-                              : "Not shared"}
-                          </td>
-                          <td>{date(a.created)}</td>
-                          <td>
-                            <button
-                              className="cr-text-btn"
-                              onClick={() => openApplication(a.application_id)}
-                            >
-                              Review →
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "assessments" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">ROLE-SPECIFIC EVALUATION</div>
-                  <h1>Second-phase assessments</h1>
-                  <p>
-                    Configure job-specific tasks with a clear syllabus, rubric
-                    and candidate notice.
-                  </p>
-                </div>
-              </div>
-              <div className="cr-info-banner">
-                <strong>Human approval is required.</strong> New
-                company-authored assessment content is saved as a draft request
-                for platform review. It is not sent to candidates until approved
-                and a notification flow is available.
-              </div>
-              {canManageJobs && (
-                <div className="cr-panel cr-form-panel">
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>Configure an assessment</h2>
-                      <p>
-                        Choose an applicant, define the scope and set fair,
-                        job-relevant criteria.
-                      </p>
-                    </div>
-                  </div>
-                  <form onSubmit={createPhase}>
-                    <div className="cr-form-grid">
-                      <label className="cr-span-2">
-                        Applicant
-                        <select
-                          required
-                          value={selectedApp}
-                          onChange={(e) => setSelectedApp(e.target.value)}
-                        >
-                          <option value="">Select an applicant</option>
-                          {applications
-                            .filter((a) =>
-                              [
-                                "submitted",
-                                "preliminary_assessment",
-                                "in_review",
-                                "phase_two_invited",
-                              ].includes(a.status),
-                            )
-                            .map((a) => (
-                              <option value={a.application_id}>
-                                {a.candidate_name} · {a.job_title}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-                      <label className="cr-span-2">
-                        Assessment title
-                        <input
-                          required
-                          value={phaseForm.title}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              title: e.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="cr-span-2">
-                        Requirements
-                        <textarea
-                          rows="3"
-                          value={phaseForm.requirements}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              requirements: e.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="cr-span-2">
-                        Syllabus / topics <small>One topic per line</small>
-                        <textarea
-                          rows="4"
-                          required
-                          value={phaseForm.syllabus}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              syllabus: e.target.value,
-                            }))
-                          }
-                          placeholder={
-                            "SQL joins and aggregation\nData interpretation\nProblem solving"
-                          }
-                        />
-                      </label>
-                      <label className="cr-span-2">
-                        Question types <small>Select all that apply</small>
-                        <div className="cr-check-grid">
-                          {[
-                            "mcq",
-                            "sql",
-                            "coding",
-                            "scenario",
-                            "short_answer",
-                          ].map((q) => (
-                            <label className="cr-check-option">
-                              <input
-                                type="checkbox"
-                                checked={phaseForm.question_types.includes(q)}
-                                onChange={(e) =>
-                                  setPhaseForm((v) => ({
-                                    ...v,
-                                    question_types: e.target.checked
-                                      ? [...v.question_types, q]
-                                      : v.question_types.filter((x) => x !== q),
-                                  }))
-                                }
-                              />
-                              {q.replaceAll("_", " ")}
-                            </label>
-                          ))}
-                        </div>
-                      </label>
-                      <label>
-                        Easy (%)
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={phaseForm.difficulty_easy}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              difficulty_easy: Number(e.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Medium (%)
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={phaseForm.difficulty_medium}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              difficulty_medium: Number(e.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Hard (%)
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={phaseForm.difficulty_hard}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              difficulty_hard: Number(e.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Duration (minutes)
-                        <input
-                          type="number"
-                          min="10"
-                          max="360"
-                          value={phaseForm.duration_minutes}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              duration_minutes: Number(e.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Deadline
-                        <input
-                          type="date"
-                          value={phaseForm.deadline}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              deadline: e.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Allowed attempts
-                        <input
-                          type="number"
-                          min="1"
-                          max="3"
-                          value={phaseForm.attempt_count}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              attempt_count: Number(e.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Integrity mode
-                        <select
-                          value={phaseForm.integrity_mode}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              integrity_mode: e.target.value,
-                            }))
-                          }
-                        >
-                          <option value="light">Light · default</option>
-                          <option value="standard">
-                            Standard · consent required
-                          </option>
-                          <option value="strict">
-                            Strict · legal approval required
-                          </option>
-                        </select>
-                      </label>
-                      <label>
-                        Credit cost
-                        <input
-                          type="number"
-                          min="0"
-                          value={phaseForm.credit_cost}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              credit_cost: Number(e.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="cr-span-2">
-                        Scoring rubric{" "}
-                        <small>One job-related criterion per line</small>
-                        <textarea
-                          rows="3"
-                          required
-                          value={phaseForm.rubric}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              rubric: e.target.value,
-                            }))
-                          }
-                          placeholder={
-                            "Correctness and reasoning\nProblem decomposition\nCommunication of trade-offs"
-                          }
-                        />
-                      </label>
-                      <label className="cr-span-2">
-                        Allowed resources{" "}
-                        <small>One allowed resource per line</small>
-                        <textarea
-                          rows="2"
-                          value={phaseForm.allowed_resources}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              allowed_resources: e.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="cr-span-2">
-                        Accommodations / alternate route
-                        <textarea
-                          rows="2"
-                          value={phaseForm.accommodations}
-                          onChange={(e) =>
-                            setPhaseForm((v) => ({
-                              ...v,
-                              accommodations: e.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="cr-form-footer">
-                      <span>
-                        Unreviewed AI-generated questions cannot be used in a
-                        live assessment.
-                      </span>
-                      <button className="cr-primary">
-                        Submit for platform review
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
-              <div className="cr-panel">
-                <div className="cr-panel-head">
-                  <div>
-                    <h2>Assessment requests</h2>
-                    <p>Saved configurations and their review status</p>
-                  </div>
-                </div>
-                {phaseTwo.length ? (
-                  phaseTwo.map((p) => (
-                    <div className="cr-assessment-row" key={p.id}>
-                      <div>
-                        <strong>{p.title}</strong>
-                        <span>
-                          {p.candidate_name} · {p.job_title}
-                        </span>
-                      </div>
-                      <span className="cr-status cr-status-pending_review">
-                        {p.status.replaceAll("_", " ")}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="cr-empty">
-                    <strong>No assessment requests yet</strong>
-                    <p>Configured requests will appear here.</p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-          {page === "analytics" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">HIRING PERFORMANCE</div>
-                  <h1>Analytics</h1>
-                  <p>
-                    Understand pipeline volume and role performance. Counts are
-                    descriptive, not candidate quality rankings.
-                  </p>
-                </div>
-              </div>
-              <div className="cr-metrics">
-                {metric(
-                  "Total roles",
-                  analytics?.totals?.jobs ?? 0,
-                  "All job records",
-                  "▤",
-                )}
-                {metric(
-                  "Published roles",
-                  analytics?.totals?.published_jobs ?? 0,
-                  "Live opportunities",
-                  "↗",
-                )}
-                {metric(
-                  "Applications",
-                  analytics?.totals?.applicants ?? 0,
-                  "Received applications",
-                  "♙",
-                )}
-                {metric(
-                  "Shared results",
-                  analytics?.totals?.shared_results ?? 0,
-                  "Candidate opted-in",
-                  "✓",
-                )}
-              </div>
-              <div className="cr-overview-grid">
-                <div className="cr-panel">
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>Pipeline distribution</h2>
-                      <p>Current application counts by stage</p>
-                    </div>
-                  </div>
-                  {stages.map(([key, label]) => (
-                    <div className="cr-stage-line" key={key}>
-                      <span>{label}</span>
-                      <strong>
-                        {pipelineCounts[key] || 0}
-                      </strong>
-                      <div>
-                        <i
-                          style={{
-                            width:
-                              (pipelineTotal ? ((pipelineCounts[key] || 0) / pipelineTotal) * 100 : 0) + "%",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="cr-panel">
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>Role performance</h2>
-                      <p>Application volume by job</p>
-                    </div>
-                  </div>
-                  {(analytics?.jobs || []).map((j) => (
-                    <div className="cr-performance-row" key={j.id}>
-                      <div>
-                        <strong>{j.title}</strong>
-                        <span>{j.status}</span>
-                      </div>
-                      <b>{j.applicants}</b>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-          )}
-          {page === "team" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">ORGANISATION ACCESS</div>
-                  <h1>Team members</h1>
-                  <p>Invite colleagues with least-privilege roles.</p>
-                </div>
-              </div>
-              <div className="cr-info-banner">
-                Owner manages organisation settings and billing. Recruiters
-                manage jobs and applicants. Hiring Managers provide structured
-                review. Viewers have read-only reporting access.
-              </div>
-              {canManageTeam && (
-                <form
-                  className="cr-panel cr-team-invite"
-                  onSubmit={inviteMember}
-                >
-                  <div>
-                    <h2>Invite a teammate</h2>
-                    <p>
-                      Invitation token is generated for secure manual delivery.
-                    </p>
-                  </div>
-                  <label>
-                    Email address
-                    <input
-                      type="email"
-                      required
-                      value={teamForm.email}
-                      onChange={(e) =>
-                        setTeamForm((v) => ({ ...v, email: e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Role
-                    <select
-                      value={teamForm.role}
-                      onChange={(e) =>
-                        setTeamForm((v) => ({ ...v, role: e.target.value }))
-                      }
-                    >
-                      <option value="recruiter">Recruiter</option>
-                      <option value="hiring_manager">Hiring Manager</option>
-                      <option value="viewer">Viewer / Analyst</option>
-                    </select>
-                  </label>
-                  <button className="cr-primary" disabled={memberBusy}>{memberBusy ? "Creating…" : "Create invitation"}</button>
-                  {inviteToken && (
-                    <div className="cr-invite-token">
-                      <strong>Invitation token</strong>
-                      <code>{inviteToken}</code>
-                      <button
-                        type="button"
-                        className="cr-outline-btn"
-                        onClick={async () => {
-                          try {
-                            if (!navigator.clipboard) throw new Error("Clipboard unavailable");
-                            await navigator.clipboard.writeText(inviteToken);
-                            setCopyStatus("Copied. Share securely with the invited teammate.");
-                          } catch { setCopyStatus("Could not copy automatically. Select the token above and copy it manually."); }
-                        }}
-                      >
-                        Copy token
-                      </button>
-                      {copyStatus && <p className="cr-footnote" role="status">{copyStatus}</p>}
-                      <p className="cr-footnote">
-                        The invited teammate can enter this token on the company
-                        setup screen after signing in.
-                      </p>
-                    </div>
-                  )}
-                </form>
-              )}
-              <div className="cr-panel">
-                <div className="cr-panel-head">
-                  <div>
-                    <h2>Workspace access</h2>
-                    <p>Current invitations and active memberships</p>
-                  </div>
-                </div>
-                <div className="cr-team-row"><div className="cr-person-avatar"><WorkspaceIcon name="privacy" size={18} /></div><div><strong>{companyEmail || "Workspace owner"}</strong><span>Organisation owner · full workspace access</span></div><span className="cr-role-pill">Owner</span></div>
-                {team.map((m) => (
-                  <div className="cr-team-row" key={m.id}>
-                    <div className="cr-person-avatar">{initials(m.email)}</div>
-                    <div>
-                      <strong>{m.email}</strong>
-                      <span>{m.status}</span>
-                    </div>
-                    <span className="cr-role-pill">
-                      {m.company_role.replace("_", " ")}
-                    </span>
-                    {canManageTeam && m.status !== "revoked" && (
-                      <select
-                        aria-label={`Role for ${m.email}`}
-                        disabled={memberBusy}
-                        value={m.company_role}
-                        onChange={(e) => changeMemberRole(m, e.target.value)}
-                      >
-                        <option value="recruiter">Recruiter</option>
-                        <option value="hiring_manager">Hiring Manager</option>
-                        <option value="viewer">Viewer</option>
-                        <option value="revoked">Revoke</option>
-                      </select>
-                    )}
-                    {canManageTeam && m.status !== "active" && <button type="button" className="cr-outline-btn" disabled={memberBusy} onClick={() => sendInvite({ email: m.email, role: m.company_role })}>{m.status === "revoked" ? "Re-invite" : "New token"}</button>}
-                  </div>
-                ))}
-                {!team.length && (
-                  <div className="cr-empty">No additional members yet.</div>
-                )}
-              </div>
-            </section>
-          )}
-          {page === "agent" && <AgentConsole />}
-          {page === "settings" && (
-            <section>
-              <div className="cr-page-heading">
-                <div>
-                  <div className="cr-kicker">ORGANISATION PROFILE</div>
-                  <h1>Company settings</h1>
-                  <p>
-                    Manage your organisation identity and verification details.
-                  </p>
-                </div>
-              </div>
-              <div className="cr-settings-grid">
-                <div className="cr-panel">
-                  <h2>Company profile</h2>
-                  {isOwner ? (
-                    <form onSubmit={saveCompany}>
-                      <label>
-                        Organisation name
-                        <input
-                          required
-                          value={companyName}
-                          onChange={(e) => setCompanyName(e.target.value)}
-                        />
-                      </label>
-                      <label>
-                        Website
-                        <input
-                          value={website}
-                          onChange={(e) => setWebsite(e.target.value)}
-                        />
-                      </label>
-                      <button className="cr-primary">Save profile</button>
-                    </form>
-                  ) : (
-                    <p>
-                      Only the organisation owner can edit company identity
-                      details.
-                    </p>
-                  )}
-                </div>
-                <div className="cr-panel">
-                  <h2>Verification status</h2>
-                  <span
-                    className={
-                      "cr-status cr-status-" +
-                      (workspace?.verification?.status || "not_submitted")
-                    }
-                  >
-                    {(
-                      workspace?.verification?.status || "not submitted"
-                    ).replaceAll("_", " ")}
-                  </span>
-                  <p>
-                    {workspace?.verification?.decision_reason ||
-                      "Company verification is required before public job publishing and applicant access."}
-                  </p>
-                  {isOwner && (
-                    <button
-                      className="cr-outline-btn"
-                      onClick={() => setVerificationForm(!verificationForm)}
-                    >
-                      {verificationForm
-                        ? "Cancel"
-                        : "Submit / update verification"}
-                    </button>
-                  )}
-                </div>
-              </div>
-              {verificationForm && isOwner && (
-                <form
-                  className="cr-panel cr-form-panel"
-                  onSubmit={submitVerification}
-                >
-                  <div className="cr-panel-head">
-                    <div>
-                      <h2>Organisation verification</h2>
-                      <p>
-                        Provide legal details and a reference to supporting
-                        evidence. Do not upload sensitive identity documents
-                        through this prototype.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="cr-form-grid">
-                    <label>
-                      Legal organisation name
-                      <input
-                        required
-                        value={verification.legal_name}
-                        onChange={(e) =>
-                          setVerification((v) => ({
-                            ...v,
-                            legal_name: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Country
-                      <input
-                        required
-                        value={verification.country}
-                        onChange={(e) =>
-                          setVerification((v) => ({
-                            ...v,
-                            country: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Business registration ID
-                      <input
-                        value={verification.business_id}
-                        onChange={(e) =>
-                          setVerification((v) => ({
-                            ...v,
-                            business_id: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="cr-span-2">
-                      Evidence reference / notes
-                      <textarea
-                        required
-                        minLength="10"
-                        value={verification.evidence_note}
-                        onChange={(e) =>
-                          setVerification((v) => ({
-                            ...v,
-                            evidence_note: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <button className="cr-primary">
-                    Submit for verification review
-                  </button>
-                </form>
-              )}
-            </section>
-          )}
-          {page === "security" && (
-            <SecurityPanel S={CO.security} email={companyEmail} />
-          )}
-          {busy && <div className="cr-loading">Refreshing workspace…</div>}
-        </div>
-        <footer className="cr-footer">
-          <span>TalentForge Global · Company workspace</span>
-          <span>Evidence-led hiring · Human decisions · Privacy by design</span>
-        </footer>
-      </main>
-      {detail && (
-        <dialog
-          ref={applicationDialog}
-          className="ws-application-dialog"
-          aria-labelledby="application-report-title"
-          onCancel={() => { setDetail(null); setSelected(null); }}
-          onClick={(event) => { if (event.target === applicationDialog.current) { setDetail(null); setSelected(null); } }}
-        >
-          <aside className="cr-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="cr-drawer-head">
-              <div>
-                <div className="cr-kicker">APPLICATION REPORT</div>
-                <h2 id="application-report-title">{detail.candidate_name}</h2>
-                <p>{detail.job_title}</p>
-              </div>
-              <button
-                aria-label="Close application report"
-                onClick={() => {
-                  setDetail(null);
-                  setSelected(null);
-                }}
-              >
-                ×
-              </button>
-            </div>
-            <div className="cr-drawer-body">
-              <div className="cr-report-note">
-                <strong>Evidence visibility</strong>
-                <p>
-                  This candidate applied to your job, so their CV is available to
-                  this workspace only. Assessment scores and the Skill Passport are
-                  shown only when the candidate has shared results for this
-                  application.
-                </p>
-              </div>
-              <div className="cr-report-section">
-                <h3>Application status</h3>
-                <span className={"cr-stage cr-stage-" + detail.status}>
-                  {detail.status.replaceAll("_", " ")}
-                </span>
-                <p>Applied {date(detail.created)}</p>
-              </div>
-              <div className="cr-report-section">
-                <h3>Candidate CV</h3>
-                {detail.candidate_cv?.available ? (
-                  <CvPreview url={detail.candidate_cv.url} filename={detail.candidate_cv.filename} />
-                ) : (
-                  <p className="cr-muted-box">This candidate has not uploaded a CV.</p>
-                )}
-              </div>
-              <div className="cr-report-section">
-                <h3>Required job skills vs candidate evidence</h3>
-                <div className="cr-tags">
-                  {(detail.candidate_skills || detail.required_skills || []).map(
-                    (s, index) => {
-                      const name = typeof s === "string" ? s : s.required;
-                      const status = typeof s === "string" ? "not_shared" : s.status;
-                      return (
-                        <span key={`${name}-${index}`}>
-                          {name} · {String(status).replaceAll("_", " ")}
-                          {typeof s === "object" && s.score != null
-                            ? ` · ${s.score}%`
-                            : ""}
-                        </span>
-                      );
-                    },
-                  )}
-                </div>
-                {detail.skill_evidence_summary && (
-                  <p className="cr-footnote">
-                    Verified {detail.skill_evidence_summary.verified ?? 0} ·
-                    Claimed {detail.skill_evidence_summary.claimed ?? 0} ·
-                    Missing {detail.skill_evidence_summary.missing ?? 0}
-                    {detail.skill_evidence_summary.not_shared
-                      ? ` · Not shared ${detail.skill_evidence_summary.not_shared}`
-                      : ""}
-                  </p>
-                )}
-                <p className="cr-footnote">
-                  {detail.results_shared
-                    ? "Claimed and verified skill evidence is shown because the candidate shared results for this application."
-                    : "The candidate has not shared assessment evidence for this application."}
-                </p>
-              </div>
-              <div className="cr-report-section">
-                <h3>Shared assessment evidence</h3>
-                {detail.results_shared ? (
-                  detail.assessment_history?.map((r) => (
-                    <div className="cr-score-card">
-                      <strong>
-                        {r.score ?? "—"}
-                        <small>/100</small>
-                      </strong>
-                      <div>
-                        <b>{r.result_status}</b>
-                        <span>
-                          {r.finished ? date(r.finished) : "Date unavailable"} ·{" "}
-                          {r.scale}
-                        </span>
-                        <small>Integrity: {r.integrity_summary}</small>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="cr-muted-box">
-                    Candidate has not shared assessment results for this
-                    application.
-                  </p>
-                )}
-              </div>
-              {detail.results_shared && detail.passport && (
-                <div className="cr-report-section">
-                  <h3>Skill Passport</h3>
-                  <div className="cr-passport-card">
-                    <strong>{detail.passport.holder || detail.candidate_name}</strong>
-                    <small>
-                      Issued {detail.passport.issued || "—"} · expires{" "}
-                      {detail.passport.expires || "—"}
-                    </small>
-                    <div className="cr-tags">
-                      {(detail.passport.skills || []).map((s) => (
-                        <span key={s.skill}>
-                          {s.name} · {s.score}%
-                        </span>
-                      ))}
-                    </div>
-                    {detail.passport.uplift && (
-                      <p className="cr-footnote">
-                        Uplift: {detail.passport.uplift.pre}% →{" "}
-                        {detail.passport.uplift.post}% (+{detail.passport.uplift.delta})
-                      </p>
-                    )}
-                    <a
-                      className="cr-passport-link"
-                      href={detail.passport.public_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open public passport ↗
-                    </a>
-                  </div>
-                </div>
-              )}
-              {canManagePipeline && (
-                <div className="cr-report-section">
-                  <h3>Move through pipeline</h3>
-                  <label>
-                    New stage
-                    <select id="cr-stage-select" defaultValue="">
-                      <option value="" disabled>
-                        Select a stage
-                      </option>
-                      {(stageTransitions[detail.status] || []).map((s) => (
-                        <option value={s}>{s.replaceAll("_", " ")}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Decision / transition reason
-                    <input
-                      value={stageReason}
-                      onChange={(e) => setStageReason(e.target.value)}
-                      placeholder="Required for final decisions"
-                    />
-                  </label>
-                  <button
-                    className="cr-primary"
-                    onClick={() => {
-                      const s =
-                        document.getElementById("cr-stage-select")?.value;
-                      if (s) moveStage(selected, s);
-                    }}
-                  >
-                    Update application stage
-                  </button>
-                  <button
-                    className="cr-outline-btn"
-                    onClick={() => {
-                      setSelectedApp(selected);
-                      setPage("assessments");
-                      setDetail(null);
-                    }}
-                  >
-                    Configure phase-two assessment
-                  </button>
-                </div>
-              )}{" "}
-              {canManagePipeline && (
-                <div className="cr-report-section">
-                  <h3>Private recruiter notes</h3>
-                  {detail.notes?.map((n) => (
-                    <div className="cr-note-item">
-                      <p>{n.body}</p>
-                      <small>{date(n.created)}</small>
-                    </div>
-                  ))}
-                  <form onSubmit={addNote}>
-                    <textarea
-                      rows="3"
-                      required
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      placeholder="Add a structured, job-related note for your team..."
-                    />
-                    <button className="cr-outline-btn">Add note</button>
-                  </form>
-                </div>
-              )}
-              <div className="cr-report-section">
-                <h3>Decision history</h3>
-                {detail.history?.map((h) => (
-                  <div className="cr-history-item">
-                    <strong>
-                      {h.from_stage.replaceAll("_", " ")} →{" "}
-                      {h.to_stage.replaceAll("_", " ")}
-                    </strong>
-                    <span>{h.reason}</span>
-                    <small>{date(h.created)}</small>
-                  </div>
-                ))}
-                {!detail.history?.length && (
-                  <p className="cr-footnote">No stage changes recorded yet.</p>
-                )}
-              </div>
-            </div>
-          </aside>
-        </dialog>
-      )}
-    </div>
-  );
-}
-
 /* ---------- shell ---------- */
 function Shell({ lang, setLang }) {
   const t = useT();
@@ -13734,8 +6834,8 @@ function Shell({ lang, setLang }) {
     if (authed)
       refresh().then((s) => {
         if (!s) return;
-        const done = s.attempts.filter((a) => a.status === "done");
-        const active = s.attempts.find((a) => a.status === "active");
+        const done = (s.attempts || []).filter((a) => a.status === "done");
+        const active = (s.attempts || []).find((a) => a.status === "active");
         setView(
           active
             ? active.kind === "post"
@@ -13767,7 +6867,7 @@ function Shell({ lang, setLang }) {
       <a className="brand sb-top-brand" href="#top">
         <span className="sb-brand-mark">S</span>
         <span>
-          TalentForge<small>SKILLS · EVIDENCE · OPPORTUNITY</small>
+          TalentForge<small>Skills · Evidence · Opportunity</small>
         </span>
       </a>
       {!authed && (
@@ -13810,9 +6910,9 @@ function Shell({ lang, setLang }) {
   // Admin and company accounts have their own onboarding and do not need the
   // candidate consent/state gate. This also removes a loading flash where the
   // marketing header appeared above the operational panels.
-  else if (role === "admin") body = <AdminConsole onLogout={logout} />;
+  else if (role === "admin") body = <Suspense fallback={<main className="wrap"><WorkspaceLoading /></main>}><AdminConsole onLogout={logout} /></Suspense>;
   else if (role && role !== "candidate")
-    body = <HiringWorkspace role={role} onLogout={logout} />;
+    body = <Suspense fallback={<main className="wrap"><WorkspaceLoading /></main>}><HiringWorkspace role={role} onLogout={logout} /></Suspense>;
   else if (!st || !view)
     body = (
       <main className="wrap">
@@ -13925,9 +7025,4 @@ class ErrorBoundary extends Component {
       </main>
     );
   }
-}
-
-function PubBanner() {
-  const t = useT();
-  return <>{t("mockBanner")}</>;
 }
