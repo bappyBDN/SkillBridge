@@ -196,7 +196,10 @@ def _connection_pool():
                     open=False,
                     # Autocommit keeps single statements cheap. Multi-statement
                     # critical sections use transaction(), which issues BEGIN.
-                    kwargs={"row_factory": dict_row, "prepare_threshold": 5, "autocommit": True},
+                    # prepare_threshold=None: Neon's pooler (PgBouncer) shares server connections, so
+                    # server-side prepared statements go stale after a schema change and fail with
+                    # "cached plan must not change result type". Never use them.
+                    kwargs={"row_factory": dict_row, "prepare_threshold": None, "autocommit": True},
                 )
                 _pg_pool.open(wait=False)
     return _pg_pool

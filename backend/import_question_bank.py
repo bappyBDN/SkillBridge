@@ -67,7 +67,7 @@ def _connect():
     if database_url:
         import psycopg
         from psycopg.rows import dict_row
-        return psycopg.connect(database_url, row_factory=dict_row), True
+        return psycopg.connect(database_url, row_factory=dict_row, prepare_threshold=None), True
     db_path = os.getenv("DB_PATH", "/data/skillbridge.db")
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=10)
