@@ -938,8 +938,23 @@ def apply_to_job(job_id:str,user=Depends(current_user)):
 @router.get("/api/applications/mine")
 def my_applications(user=Depends(current_user)):
     require_role(user,"candidate")
-    rows=allr("SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title,j.location,j.employment_type,c.name AS company_name FROM applications a JOIN jobs j ON j.id=a.job_id JOIN companies c ON c.id=j.company_id WHERE a.candidate_id=? ORDER BY a.created DESC",(user["id"],))
-    return {"items":[{**dict(r),"results_shared":bool(r["results_shared"])} for r in rows]}
+    rows=allr("""SELECT a.id AS application_id,a.status,a.results_shared,a.created,
+                        a.interview_method,z.meeting_url,z.scheduled_at,z.note,
+                        j.id AS job_id,j.title,j.location,j.employment_type,c.name AS company_name
+                 FROM applications a
+                 JOIN jobs j ON j.id=a.job_id
+                 JOIN companies c ON c.id=j.company_id
+                 LEFT JOIN zoom_details z ON z.application_id=a.id
+                 WHERE a.candidate_id=? ORDER BY a.created DESC""",(user["id"],))
+    items=[]
+    for row in rows:
+        item={**dict(row),"results_shared":bool(row["results_shared"]),
+              "interview_method":row["interview_method"] or "none"}
+        item["zoom"]=({"meeting_url":row["meeting_url"],"scheduled_at":row["scheduled_at"],
+                       "note":row["note"]} if row["meeting_url"] else None)
+        item.pop("meeting_url",None); item.pop("scheduled_at",None); item.pop("note",None)
+        items.append(item)
+    return {"items":items}
 
 @router.put("/api/applications/{application_id}/share-results")
 def share_results(application_id:str,body:ShareResults,user=Depends(current_user)):
@@ -986,10 +1001,11 @@ def company_applications(user=Depends(current_user)):
     require_role(user,"company"); company=company_for(user); require_company_permission(user, company, "owner", "recruiter", "hiring_manager")
     if not company["verified"]:
         raise HTTPException(403, "Company verification is required before accessing applicant records")
-    rows=allr("SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title AS job_title,u.id AS candidate_id,u.name AS candidate_name FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id WHERE j.company_id=? ORDER BY a.created DESC",(company["id"],))
+    rows=allr("SELECT a.id AS application_id,a.status,a.results_shared,a.created,a.shortlisted,a.interview_method,j.id AS job_id,j.title AS job_title,u.id AS candidate_id,u.name AS candidate_name FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id WHERE j.company_id=? ORDER BY a.created DESC",(company["id"],))
     items=[]
     for row in rows:
         item=dict(row); item["results_shared"]=bool(item["results_shared"]); item["latest_assessment"]=None
+        item["shortlisted"]=bool(item["shortlisted"]); item["interview_method"]=row["interview_method"] or "none"
         if item["results_shared"]:
             item["latest_assessment"]=company_assessment_summary(item["candidate_id"])
         items.append(item)
@@ -1611,7 +1627,8 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
     require_company_permission(user, company, "owner", "recruiter", "hiring_manager")
     if not company["verified"]:
         raise HTTPException(403, "Company verification is required before accessing applicant records")
-    row = one("""SELECT a.id AS application_id,a.status,a.results_shared,a.created,j.id AS job_id,j.title AS job_title,
+    row = one("""SELECT a.id AS application_id,a.status,a.results_shared,a.created,
+                 a.shortlisted,a.interview_method,j.id AS job_id,j.title AS job_title,
                  j.skills AS job_skills,u.id AS candidate_id,u.name AS candidate_name
                  FROM applications a JOIN jobs j ON j.id=a.job_id JOIN users u ON u.id=a.candidate_id
                  WHERE a.id=? AND j.company_id=?""", (application_id, company["id"]))
@@ -1619,6 +1636,8 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
         raise HTTPException(404, "Application not found")
     item = dict(row)
     item["results_shared"] = bool(item["results_shared"])
+    item["shortlisted"] = bool(item.get("shortlisted"))
+    item["interview_method"] = item.get("interview_method") or "none"
     import cv_store
     cv_doc = cv_store.latest_pdf(item["candidate_id"])
     # The candidate applied to this company's job, so their CV is available to
@@ -1731,6 +1750,13 @@ def company_application_detail(application_id: str, user=Depends(current_user)):
         "Assessment scores and the Skill Passport are shown only because the candidate shared results "
         "for this application."
     )
+    # Interview status only. Answers and admin notes stay behind the review gate
+    # (GET .../interview/result returns 403 until an admin approves).
+    try:
+        import ai_interview as _ai_interview
+        item["interview"] = _ai_interview.company_application_summary(application_id, company["id"])
+    except Exception:  # the interview module must never break the applicant page
+        item["interview"] = None
     return item
 
 

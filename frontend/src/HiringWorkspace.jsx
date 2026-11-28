@@ -7,6 +7,8 @@ import { CvPreview, WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./W
 import TeamInvitations from "./TeamInvitations.jsx";
 import { statusTone } from "./status.js";
 import { NotificationBell } from "./NotificationCenter.jsx";
+import CompanyInterviewModal from "./CompanyInterviewModal.jsx";
+import CompanyInterviewResult from "./CompanyInterviewResult.jsx";
 
 const AdminConsole = lazy(() => import("./AdminConsole.jsx"));
 const AgentConsole = lazy(() => import("./AgentConsole.jsx"));
@@ -27,6 +29,7 @@ export default function HiringWorkspace({ role, onLogout }) {
   const [phaseTwo, setPhaseTwo] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [interviewTarget, setInterviewTarget] = useState(null);
   const applicationDialog = useRef(null);
   useEffect(() => { if (detail) applicationDialog.current?.showModal(); }, [detail]);
   const [toast, setToast] = useState("");
@@ -195,6 +198,22 @@ export default function HiringWorkspace({ role, onLogout }) {
     } catch (e) {
       fail(e);
     }
+  };
+  const shortlistCandidate = async (application) => {
+    try {
+      await api(`/company/applications/${application.application_id}/shortlist`, {
+        method: "POST",
+        body: {},
+      });
+      flash(`${application.candidate_name || "Candidate"} shortlisted. Choose the interview method next.`);
+      await load();
+      setInterviewTarget({ ...application, shortlisted: true });
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const openInterviewSetup = (application) => {
+    setInterviewTarget(application);
   };
   const saveCompany = async (e) => {
     e.preventDefault();
@@ -1364,12 +1383,32 @@ export default function HiringWorkspace({ role, onLogout }) {
                           </td>
                           <td>{date(a.created)}</td>
                           <td>
-                            <button
-                              className="cr-text-btn"
-                              onClick={() => openApplication(a.application_id)}
-                            >
-                              Review →
-                            </button>
+                            <div className="cr-row-actions">
+                              <button
+                                className="cr-text-btn"
+                                onClick={() => openApplication(a.application_id)}
+                              >
+                                Review →
+                              </button>
+                              {canManagePipeline && !a.shortlisted && (
+                                <button
+                                  className="cr-text-btn"
+                                  onClick={() => shortlistCandidate(a)}
+                                >
+                                  Shortlist
+                                </button>
+                              )}
+                              {canManagePipeline && a.shortlisted && (
+                                <button
+                                  className="cr-text-btn"
+                                  onClick={() => openInterviewSetup(a)}
+                                >
+                                  {a.interview_method && a.interview_method !== "none"
+                                    ? "Interview"
+                                    : "Set interview"}
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2147,6 +2186,46 @@ export default function HiringWorkspace({ role, onLogout }) {
                 <p>Applied {date(detail.created)}</p>
               </div>
               <div className="cr-report-section">
+                <h3>Interview setup</h3>
+                <p className="cr-footnote">
+                  Shortlisting does not reject anyone. Choose a manual/Zoom interview or an AI
+                  interview; AI answers are visible only after a platform admin approves them.
+                </p>
+                <div className="cr-row-actions">
+                  {!detail.shortlisted && canManagePipeline && (
+                    <button
+                      className="cr-outline-btn"
+                      onClick={() => shortlistCandidate(detail)}
+                    >
+                      Shortlist candidate
+                    </button>
+                  )}
+                  {detail.shortlisted && canManagePipeline && (
+                    <button
+                      className="cr-outline-btn"
+                      onClick={() => openInterviewSetup(detail)}
+                    >
+                      {detail.interview_method && detail.interview_method !== "none"
+                        ? "View / change interview"
+                        : "Set up interview"}
+                    </button>
+                  )}
+                  {detail.shortlisted && (
+                    <span className="status-pill status-review">
+                      {detail.interview_method === "zoom"
+                        ? "Manual / Zoom"
+                        : detail.interview_method === "ai"
+                          ? "AI interview"
+                          : "Shortlisted"}
+                    </span>
+                  )}
+                </div>
+                <CompanyInterviewResult
+                  applicationId={detail.application_id}
+                  interview={detail.interview}
+                />
+              </div>
+              <div className="cr-report-section">
                 <h3>Candidate CV</h3>
                 {detail.candidate_cv?.available ? (
                   <CvPreview url={detail.candidate_cv.url} filename={detail.candidate_cv.filename} />
@@ -2331,6 +2410,17 @@ export default function HiringWorkspace({ role, onLogout }) {
             </div>
           </aside>
         </dialog>
+      )}
+      {interviewTarget && (
+        <CompanyInterviewModal
+          application={interviewTarget}
+          onClose={() => setInterviewTarget(null)}
+          onSaved={async () => {
+            flash("Interview details saved. The candidate was notified.");
+            await load();
+            if (detail) await openApplication(interviewTarget.application_id);
+          }}
+        />
       )}
     </div>
   );

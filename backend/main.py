@@ -734,6 +734,14 @@ def _purge_evidence_once() -> None:
         run("DELETE FROM exam_evidence WHERE expires_at<?", (time.time(),))
     except Exception:
         log.exception("Could not purge expired exam evidence")
+    # Voice AI interview retention: recordings/transcripts are removed after
+    # AI_INTERVIEW_RETENTION_DAYS, independent of the evidence window.
+    try:
+        import ai_interview
+        ai_interview.purge_expired()
+        ai_interview.purge_expired_shots()
+    except Exception:
+        log.exception("Could not purge expired AI interview data")
 
 
 async def _purge_expired_exam_evidence():
@@ -1449,6 +1457,10 @@ def purge_user_data(uid) -> list[str]:
     """Delete every row linked to ``uid`` and report which tables were touched."""
     tables = known_tables()
     touched: list[str] = []
+    try:
+        import ai_interview as _ai_interview
+    except Exception:  # pragma: no cover - optional module
+        _ai_interview = None
     attempt_ids = []
     if "attempts" in tables:
         attempt_ids = [r["id"] for r in allr("SELECT id FROM attempts WHERE user_id=?", (uid,))]
@@ -1471,6 +1483,8 @@ def purge_user_data(uid) -> list[str]:
                     if "applications" in tables:
                         app_ids = [r["id"] for r in allr("SELECT id FROM applications WHERE job_id=?", (jid,))]
                         for app_id in app_ids:
+                            if _ai_interview:
+                                _ai_interview.purge_for_application(app_id)
                             for table, _label in APPLICATION_DATA_REGISTRY:
                                 if table in tables:
                                     run(f"DELETE FROM {table} WHERE application_id=?", (app_id,))
@@ -1485,9 +1499,18 @@ def purge_user_data(uid) -> list[str]:
                     run(f"DELETE FROM {table} WHERE company_id=?", (cid,))
             run("DELETE FROM companies WHERE id=?", (cid,))
             touched.append("companies")
+    # Voice AI interviews: audio objects plus invite/session/turn rows.
+    try:
+        import ai_interview
+        ai_interview.purge_for_candidate(uid)
+        touched.append("ai_interviews")
+    except Exception:
+        log.exception("Could not purge AI interview data for a deleted account")
     # Rows hanging off the candidate's own applications (stage history,
     # recruiter notes about them, phase-two invites) go before the applications.
     for app_id in _application_ids(uid):
+        if _ai_interview:
+            _ai_interview.purge_for_application(app_id)
         for table, _label in APPLICATION_DATA_REGISTRY:
             if table in tables:
                 run(f"DELETE FROM {table} WHERE application_id=?", (app_id,))
@@ -1806,6 +1829,14 @@ def export_data(u=Depends(current_user)):
     import cv_store
     d["cv_documents"] = cv_store.list_documents(u["id"])
     d["cv_extractions"] = cv_store.list_extractions(u["id"])
+    # Voice AI interviews are the candidate's own data: transcripts only, no
+    # audio bytes (audio is served separately and expires on retention).
+    try:
+        import ai_interview
+        d["ai_interviews"] = ai_interview.export_for_candidate(u["id"])
+    except Exception:
+        log.warning("AI interview export unavailable", exc_info=True)
+        d["ai_interviews"] = []
     # Rubric keywords are grading-key material: strip them like attempt state.
     d["answer_evaluations"] = [strip_key_material(evaluation_view(r)) for r in allr(
         "SELECT * FROM answer_evaluations WHERE attempt_id IN "
@@ -5680,6 +5711,12 @@ app.include_router(agent_router)
 # go to the new agent_artifacts queue; no existing route or table is touched.
 from agent_console_api import router as agent_console_router
 app.include_router(agent_console_router)
+
+# ------------------------------------------------------------------ Voice AI interview (additive)
+# Invites, sessions, turns and the admin human-review gate. The AI only asks
+# questions; audio lives in object storage, never in the database.
+from ai_interview import router as ai_interview_router
+app.include_router(ai_interview_router)
 
 # ------------------------------------------------------------------ Notification center (all roles)
 import notification_center as _notification_center

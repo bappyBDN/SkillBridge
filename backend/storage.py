@@ -409,11 +409,11 @@ def get_storage() -> StorageBackend:
             _instance = DatabaseStorage(LocalStorage(legacy_dir) if legacy_dir.is_dir() else None)
         elif backend == "s3":
             _instance = S3Storage(
-                bucket=os.getenv("S3_BUCKET", ""),
+                bucket=os.getenv("S3_BUCKET", "") or os.getenv("S3_BUCKET_NAME", ""),
                 region=os.getenv("S3_REGION", "auto"),
-                endpoint_url=os.getenv("S3_ENDPOINT_URL", ""),
-                access_key=os.getenv("S3_ACCESS_KEY_ID", ""),
-                secret_key=os.getenv("S3_SECRET_ACCESS_KEY", ""),
+                endpoint_url=os.getenv("S3_ENDPOINT_URL", "") or os.getenv("S3_ENDPOINT", ""),
+                access_key=os.getenv("S3_ACCESS_KEY_ID", "") or os.getenv("S3_ACCESS_KEY", ""),
+                secret_key=os.getenv("S3_SECRET_ACCESS_KEY", "") or os.getenv("S3_SECRET_KEY", ""),
                 prefix=os.getenv("S3_PREFIX", ""),
             )
         elif backend == "local":

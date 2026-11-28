@@ -30,6 +30,7 @@ import {
 import { ServerNotificationItem, useServerNotifications } from "./NotificationCenter.jsx";
 import useExamDevices, { trackLive } from "./useExamDevices.js";
 import useExamMonitoring from "./useExamMonitoring.js";
+import AIInterviewCards from "./AIInterviewCards.jsx";
 
 // Every exam is proctored (camera, microphone, screen share, full-screen).
 // Only attempts saved before proctoring existed are marked otherwise.
@@ -43,6 +44,7 @@ const AdminConsole = lazy(() => import("./AdminConsole.jsx"));
 const HiringWorkspace = lazy(() => import("./HiringWorkspace.jsx"));
 const McpConsole = lazy(() => import("./McpConsole.jsx"));
 const AgentConsole = lazy(() => import("./AgentConsole.jsx"));
+const VoiceInterview = lazy(() => import("./VoiceInterview.jsx"));
 
 const SAMPLE_CV = `Sadia Rahman
 House 14, Road 3, Mirpur, Dhaka
@@ -6045,7 +6047,7 @@ function PhaseTwoInvites({ onChanged }) {
   );
 }
 
-function CandidateApplications() {
+function CandidateApplications({ onOpenAssessments }) {
   const t = useT();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6135,6 +6137,26 @@ function CandidateApplications() {
               {a.company_name} · {a.location}
             </p>
             <span className="status-pill" data-tone={statusTone(a.status)}>{humanizeStatus(a.status)}</span>
+            {a.zoom && (
+              <div className="application-interview">
+                <strong>Interview: {a.zoom.scheduled_at || "time to be confirmed"}</strong>
+                <a href={a.zoom.meeting_url} target="_blank" rel="noreferrer">
+                  {a.zoom.meeting_url}
+                </a>
+                {a.zoom.note && <small>{a.zoom.note}</small>}
+              </div>
+            )}
+            {a.interview_method === "ai" && (
+              <div className="application-interview">
+                <strong>AI interview invited</strong>
+                <small>Open Assessments to review the privacy notice and start.</small>
+                {onOpenAssessments && (
+                  <button type="button" className="btn ghost sm" onClick={onOpenAssessments}>
+                    Open Assessments
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <div className="application-consent">
             <label className="check">
@@ -6193,6 +6215,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
     return () => clearTimeout(timer);
   }, []);
   const [section, setSection] = useState("overview");
+  const [interviewInvite, setInterviewInvite] = useState(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [journeyView, setJourneyView] = useState(() => {
     const completed = (st.attempts || []).filter(
@@ -6587,7 +6610,7 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   </p>
                 </div>
               </div>
-              <CandidateApplications />
+              <CandidateApplications onOpenAssessments={() => go("exams")} />
             </>
           )}
           {section === "exams" && (
@@ -6609,6 +6632,10 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
                   </button>
                 </div>
               )}
+              <AIInterviewCards
+                onOpen={(invite) => setInterviewInvite(invite)}
+                refreshKey={tick || 0}
+              />
               <AssessmentRecords attempts={st.attempts} onRefresh={refresh} />
             </>
           )}
@@ -6750,6 +6777,18 @@ function CandidatePortal({ st, refresh, tick, setTick, onLogout }) {
             </>
           )}
         </div>
+        {interviewInvite && (
+          <Suspense fallback={<WorkspaceLoading label="Loading interview" />}>
+            <VoiceInterview
+              invite={interviewInvite}
+              onExit={() => {
+                setInterviewInvite(null);
+                refresh();
+              }}
+              onFinished={refresh}
+            />
+          </Suspense>
+        )}
         <footer className="candidate-footer">
           <span>TalentForge Candidate Workspace</span>
           <span>Build skills. Show evidence. Keep growing.</span>

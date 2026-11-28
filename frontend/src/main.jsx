@@ -9,6 +9,7 @@ import "./proctoring.css";
 import "./initial-exam-setup.css";
 import "./exam-room.css";
 import "./cv-update.css";
+import "./interview.css";
 import "./design-system.css";
 
 // Small compatibility shims for older Safari/Edge/Chromium builds.

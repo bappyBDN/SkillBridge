@@ -234,13 +234,68 @@ This implementation is an initial GraphRAG assessment slice. Meilisearch/Neo4j m
 
 ## Layout
 ```
-backend/   main.py (API) · engine.py (scoring, redaction, SQL sandbox) · content.py (taxonomy, questions, resources) · prompts/ · tests/
-frontend/  src/App.jsx (all screens) · i18n.js (EN/BN) · styles.css · nginx.conf · Dockerfile
+backend/   main.py (API) · engine.py (scoring, redaction, SQL sandbox) · ai_interview.py (Voice AI interview) · content.py (taxonomy, questions, resources) · prompts/ · tests/
+frontend/  src/App.jsx (all screens) · interviewMachine.js + VoiceInterview.jsx · i18n.js (EN/BN) · styles.css · nginx.conf · Dockerfile
 docker-compose.yml · .env.example · .github/workflows/ci.yml
 ```
 
 ## Tests
 `cd backend && python -m pytest -q tests` covers redaction, SQL sandbox (including DROP and infinite recursion), grading on hidden datasets, adaptivity, retest freshness, trust label, learning-path honesty, signing, proctoring/session controls, tenant isolation and MCP.
+
+## Voice AI interviews (zero / ultra-low cost)
+
+A company can shortlist an applicant and choose **Manual / Zoom** (meeting link, time, note; a provider seam in `backend/interview_providers.py` is where a real Zoom integration lands) or an **AI interview**. The candidate answers by voice from the Assessments page; a platform admin reviews every interview before the company can read it.
+
+**Product rules enforced in code**
+- The AI only asks questions. It never scores, judges or fails anyone; there is no score field anywhere and admin marks (1–5) are human-entered.
+- The client state machine (`frontend/src/interviewMachine.js`) makes it impossible to enter `ASKING` while `LISTENING`. Listening ends only on **Done** or a 6-second silence that opens a **cancellable 5-second countdown**. No speech for 20 seconds shows “Still there?” and never advances. The hard cap is 3 minutes (warning at 2:30). `speechSynthesis.cancel()` is only called by the candidate’s own **Skip reading**.
+- TTS is browser `speechSynthesis`; the question text is always shown. Bangla (`bn-BD`) and English (`en-US`) are selectable per invite, and a missing voice cleanly falls back to text-only.
+- Each answer is recorded with MediaRecorder (Opus WebM, low bitrate), transcribed server-side by Groq Whisper (browser SpeechRecognition is the live preview and fallback), and stored as text plus an audio object key.
+- Audio goes to S3-compatible storage only (`STORAGE_BACKEND=s3`); it is never stored in PostgreSQL. Without S3 the session runs in transcript-only mode and the admin/company UI says so.
+- Every turn stores question, source (`opening`, `follow_up`, `company_custom`), transcript, original transcript after an admin edit, audio key, timings and durations.
+- Company “must ask” questions are inserted at fixed server-chosen positions; the LLM cannot remove them. Optional customs are asked at the end if the question budget allows.
+- One plan LLM call at session creation (redacted CV + job circular), one follow-up decision per answer. Outputs are schema-validated, retried once, then fall back to the precomputed plan, so an LLM/network outage never blocks the candidate.
+- CV/job/answer text is always data, never instructions; PII is redacted before any LLM call.
+
+**Endpoints** (`backend/ai_interview.py`)
+| Role | Endpoint |
+|---|---|
+| Company | `POST /api/company/applications/{id}/shortlist`, `POST .../interview`, `GET .../interview/result` (403 until approved) |
+| Candidate | `GET /api/interviews`, `POST /api/interviews/{id}/consent`, `/start`, `/answer` (multipart) |
+| Admin | `GET /api/admin/interviews`, `GET/PATCH .../{id}`, `POST .../{id}/decision` |
+
+The answer endpoint is rate-limited, caps uploads at 5 MB, checks the audio container signature and ignores any client-supplied question text.
+
+**Configuration** (all documented in `.env.example`)
+- `GROQ_API_KEY`, `GROQ_STT_MODEL` (`whisper-large-v3-turbo`), optional `GROQ_LLM_MODEL` alias for chat; text LLM calls fail over Groq → DeepSeek through `AI_PROVIDER_FALLBACKS`.
+- `STORAGE_BACKEND=s3` plus `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (aliases `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` are accepted).
+- `AI_INTERVIEW_RETENTION_DAYS` (default 90), `AI_INTERVIEW_MAX_AUDIO_BYTES`, `AI_INTERVIEW_ANSWER_RATE_LIMIT`, `INTERVIEW_MEETING_PROVIDER=stub`.
+
+**Retention and deletion.** The hourly maintenance loop removes sessions/turns, review notes and audio older than `AI_INTERVIEW_RETENTION_DAYS`, keeping only the invite status as non-content history. A candidate account deletion (`DELETE /api/me`) erases their interviews and audio too, and `/api/me/export` includes their transcripts.
+
+## Proctoring for AI interviews (advisory only)
+
+AI interviews can run at `off`, `light` (browser events), `standard` (+ camera analysis and fullscreen), or `strict` (+ screen sharing). The company chooses the level and whether gaze analysis is enabled; the candidate sees it before accepting and can request an accommodation or a manual/Zoom alternative.
+
+**Nothing here scores or fails a candidate.** Flags are factual, advisory observations; a human reviewer dismisses or confirms each one. The AI interview content, answers, and the candidate’s ability to finish never depend on a flag, a missing model, a lost camera or a fullscreen exit.
+
+**Pre-check (before question 1, repeated on resume).** Browser/device check, camera and microphone permission, live “face detected / lighting” feedback, a 5-second neutral-pose calibration, one baseline photo for human comparison, fullscreen test, strict-level screen-share test, and a versioned interview-proctoring consent covering audio, on-device analysis, snapshots, retention, appeals and deletion.
+
+**Runtime.**
+- Fullscreen exit, camera loss, strict-level share loss and a second tab show a blocking overlay. The AI stays silent (TTS is paused, never cancelled by the overlay); the interviewer state machine does not advance; recording and the 3-minute answer cap continue.
+- Tab visibility, window focus, copy/cut/paste, context menu, PrintScreen, F12 and developer-tools shortcuts are logged only — never claimed to be fully preventable.
+- Keyboard Lock (`navigator.keyboard.lock(["Escape"])`) is best-effort and Chromium-only; MDN marks it experimental and it requires HTTPS + transient user activation + fullscreen.
+- Second-tab detection uses `BroadcastChannel` and logs `second_tab`; no forced close.
+
+**On-device camera analysis.** MediaPipe `FaceLandmarker` from `@mediapipe/tasks-vision` runs at ~2.5 fps (slower when frames are expensive, paused when the tab is hidden). It derives face count, head yaw/pitch relative to calibration and gaze from blendshape coefficients; no video is recorded or uploaded. A JPEG snapshot is captured only when a medium/high flag fires. If the model cannot load, a camera is absent or the gaze blendshapes are unavailable, `camera_analysis_unavailable` is recorded and browser-event proctoring continues.
+
+**Rules and label** live in `backend/interview_integrity.py` (`PROCTOR_RULES`, `rule_version = interview-proctor-v1`). Defaults: face absent ≥4 s (medium) / ≥12 s (high), multiple faces ≥2 s (high), head turned ≥5 s (medium), gaze away ≥5 s continuous or ≥12 s cumulative in 30 s (low), suppression 3 s after each question, three sustained gaze episodes per answer → one `gaze_pattern` (medium). Server-side cooldown is 30 s per type, max 40 events and 25 snapshots per session. Severity is always recomputed on the server; client severity is ignored.
+
+Labels: **High trust** 0–3, **Medium** 4–8, **Needs review** 9+ or any confirmed high. The company sees only the after-review label, confirmed-flag count and reviewer notes — never events, images or the baseline.
+
+**Storage and retention.** Snapshots go to S3-compatible storage when configured, otherwise to `ai_interview_flag_shots.image_bytes` (≤60 KB each). Uploads must be `image/jpeg`, ≤150 KB, are re-encoded to strip EXIF, and are served by 10-minute signed URLs (or an authenticated data URL in DB mode). Snapshots are deleted after `AI_INTERVIEW_SHOT_RETENTION_DAYS` (default 30), but are held while a session is under review or an appeal is unresolved; the retention clock restarts after a decision. Session deletion removes proctor events, calibration, snapshots and their storage objects; account deletion and `/api/me/export` include the candidate’s own flags and accommodation requests.
+
+**Model hosting.** Defaults are the public MediaPipe `face_landmarker.task` and the wasm at `/mediapipe/wasm`. For privacy-sensitive deployments, self-host both and set `VITE_FACE_LANDMARKER_MODEL` / `VITE_MEDIAPIPE_WASM_PATH` at build time. The model is downloaded to the candidate’s browser and runs locally; no frames leave the device except the flag snapshots.
 
 ## Quality gates
 

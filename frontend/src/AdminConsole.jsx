@@ -7,6 +7,7 @@ import { CvPreview, WorkspaceIcon, WorkspaceLoading, WorkspaceSearch } from "./W
 import AssessmentStatus from "./AssessmentStatus.jsx";
 import { sentenceCase, statusTone } from "./status.js";
 import { EvidenceImage } from "./AdminEvidence.jsx";
+import AdminInterviews from "./AdminInterviews.jsx";
 import { NotificationBell } from "./NotificationCenter.jsx";
 import { fmt } from "./format.js";
 
@@ -493,6 +494,7 @@ export default function AdminConsole({ onLogout }) {
     ["companies", A.nav.companies, "building"],
     ["jobs", A.nav.jobs, "jobs"],
     ["assessments", A.nav.assessments, "exams"],
+    ["interviews", A.nav.interviews, "exams"],
     ["integrity", A.nav.integrity, "integrity"],
     ["identity", A.nav.identity, "identity"],
     ["appeals", A.nav.appeals, "appeals"],
@@ -1359,6 +1361,7 @@ export default function AdminConsole({ onLogout }) {
       "companies",
       "jobs",
       "assessments",
+      "interviews",
       "integrity",
       "identity",
       "appeals",
@@ -1375,6 +1378,7 @@ export default function AdminConsole({ onLogout }) {
     trust_safety_reviewer: [
       "users",
       "assessments",
+      "interviews",
       "integrity",
       "identity",
       "appeals",
@@ -2134,6 +2138,7 @@ export default function AdminConsole({ onLogout }) {
               )}
             </section>
           )}
+          {page === "interviews" && <AdminInterviews />}
           {page === "assessments" && (
             <section className="ad-panel">
               <div className="ad-panel-head">

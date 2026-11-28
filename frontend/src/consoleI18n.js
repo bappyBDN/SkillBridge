@@ -68,6 +68,7 @@ export const CONSOLE = {
         companies: "Company verification",
         jobs: "Job moderation",
         assessments: "Assessment reviews",
+        interviews: "Voice AI interviews",
         integrity: "Exam integrity",
         identity: "CV identity review",
         appeals: "Candidate appeals",
@@ -88,6 +89,8 @@ export const CONSOLE = {
         jobs: "Review reported and pending job posts with documented decisions.",
         assessments:
           "Review completed assessment evidence without altering original answers or scores.",
+        interviews:
+          "Read AI interview transcripts and audio, add human marks, then approve, redo or reject.",
         integrity: "Inspect integrity signals and record human honesty decisions.",
         identity:
           "Review CVs whose name or email did not clearly match the account holder.",
@@ -337,6 +340,7 @@ export const CONSOLE = {
         companies: "প্রতিষ্ঠান যাচাই",
         jobs: "চাকরি নিয়ন্ত্রণ",
         assessments: "মূল্যায়ন পর্যালোচনা",
+        interviews: "ভয়েস এআই সাক্ষাৎকার",
         integrity: "পরীক্ষার সততা",
         identity: "সিভি পরিচয় যাচাই",
         appeals: "প্রার্থীর আপিল",
@@ -357,6 +361,8 @@ export const CONSOLE = {
         jobs: "রিপোর্টকৃত ও অপেক্ষমাণ চাকরির বিজ্ঞাপন নথিভুক্ত সিদ্ধান্তে পর্যালোচনা করুন।",
         assessments:
           "মূল উত্তর বা স্কোর না বদলে সম্পন্ন মূল্যায়নের প্রমাণ পর্যালোচনা করুন।",
+        interviews:
+          "এআই সাক্ষাৎকারের ট্রান্সক্রিপ্ট ও অডিও পড়ুন, মানুষের নম্বর দিন, তারপর অনুমোদন, পুনরায় বা প্রত্যাখ্যান করুন।",
         integrity: "সততার সংকেত দেখুন এবং মানুষের সিদ্ধান্ত লিপিবদ্ধ করুন।",
         identity:
           "যেসব সিভিতে নাম বা ইমেইল অ্যাকাউন্টের সাথে স্পষ্ট মেলেনি সেগুলো পর্যালোচনা করুন।",

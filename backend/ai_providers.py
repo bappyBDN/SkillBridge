@@ -302,6 +302,12 @@ def get_provider_keys(provider: str) -> list[str]:
 
 def get_provider_model(provider: str) -> str:
     config = PROVIDERS[provider]
+    # Groq's OpenAI-compatible chat model can be set with either the historic
+    # GROQ_MODEL or the explicit GROQ_LLM_MODEL alias used by the interview docs.
+    if provider == "groq":
+        alias = os.getenv("GROQ_LLM_MODEL", "").strip()
+        if alias:
+            return alias
     return os.getenv(config["model_env"], config["default_model"]).strip()
 
 
